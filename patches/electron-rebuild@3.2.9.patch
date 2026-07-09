@@ -1,0 +1,13 @@
+diff --git a/lib/src/module-type/node-gyp.js b/lib/src/module-type/node-gyp.js
+index 8fd68783c17a381fbe315094974c197f9d3965de..aeb7acd6fb653964c5ae5ad369f16026d7fa1ea7 100644
+--- a/lib/src/module-type/node-gyp.js
++++ b/lib/src/module-type/node-gyp.js
+@@ -77,7 +77,7 @@ class NodeGyp extends _1.NativeModule {
+         let env;
+         const extraNodeGypArgs = [];
+         if (semver_1.default.major(this.rebuilder.electronVersion) >= 20) {
+-            process.env.CXXFLAGS = '-std=c++17';
++            process.env.CXXFLAGS = '-std=c++20';
+         }
+         if (this.rebuilder.useElectronClang) {
+             env = { ...process.env };

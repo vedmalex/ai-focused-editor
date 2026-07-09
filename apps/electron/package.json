@@ -1,0 +1,67 @@
+{
+  "private": true,
+  "name": "@ai-focused-editor/electron",
+  "version": "0.1.0",
+  "dependencies": {
+    "@ai-focused-editor/manuscript-workspace": "workspace:*",
+    "@theia/ai-chat": "1.73.1",
+    "@theia/ai-chat-ui": "1.73.1",
+    "@theia/ai-core": "1.73.1",
+    "@theia/core": "1.73.1",
+    "@theia/editor": "1.73.1",
+    "@theia/editor-preview": "1.73.1",
+    "@theia/electron": "1.73.1",
+    "@theia/file-search": "1.73.1",
+    "@theia/filesystem": "1.73.1",
+    "@theia/markers": "1.73.1",
+    "@theia/messages": "1.73.1",
+    "@theia/monaco": "1.73.1",
+    "@theia/monaco-editor-core": "1.108.201",
+    "@theia/navigator": "1.73.1",
+    "@theia/outline-view": "1.73.1",
+    "@theia/output": "1.73.1",
+    "@theia/preferences": "1.73.1",
+    "@theia/process": "1.73.1",
+    "@theia/scm": "1.73.1",
+    "@theia/scm-extra": "1.73.1",
+    "@theia/userstorage": "1.73.1",
+    "@theia/variable-resolver": "1.73.1",
+    "@theia/workspace": "1.73.1",
+    "@parcel/watcher-darwin-arm64": "2.5.6",
+    "@vscode/ripgrep-darwin-arm64": "1.18.0",
+    "cpu-features": "0.0.10",
+    "drivelist": "12.0.2",
+    "find-git-repositories": "0.2.2",
+    "keytar": "7.9.0",
+    "native-keymap": "3.3.9",
+    "node-pty": "1.2.0-beta.12",
+    "reflect-metadata": "^0.2.2",
+    "ssh2": "1.17.0",
+    "trash": "^7.2.0"
+  },
+  "devDependencies": {
+    "@theia/bundle-plugin": "1.73.1",
+    "@theia/cli": "1.73.1",
+    "@theia/ffmpeg": "1.73.1",
+    "electron": "39.8.7",
+    "esbuild": "^0.25.6",
+    "esbuild-plugin-copy": "^2.1.1",
+    "esbuild-plugins-node-modules-polyfill": "^1.8.2",
+    "electron-rebuild": "3.2.9",
+    "node-gyp": "12.4.0",
+    "resolve-package-path": "^4.0.3",
+    "yargs": "^18.0.0"
+  },
+  "scripts": {
+    "bundle": "bun run build:ffmpeg-native && bun run rebuild && theia build --app-target electron --mode development",
+    "build:ffmpeg-native": "node-gyp rebuild --directory node_modules/@theia/ffmpeg",
+    "rebuild": "theia rebuild:electron --cacheRoot ../.. --modules=keytar,native-keymap,find-git-repositories,drivelist,ssh2,node-pty",
+    "start": "theia start --app-target electron --root ../../examples/sample-book"
+  },
+  "theia": {
+    "target": "electron",
+    "frontend": {
+      "applicationName": "AI Focused Editor"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+version: 1
+citations:
+  - id: bg-2-47
+    title: Bhagavad-gita 2.47
+    source: documents/gita-notes.md
+    note: Used as a sample citation anchor for duty/action terminology.
+  - id: glossary-dharma
+    title: Dharma glossary note
+    source: excerpts.jsonl
+    note: Tracks context-sensitive translation choices for dharma.

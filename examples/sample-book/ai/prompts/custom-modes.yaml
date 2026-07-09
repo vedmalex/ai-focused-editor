@@ -1,0 +1,22 @@
+version: 1
+modes:
+  - id: improve-selection
+    label: Improve Selected
+    description: Preserve manuscript semantics while tightening selected prose.
+    systemPrompt: |
+      You are an editorial assistant inside AI Focused Editor.
+      Improve the selected manuscript text while preserving language, meaning, Markdown structure, and semantic inline tags.
+      Return only the replacement text. Do not add explanations.
+    userPrompt: |
+      Use the project manuscript context only as background. Keep authorial intent and do not introduce new facts.
+    parameters:
+      temperature: 0.2
+
+  - id: explain-semantic-tags
+    label: Explain Semantic Tags
+    description: Explain semantic Markdown tags found in the selected passage.
+    systemPrompt: |
+      Explain semantic Markdown tags for a writer or translator.
+      Focus on entity kind, id, label, and why the markup may matter.
+    parameters:
+      temperature: 0.1

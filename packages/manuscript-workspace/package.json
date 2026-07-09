@@ -1,0 +1,43 @@
+{
+  "name": "@ai-focused-editor/manuscript-workspace",
+  "version": "0.1.0",
+  "description": "First-party Theia extension for AI Focused Editor manuscript workspace MVP.",
+  "keywords": [
+    "theia-extension"
+  ],
+  "license": "UNLICENSED",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "main": "lib/common/index.js",
+  "typings": "lib/common/index.d.ts",
+  "dependencies": {
+    "@ai-focused-editor/semantic-markdown": "workspace:*",
+    "@vedmalex/ai-connect": "0.9.0",
+    "@theia/ai-chat": "1.73.1",
+    "@theia/ai-core": "1.73.1",
+    "@theia/core": "1.73.1",
+    "@theia/editor": "1.73.1",
+    "@theia/filesystem": "1.73.1",
+    "@theia/markers": "1.73.1",
+    "@theia/workspace": "1.73.1",
+    "ajv": "8.20.0",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "typescript": "~5.8.3"
+  },
+  "scripts": {
+    "build": "rm -rf lib && tsc",
+    "clean": "rm -rf lib *.tsbuildinfo",
+    "watch": "tsc -w"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/manuscript-workspace-frontend-module",
+      "backend": "lib/node/manuscript-workspace-backend-module"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "private": true,
+  "name": "ai-focused-editor",
+  "version": "0.1.0",
+  "packageManager": "bun@1.3.14",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "bun run build:packages && bun run build:browser",
+    "build:packages": "bun run --cwd packages/semantic-markdown build && bun run --cwd packages/manuscript-workspace build",
+    "build:browser": "bun run --cwd apps/browser bundle",
+    "build:electron": "bun run --cwd apps/electron bundle",
+    "clean": "bun run --cwd packages/semantic-markdown clean && bun run --cwd packages/manuscript-workspace clean && rm -rf apps/browser/lib apps/browser/.theia apps/electron/lib apps/electron/.theia",
+    "start": "bun run --cwd apps/browser start",
+    "start:electron": "bun run --cwd apps/electron start",
+    "watch": "bun run --cwd packages/manuscript-workspace watch"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  },
+  "patchedDependencies": {
+    "electron-rebuild@3.2.9": "patches/electron-rebuild@3.2.9.patch"
+  }
+}

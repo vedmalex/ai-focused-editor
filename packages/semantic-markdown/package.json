@@ -1,0 +1,20 @@
+{
+  "name": "@ai-focused-editor/semantic-markdown",
+  "version": "0.1.0",
+  "description": "Semantic Markdown parser for AI Focused Editor manuscript tags.",
+  "license": "UNLICENSED",
+  "main": "lib/index.js",
+  "typings": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "devDependencies": {
+    "typescript": "~5.8.3"
+  },
+  "scripts": {
+    "build": "rm -rf lib && tsc",
+    "clean": "rm -rf lib *.tsbuildinfo",
+    "test": "bun test src/**/*.test.ts"
+  }
+}

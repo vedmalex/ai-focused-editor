@@ -1,0 +1,12 @@
+node_modules/
+lib/
+.theia/
+.cache/
+.browser_modules/
+dist/
+examples/*/build/
+apps/*/esbuild.mjs
+apps/*/gen-esbuild*.mjs
+apps/*/src-gen/
+*.tsbuildinfo
+.DS_Store

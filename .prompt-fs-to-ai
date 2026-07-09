@@ -1,0 +1,28 @@
+# Auto-generated .prompt-fs-to-ai file
+# This file contains patterns used for the current project
+
+# Include patterns
++**/*
+
+# Output settings
+@outputFile ai-editor-3-output.md
+@outputType md
+
+# Auto-excluded paths
+@autoExcludePath **/*.current
+@autoExcludePath **/*.diff
+@autoExcludePath **/.*ignore
+@autoExcludePath **/.DS_Store
+@autoExcludePath **/.cache/**
+@autoExcludePath **/.env
+@autoExcludePath **/.env.*
+@autoExcludePath **/.git/**
+@autoExcludePath **/.next/**
+@autoExcludePath **/.prompt-fs-to-ai
+@autoExcludePath **/.turbo/**
+@autoExcludePath **/.vercel/**
+@autoExcludePath **/build/**
+@autoExcludePath **/coverage/**
+@autoExcludePath **/dist/**
+@autoExcludePath **/node_modules/**
+@autoExcludePath **/out/**

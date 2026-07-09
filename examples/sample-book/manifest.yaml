@@ -1,0 +1,6 @@
+version: 1
+content:
+  - path: content/chapter-01.md
+    title: Chapter 1
+    include: true
+
