@@ -92,6 +92,9 @@ export class BookBuildContribution implements CommandContribution, MenuContribut
       return;
     }
 
+    // TODO: Refactor to Theia Task API (FR-016)
+    // Instead of using messages.showProgress, register a TaskProvider from @theia/task
+    // to run the build in the background and stream console outputs to the Output/Terminal panel.
     const progress = await this.messages.showProgress({
       text: 'AI Focused Editor: building manuscript Markdown...'
     });

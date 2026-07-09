@@ -222,6 +222,9 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
         return;
       }
 
+      // TODO: Refactor to Theia AI ChangeSets (FR-009)
+      // Instead of manual clipboard and editor.replaceText call, use the ChangeSetService from @theia/ai-core
+      // to create a ChangeSet, add text edits, and call changeSetService.preview(changeSet) to open the native diff UI.
       await this.clipboardService.writeText(improvedText);
       const action = await this.messages.info(
         `Improved text copied to clipboard: ${this.previewText(improvedText)}`,

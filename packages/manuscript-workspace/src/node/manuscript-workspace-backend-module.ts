@@ -5,13 +5,10 @@ import { RpcConnectionHandler } from '@theia/core/lib/common/messaging/proxy-fac
 import {
   BookBuildService,
   BookBuildServicePath,
-  GitHistoryService,
-  GitHistoryServicePath,
   LocalAiConnectionService,
   LocalAiConnectionServicePath
 } from '../common';
 import { NodeBookBuildService } from './node-book-build-service';
-import { NodeGitHistoryService } from './node-git-history-service';
 import { NodeLocalAiConnectionService } from './node-local-ai-connection-service';
 
 @injectable()
@@ -24,18 +21,11 @@ export class ManuscriptWorkspaceBackendContribution implements BackendApplicatio
 export default new ContainerModule(bind => {
   bind(NodeLocalAiConnectionService).toSelf().inSingletonScope();
   bind(LocalAiConnectionService).toService(NodeLocalAiConnectionService);
-  bind(NodeGitHistoryService).toSelf().inSingletonScope();
-  bind(GitHistoryService).toService(NodeGitHistoryService);
   bind(NodeBookBuildService).toSelf().inSingletonScope();
   bind(BookBuildService).toService(NodeBookBuildService);
   bind(ConnectionHandler).toDynamicValue(ctx =>
     new RpcConnectionHandler(LocalAiConnectionServicePath, () =>
       ctx.container.get(LocalAiConnectionService)
-    )
-  ).inSingletonScope();
-  bind(ConnectionHandler).toDynamicValue(ctx =>
-    new RpcConnectionHandler(GitHistoryServicePath, () =>
-      ctx.container.get(GitHistoryService)
     )
   ).inSingletonScope();
   bind(ConnectionHandler).toDynamicValue(ctx =>

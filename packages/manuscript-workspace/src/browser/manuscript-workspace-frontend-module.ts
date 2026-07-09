@@ -30,8 +30,6 @@ import {
   AiModeRegistry,
   BookBuildService,
   BookBuildServicePath,
-  GitHistoryService,
-  GitHistoryServicePath,
   LocalAiConnectionService,
   LocalAiConnectionServicePath,
   ManuscriptWorkspaceService,
@@ -47,8 +45,6 @@ import { AiModeContribution } from './ai-mode-contribution';
 import { BookBuildContribution } from './book-build-contribution';
 import { EntityCardsViewContribution } from './entity-cards-view-contribution';
 import { EntityCardsWidget } from './entity-cards-widget';
-import { GitHistoryContribution } from './git-history-contribution';
-import { GitHistoryResourceResolver } from './git-history-resource';
 import { ManuscriptAiContextAssembler } from './manuscript-ai-context-assembler';
 import { ManuscriptContextVariableContribution } from './manuscript-context-variable-contribution';
 import { ManuscriptChatAgentContribution } from './manuscript-chat-agent-contribution';
@@ -89,9 +85,6 @@ export default new ContainerModule(bind => {
   bind(LocalAiConnectionService).toDynamicValue(ctx =>
     ServiceConnectionProvider.createProxy(ctx.container, LocalAiConnectionServicePath)
   ).inSingletonScope();
-  bind(GitHistoryService).toDynamicValue(ctx =>
-    ServiceConnectionProvider.createProxy(ctx.container, GitHistoryServicePath)
-  ).inSingletonScope();
   bind(BookBuildService).toDynamicValue(ctx =>
     ServiceConnectionProvider.createProxy(ctx.container, BookBuildServicePath)
   ).inSingletonScope();
@@ -112,8 +105,6 @@ export default new ContainerModule(bind => {
   bind(AiProfilePreferenceService).toSelf().inSingletonScope();
   bind(AiHistoryService).toSelf().inSingletonScope();
   bind(YamlSchemaValidator).toSelf().inSingletonScope();
-  bind(GitHistoryResourceResolver).toSelf().inSingletonScope();
-  bind(ResourceResolver).toService(GitHistoryResourceResolver);
   bind(LabelProviderContribution).toService(ManuscriptTreeLabelProvider);
   bind(PreferenceContribution).toConstantValue(AiFocusedEditorPreferenceContribution);
   bindViewContribution(bind, ManuscriptTreeViewContribution);
@@ -156,10 +147,6 @@ export default new ContainerModule(bind => {
   })).inSingletonScope();
   bind(CommandContribution).to(ManuscriptWorkspaceCommandContribution).inSingletonScope();
   bind(MenuContribution).to(ManuscriptWorkspaceMenuContribution).inSingletonScope();
-  bind(GitHistoryContribution).toSelf().inSingletonScope();
-  bind(CommandContribution).toService(GitHistoryContribution);
-  bind(MenuContribution).toService(GitHistoryContribution);
-  bind(FrontendApplicationContribution).toService(GitHistoryContribution);
   bind(BookBuildContribution).toSelf().inSingletonScope();
   bind(CommandContribution).toService(BookBuildContribution);
   bind(MenuContribution).toService(BookBuildContribution);
