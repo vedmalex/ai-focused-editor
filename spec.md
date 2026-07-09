@@ -404,6 +404,7 @@ The MVP is successful only if it proves that Theia is the right product platform
 - **Offload heavy lifting to LSP/Backend:** Парсинг больших файлов, валидация YAML и семантического Markdown не должны выполняться синхронно во Frontend-модуле. Используйте Language Servers или RPC.
 - **Theia AI extension points first:** Пользовательские модели, агенты, переменные контекста и тулы интегрируются через официальные интерфейсы Theia AI. Доменная логика наслаивается поверх, а не заменяет их.
 - **Change Sets over Clipboard:** Любые мутации текста, предлагаемые AI (Improve, Translate, Fix), должны возвращаться как Theia AI Change Sets для обеспечения предпросмотра (diff) и явного контроля автором.
+- **Standard Theia Tooling for Modules:** Для создания и генерации новых модулей/расширений допускается и рекомендуется использовать стандартные утилиты экосистемы Theia (генераторы расширений, Theia CLI). Базовая компиляция и установка через Bun не должны мешать полноценному использованию преимуществ и штатного инструментария платформы Theia.
 
 ---
 
