@@ -104,7 +104,7 @@ export class AiConnectTheiaLanguageModel implements LanguageModel {
             continue;
           }
 
-          await this.tryAppendChatEvent(request, event.result);
+          await this.tryAppendChatEvent(request, event.result, generateRequest);
           const usage = this.toTheiaUsage(event.result.usage);
           if (usage) {
             yield usage;
@@ -122,6 +122,17 @@ export class AiConnectTheiaLanguageModel implements LanguageModel {
         }
       }
     }
+  }
+
+  /** Bounded copy of the outgoing messages for the provenance log. */
+  protected toLoggedMessages(messages: MessageInput[]): { role: string; content: string }[] {
+    const MAX_MESSAGE_CHARS = 4000;
+    return messages.map(message => ({
+      role: message.role,
+      content: message.content.length > MAX_MESSAGE_CHARS
+        ? `${message.content.slice(0, MAX_MESSAGE_CHARS)}…[+${message.content.length - MAX_MESSAGE_CHARS} chars]`
+        : message.content
+    }));
   }
 
   /**
@@ -235,8 +246,13 @@ export class AiConnectTheiaLanguageModel implements LanguageModel {
     };
   }
 
-  protected async tryAppendChatEvent(request: UserRequest, result: AiGenerateResult): Promise<void> {
+  protected async tryAppendChatEvent(
+    request: UserRequest,
+    result: AiGenerateResult,
+    generateRequest: AiGenerateRequest
+  ): Promise<void> {
     try {
+      const MAX_RESPONSE_CHARS = 12000;
       await this.aiHistory.appendChatEvent({
         kind: 'theia-ai-language-model-request',
         command: 'theia-ai-language-model-request',
@@ -246,6 +262,13 @@ export class AiConnectTheiaLanguageModel implements LanguageModel {
           agentId: request.agentId,
           promptVariantId: request.promptVariantId,
           route: result.route,
+          // Full provenance: WHAT was sent (bounded messages) and WHERE it
+          // went (route above), plus the model's answer.
+          messages: this.toLoggedMessages(generateRequest.messages),
+          tools: (generateRequest.clientTools ?? []).map(tool => tool.function.name),
+          responseText: (result.text ?? '').length > MAX_RESPONSE_CHARS
+            ? `${result.text.slice(0, MAX_RESPONSE_CHARS)}…[+${result.text.length - MAX_RESPONSE_CHARS} chars]`
+            : result.text,
           warnings: result.warnings,
           usage: result.usage
         }
