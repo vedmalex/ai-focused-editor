@@ -118,9 +118,18 @@ try {
   }
 
   await window.waitForSelector('.theia-TreeNode', { timeout: 60000 });
-  const treeHasChapter = await window.evaluate(() =>
-    Array.from(document.querySelectorAll('.theia-TreeNode')).some(node => node.textContent?.includes('Chapter 1'))
-  );
+  // The manuscript snapshot loads asynchronously after the first tree rows
+  // appear (the file navigator renders earlier) — poll instead of a one-shot
+  // check so a slow backend does not read as a missing manuscript tree.
+  let treeHasChapter = false;
+  for (const deadline = Date.now() + 30000; Date.now() < deadline && !treeHasChapter;) {
+    treeHasChapter = await window.evaluate(() =>
+      Array.from(document.querySelectorAll('.theia-TreeNode')).some(node => node.textContent?.includes('Chapter 1'))
+    );
+    if (!treeHasChapter) {
+      await window.waitForTimeout(1000);
+    }
+  }
   if (treeHasChapter) {
     pass('manuscript tree shows Chapter 1');
   } else {
