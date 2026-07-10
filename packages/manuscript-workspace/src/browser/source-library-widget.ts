@@ -4,6 +4,7 @@ import {
   OpenerService
 } from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { EditorOpenerOptions } from '@theia/editor/lib/browser/editor-manager';
 import {
   inject,
   injectable,
@@ -12,6 +13,7 @@ import {
 import React from '@theia/core/shared/react';
 import {
   CitationEntry,
+  SourceExcerpt,
   SourceLibraryItem,
   SourceLibraryService,
   SourceLibrarySnapshot
@@ -63,7 +65,8 @@ export class SourceLibraryWidget extends ReactWidget {
       ),
       this.renderDiagnostics(snapshot),
       this.renderItems(snapshot.items),
-      this.renderCitations(snapshot.citations)
+      this.renderCitations(snapshot.citations),
+      this.renderExcerpts(snapshot.excerpts)
     );
   }
 
@@ -85,8 +88,8 @@ export class SourceLibraryWidget extends ReactWidget {
   protected renderItems(items: SourceLibraryItem[]): React.ReactNode {
     return React.createElement(
       'section',
-      undefined,
-      React.createElement('h4', undefined, `Source Files (${items.length})`),
+      { className: 'afe-source-library-section' },
+      React.createElement('h4', undefined, `Files (${items.length})`),
       items.length === 0
         ? React.createElement('p', undefined, 'No source files found.')
         : React.createElement(
@@ -105,26 +108,114 @@ export class SourceLibraryWidget extends ReactWidget {
   protected renderCitations(citations: CitationEntry[]): React.ReactNode {
     return React.createElement(
       'section',
-      undefined,
+      { className: 'afe-source-library-section' },
       React.createElement('h4', undefined, `Citations (${citations.length})`),
       citations.length === 0
         ? React.createElement('p', undefined, 'No citations found.')
         : React.createElement(
           'ul',
           { className: 'afe-source-library-citations' },
-          ...citations.map(citation => React.createElement(
-            'li',
-            { key: citation.id },
-            React.createElement('strong', undefined, citation.title),
-            React.createElement('code', undefined, citation.id),
-            citation.source ? React.createElement('span', undefined, ` source: ${citation.source}`) : undefined,
-            citation.note ? React.createElement('p', undefined, citation.note) : undefined
-          ))
+          ...citations.map(citation => this.renderCitation(citation))
         )
+    );
+  }
+
+  protected renderCitation(citation: CitationEntry): React.ReactNode {
+    const title = citation.path
+      ? React.createElement(
+        'a',
+        {
+          className: 'afe-source-library-link',
+          href: '#',
+          title: `Open ${citation.path}`,
+          onClick: (event: React.MouseEvent) => {
+            event.preventDefault();
+            void this.openWorkspacePath(citation.path!);
+          }
+        },
+        citation.title
+      )
+      : React.createElement('strong', undefined, citation.title);
+
+    return React.createElement(
+      'li',
+      { key: citation.id },
+      title,
+      React.createElement('code', undefined, citation.id),
+      citation.source ? React.createElement('span', undefined, ` source: ${citation.source}`) : undefined,
+      citation.note ? React.createElement('p', undefined, citation.note) : undefined
+    );
+  }
+
+  protected renderExcerpts(excerpts: SourceExcerpt[]): React.ReactNode {
+    return React.createElement(
+      'section',
+      { className: 'afe-source-library-section' },
+      React.createElement('h4', undefined, `Excerpts (${excerpts.length})`),
+      excerpts.length === 0
+        ? React.createElement('p', undefined, 'No excerpts indexed.')
+        : React.createElement(
+          'ul',
+          { className: 'afe-source-library-excerpts' },
+          ...excerpts.map(excerpt => this.renderExcerpt(excerpt))
+        )
+    );
+  }
+
+  protected renderExcerpt(excerpt: SourceExcerpt): React.ReactNode {
+    const sourceLabel = excerpt.sourcePath || excerpt.sourceId;
+    const body = excerpt.targetPath
+      ? React.createElement(
+        'a',
+        {
+          className: 'afe-source-library-link',
+          href: '#',
+          title: `Open ${excerpt.targetPath}${excerpt.targetLine ? `:${excerpt.targetLine}` : ''}`,
+          onClick: (event: React.MouseEvent) => {
+            event.preventDefault();
+            void this.openWorkspacePath(excerpt.targetPath!, excerpt.targetLine);
+          }
+        },
+        excerpt.text
+      )
+      : React.createElement('span', { className: 'afe-source-library-excerpt-text' }, excerpt.text);
+
+    return React.createElement(
+      'li',
+      { key: excerpt.id },
+      body,
+      sourceLabel
+        ? React.createElement('span', { className: 'afe-source-library-excerpt-source' }, ` — ${sourceLabel}`)
+        : undefined,
+      excerpt.note ? React.createElement('p', undefined, excerpt.note) : undefined
     );
   }
 
   protected async openUri(uri: string): Promise<void> {
     await open(this.openerService, new URI(uri));
+  }
+
+  /**
+   * Open a workspace-relative path, optionally revealing a 1-based line.
+   * Excerpts and citations link source facts back to manuscript text (spec §5.4).
+   */
+  protected async openWorkspacePath(path: string, line?: number): Promise<void> {
+    const rootUri = this.snapshot?.rootUri;
+    if (!rootUri) {
+      return;
+    }
+    const uri = new URI(rootUri).resolve(path);
+    const options: EditorOpenerOptions | undefined = line && line > 0
+      ? { selection: this.toLineSelection(line) }
+      : undefined;
+    await open(this.openerService, uri, options);
+  }
+
+  protected toLineSelection(line: number): EditorOpenerOptions['selection'] {
+    const zeroBased = Math.max(0, line - 1);
+    return {
+      start: { line: zeroBased, character: 0 },
+      end: { line: zeroBased, character: 0 }
+    };
   }
 }
