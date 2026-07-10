@@ -60,6 +60,9 @@
       "frontend": "lib/browser/citation-editor-frontend-module"
     },
     {
+      "frontend": "lib/browser/excerpts-editor-frontend-module"
+    },
+    {
       "frontend": "lib/browser/ai-modes-editor-frontend-module"
     },
     {
