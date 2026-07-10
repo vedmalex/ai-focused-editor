@@ -22,7 +22,11 @@ import type {
   ManuscriptMoveTarget,
   ManuscriptWorkspaceSnapshot
 } from '../common';
-import { ManuscriptTreeNode } from './manuscript-tree';
+import {
+  AuthorMaterialsSectionTreeNode,
+  AuthorMaterialTreeNode,
+  ManuscriptTreeNode
+} from './manuscript-tree';
 import { ManuscriptTreeModel } from './manuscript-tree-model';
 
 const MANUSCRIPT_PATH_DATA_KEY = 'application/x-afe-manuscript-path';
@@ -61,10 +65,13 @@ export class ManuscriptTreeWidget extends TreeWidget {
   }
 
   protected async openManuscriptNode(node: Readonly<TreeNode>): Promise<void> {
-    if (!ManuscriptTreeNode.isFile(node) || !node.manuscript.uri) {
+    if (ManuscriptTreeNode.isFile(node) && node.manuscript.uri) {
+      await open(this.openerService, new URI(node.manuscript.uri));
       return;
     }
-    await open(this.openerService, new URI(node.manuscript.uri));
+    if (AuthorMaterialTreeNode.is(node) && node.materialUri) {
+      await open(this.openerService, new URI(node.materialUri));
+    }
   }
 
   refreshWorkspace(): Promise<ManuscriptWorkspaceSnapshot> {
@@ -80,7 +87,28 @@ export class ManuscriptTreeWidget extends TreeWidget {
     if (ManuscriptTreeNode.is(node) && !node.manuscript.buildIncluded) {
       classNames.push('afe-manuscript-excluded');
     }
+    if (AuthorMaterialsSectionTreeNode.is(node)) {
+      classNames.push('afe-tree-section');
+    }
     return classNames;
+  }
+
+  /**
+   * Render the material item's secondary text (entity/citation id, source or
+   * knowledge path) as a muted suffix after the label.
+   */
+  protected override renderTailDecorations(node: TreeNode, props: NodeProps): React.ReactNode {
+    const tail = super.renderTailDecorations(node, props);
+    const description = AuthorMaterialTreeNode.is(node) ? node.description : undefined;
+    if (!description) {
+      return tail;
+    }
+    return React.createElement(
+      React.Fragment,
+      undefined,
+      tail,
+      React.createElement('span', { className: 'afe-tree-item-description' }, description)
+    );
   }
 
   protected override createNodeAttributes(node: TreeNode, props: NodeProps): React.Attributes & React.HTMLAttributes<HTMLElement> {
@@ -162,7 +190,9 @@ export class ManuscriptTreeWidget extends TreeWidget {
 
   /**
    * Drop on a folder appends inside it; drop on a file inserts before that file
-   * within its parent; drop on empty space appends to the manifest root list.
+   * within its parent; drop on the Manuscript section header or empty space
+   * appends to the manifest root list. Non-manuscript sections and material
+   * leaves reject drops so author-materials nodes are never move targets.
    */
   protected resolveDropTarget(node: TreeNode | undefined, sourcePath: string): ManuscriptMoveTarget | undefined {
     if (ManuscriptTreeNode.isFolder(node)) {
@@ -187,6 +217,13 @@ export class ManuscriptTreeWidget extends TreeWidget {
       };
     }
 
+    // Reject drops onto non-manuscript sections and material leaves.
+    if (AuthorMaterialTreeNode.is(node)
+      || (AuthorMaterialsSectionTreeNode.is(node) && !AuthorMaterialsSectionTreeNode.isManuscript(node))) {
+      return undefined;
+    }
+
+    // Manuscript section header or empty container space appends to root.
     const rootChildren = this.manuscriptModel.snapshot?.content.length ?? 0;
     return {
       parentPath: undefined,
@@ -196,7 +233,7 @@ export class ManuscriptTreeWidget extends TreeWidget {
 
   protected markDropTarget(element: HTMLElement, node: TreeNode | undefined): void {
     this.clearDropTarget();
-    if (node === undefined || ManuscriptTreeNode.is(node)) {
+    if (node === undefined || ManuscriptTreeNode.is(node) || AuthorMaterialsSectionTreeNode.isManuscript(node)) {
       this.dropTargetElement = element;
       element.classList.add('afe-drop-target');
     }

@@ -204,6 +204,23 @@
   opacity: 0.55;
 }
 
+/* Section headers (Manuscript, Characters, Terms, …) read as group labels. */
+.afe-tree-section > .theia-TreeNodeContent > .theia-TreeNodeSegmentGrow,
+.afe-tree-section > .theia-TreeNodeContent .theia-TreeNodeSegmentGrow {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-tree-item-description {
+  margin-left: 8px;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+  opacity: 0.85;
+}
+
 /* ---------- entity cards ---------- */
 
 .afe-entity-cards-header {
@@ -989,4 +1006,144 @@
 .afe-semantic-history-chip.deleted {
   border-right: 3px solid var(--theia-errorForeground, rgba(190, 60, 60, 0.9));
   text-decoration: line-through;
+}
+
+/* ---------- source library copy affordance ---------- */
+
+.afe-source-library-copy {
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: var(--theia-ui-font-size0);
+}
+
+/* ---------- citation form editor ---------- */
+
+.afe-citation-editor {
+  padding: 10px 14px;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.afe-citation-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.afe-citation-editor-header h3 {
+  margin: 0;
+}
+
+.afe-citation-editor-count {
+  display: inline-block;
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-badge-foreground);
+  background: var(--theia-badge-background);
+  border-radius: 8px;
+  padding: 0 8px;
+}
+
+.afe-citation-editor-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 620px;
+}
+
+.afe-citation-editor-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--theia-input-border, transparent);
+  border-radius: 4px;
+  background: var(--theia-editorWidget-background, transparent);
+}
+
+.afe-citation-editor-row-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.afe-citation-editor-row-head .afe-citation-editor-field {
+  flex: 1;
+}
+
+.afe-citation-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.afe-citation-editor-field > span {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-citation-editor-field input,
+.afe-citation-editor-field textarea {
+  background: var(--theia-input-background);
+  color: var(--theia-input-foreground);
+  border: 1px solid var(--theia-input-border, transparent);
+  border-radius: 2px;
+  padding: 4px 6px;
+  outline: none;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.afe-citation-editor-field input:focus,
+.afe-citation-editor-field textarea:focus {
+  border-color: var(--theia-focusBorder);
+}
+
+.afe-citation-editor-delete {
+  flex: 0 0 auto;
+}
+
+.afe-citation-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.afe-citation-editor-problems {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.afe-citation-editor-problem {
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-citation-editor-problem.error {
+  color: var(--theia-inputValidation-errorForeground, var(--theia-editorError-foreground));
+}
+
+.afe-citation-editor-problem.warning {
+  color: var(--theia-inputValidation-warningForeground, var(--theia-editorWarning-foreground));
+}
+
+.afe-citation-editor-empty,
+.afe-citation-editor-help {
+  max-width: 620px;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-citation-editor-help {
+  margin-top: 12px;
 }
