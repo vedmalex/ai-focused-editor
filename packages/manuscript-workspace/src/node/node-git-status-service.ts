@@ -68,6 +68,22 @@ export class NodeGitStatusService implements GitStatusService {
     };
   }
 
+  async initRepository(rootUri?: string): Promise<{ ok: boolean; message: string }> {
+    if (!rootUri) {
+      return { ok: false, message: 'Open a workspace folder first.' };
+    }
+    const rootPath = this.toRootPath(rootUri);
+    const insideWorkTree = await this.git(rootPath, ['rev-parse', '--is-inside-work-tree']);
+    if (insideWorkTree === 'true') {
+      return { ok: false, message: 'This folder is already a git repository.' };
+    }
+    const output = await this.git(rootPath, ['init']);
+    if (output === undefined) {
+      return { ok: false, message: 'git init failed — is git installed and on PATH?' };
+    }
+    return { ok: true, message: output || 'Initialized empty git repository.' };
+  }
+
   async getSemanticHistory(rootUri?: string, limit?: number): Promise<SemanticHistoryResult> {
     if (!rootUri) {
       return { isRepository: false, entries: [] };

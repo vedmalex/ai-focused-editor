@@ -22,6 +22,7 @@
     "@theia/filesystem": "1.73.1",
     "@theia/markers": "1.73.1",
     "@theia/monaco-editor-core": "1.108.201",
+    "@theia/navigator": "1.73.1",
     "@theia/output": "1.73.1",
     "@theia/process": "1.73.1",
     "@theia/task": "1.73.1",

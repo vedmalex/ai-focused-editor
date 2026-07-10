@@ -52,6 +52,8 @@ export interface SemanticHistoryResult {
 
 export interface GitStatusService {
   getStatus(rootUri?: string): Promise<GitWorkspaceStatus>;
+  /** Runs `git init` in the workspace root; no-op with a message when already a repository. */
+  initRepository(rootUri?: string): Promise<{ ok: boolean; message: string }>;
   /**
    * Recent commits that touched semantic-domain paths (entities/, knowledge/,
    * manifest.yaml, metadata.yaml), newest first. `limit` defaults to 50.
