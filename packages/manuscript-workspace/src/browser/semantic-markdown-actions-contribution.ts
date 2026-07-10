@@ -10,10 +10,14 @@ import {
   CommandRegistry,
   MenuContribution,
   MenuModelRegistry,
-  MessageService
+  MessageService,
+  QuickInputService
 } from '@theia/core/lib/common';
 import URI from '@theia/core/lib/common/uri';
 import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
+import { open, OpenerService } from '@theia/core/lib/browser';
+import { FileService } from '@theia/filesystem/lib/browser/file-service';
+import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import type { TextEditor } from '@theia/editor/lib/browser/editor';
 import {
@@ -25,8 +29,20 @@ import {
   AI_FOCUSED_EDITOR_MENU_LABEL,
   AiFocusedEditorMenus
 } from './ai-focused-editor-menu';
+import {
+  buildEntityYaml,
+  createSemanticEntityId,
+  CreatableEntityKind,
+  entityRelativePath,
+  ENTITY_KIND_LABEL,
+  ENTITY_KIND_TAG,
+  selectionToSummary,
+  shouldWrapSelectionAsTag,
+  suggestEntityName,
+  uniqueRelativePath
+} from '../common/entity-creation';
 
-type SemanticQuickActionKind = 'char' | 'term' | 'artifact';
+type SemanticQuickActionKind = 'char' | 'term' | 'artifact' | 'location';
 
 export namespace SemanticMarkdownActionCommands {
   export const WRAP_SELECTION_AS_CHARACTER: Command = {
@@ -42,6 +58,31 @@ export namespace SemanticMarkdownActionCommands {
   export const WRAP_SELECTION_AS_ARTIFACT: Command = {
     id: 'ai-focused-editor.semanticMarkdown.wrapSelectionAsArtifact',
     label: 'AI Focused Editor: Wrap Selection as Artifact Tag'
+  };
+
+  export const WRAP_SELECTION_AS_LOCATION: Command = {
+    id: 'ai-focused-editor.semanticMarkdown.wrapSelectionAsLocation',
+    label: 'AI Focused Editor: Wrap Selection as Location Tag'
+  };
+
+  export const SAVE_SELECTION_AS_CHARACTER: Command = {
+    id: 'ai-focused-editor.semanticMarkdown.saveSelectionAsCharacter',
+    label: 'AI Focused Editor: Save Selection as New Character...'
+  };
+
+  export const SAVE_SELECTION_AS_TERM: Command = {
+    id: 'ai-focused-editor.semanticMarkdown.saveSelectionAsTerm',
+    label: 'AI Focused Editor: Save Selection as New Term...'
+  };
+
+  export const SAVE_SELECTION_AS_ARTIFACT: Command = {
+    id: 'ai-focused-editor.semanticMarkdown.saveSelectionAsArtifact',
+    label: 'AI Focused Editor: Save Selection as New Artifact...'
+  };
+
+  export const SAVE_SELECTION_AS_LOCATION: Command = {
+    id: 'ai-focused-editor.semanticMarkdown.saveSelectionAsLocation',
+    label: 'AI Focused Editor: Save Selection as New Location...'
   };
 
   export const COPY_TAG_SUMMARY: Command = {
@@ -79,6 +120,18 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
   @inject(ClipboardService)
   protected readonly clipboard!: ClipboardService;
 
+  @inject(QuickInputService)
+  protected readonly quickInput!: QuickInputService;
+
+  @inject(FileService)
+  protected readonly fileService!: FileService;
+
+  @inject(WorkspaceService)
+  protected readonly workspaceService!: WorkspaceService;
+
+  @inject(OpenerService)
+  protected readonly openerService!: OpenerService;
+
   registerCommands(registry: CommandRegistry): void {
     registry.registerCommand(SemanticMarkdownActionCommands.WRAP_SELECTION_AS_CHARACTER, {
       execute: () => this.wrapSelection('char')
@@ -88,6 +141,29 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
     });
     registry.registerCommand(SemanticMarkdownActionCommands.WRAP_SELECTION_AS_ARTIFACT, {
       execute: () => this.wrapSelection('artifact')
+    });
+    registry.registerCommand(SemanticMarkdownActionCommands.WRAP_SELECTION_AS_LOCATION, {
+      execute: () => this.wrapSelection('location')
+    });
+    registry.registerCommand(SemanticMarkdownActionCommands.SAVE_SELECTION_AS_CHARACTER, {
+      execute: () => this.saveSelectionAsEntity('character'),
+      isEnabled: () => this.hasMarkdownSelection(),
+      isVisible: () => this.hasMarkdownSelection()
+    });
+    registry.registerCommand(SemanticMarkdownActionCommands.SAVE_SELECTION_AS_TERM, {
+      execute: () => this.saveSelectionAsEntity('term'),
+      isEnabled: () => this.hasMarkdownSelection(),
+      isVisible: () => this.hasMarkdownSelection()
+    });
+    registry.registerCommand(SemanticMarkdownActionCommands.SAVE_SELECTION_AS_ARTIFACT, {
+      execute: () => this.saveSelectionAsEntity('artifact'),
+      isEnabled: () => this.hasMarkdownSelection(),
+      isVisible: () => this.hasMarkdownSelection()
+    });
+    registry.registerCommand(SemanticMarkdownActionCommands.SAVE_SELECTION_AS_LOCATION, {
+      execute: () => this.saveSelectionAsEntity('location'),
+      isEnabled: () => this.hasMarkdownSelection(),
+      isVisible: () => this.hasMarkdownSelection()
     });
     registry.registerCommand(SemanticMarkdownActionCommands.COPY_TAG_SUMMARY, {
       execute: () => this.copyTagSummary()
@@ -109,6 +185,11 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
       SemanticMarkdownActionCommands.WRAP_SELECTION_AS_CHARACTER,
       SemanticMarkdownActionCommands.WRAP_SELECTION_AS_TERM,
       SemanticMarkdownActionCommands.WRAP_SELECTION_AS_ARTIFACT,
+      SemanticMarkdownActionCommands.WRAP_SELECTION_AS_LOCATION,
+      SemanticMarkdownActionCommands.SAVE_SELECTION_AS_CHARACTER,
+      SemanticMarkdownActionCommands.SAVE_SELECTION_AS_TERM,
+      SemanticMarkdownActionCommands.SAVE_SELECTION_AS_ARTIFACT,
+      SemanticMarkdownActionCommands.SAVE_SELECTION_AS_LOCATION,
       SemanticMarkdownActionCommands.INSERT_FOOTNOTE,
       SemanticMarkdownActionCommands.COPY_TAG_SUMMARY,
       SemanticMarkdownActionCommands.NORMALIZE_TAGS
@@ -119,21 +200,22 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
     }
 
     const editorMenuPath = [...EDITOR_CONTEXT_MENU, ...EditorContextMenu.MODIFICATION];
-    menus.registerMenuAction(editorMenuPath, {
-      commandId: SemanticMarkdownActionCommands.WRAP_SELECTION_AS_CHARACTER.id
-    });
-    menus.registerMenuAction(editorMenuPath, {
-      commandId: SemanticMarkdownActionCommands.WRAP_SELECTION_AS_TERM.id
-    });
-    menus.registerMenuAction(editorMenuPath, {
-      commandId: SemanticMarkdownActionCommands.WRAP_SELECTION_AS_ARTIFACT.id
-    });
-    menus.registerMenuAction(editorMenuPath, {
-      commandId: SemanticMarkdownActionCommands.INSERT_FOOTNOTE.id
-    });
-    menus.registerMenuAction(editorMenuPath, {
-      commandId: SemanticMarkdownActionCommands.NORMALIZE_TAGS.id
-    });
+    for (const command of [
+      SemanticMarkdownActionCommands.WRAP_SELECTION_AS_CHARACTER,
+      SemanticMarkdownActionCommands.WRAP_SELECTION_AS_TERM,
+      SemanticMarkdownActionCommands.WRAP_SELECTION_AS_ARTIFACT,
+      SemanticMarkdownActionCommands.WRAP_SELECTION_AS_LOCATION,
+      SemanticMarkdownActionCommands.SAVE_SELECTION_AS_CHARACTER,
+      SemanticMarkdownActionCommands.SAVE_SELECTION_AS_TERM,
+      SemanticMarkdownActionCommands.SAVE_SELECTION_AS_ARTIFACT,
+      SemanticMarkdownActionCommands.SAVE_SELECTION_AS_LOCATION,
+      SemanticMarkdownActionCommands.INSERT_FOOTNOTE,
+      SemanticMarkdownActionCommands.NORMALIZE_TAGS
+    ]) {
+      menus.registerMenuAction(editorMenuPath, {
+        commandId: command.id
+      });
+    }
   }
 
   protected async wrapSelection(kind: SemanticQuickActionKind): Promise<void> {
@@ -181,6 +263,100 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
     } else {
       await this.messages.warn('Theia editor did not apply the semantic tag replacement.');
     }
+  }
+
+  /**
+   * "Save Selection as New <Kind>...": take the active Markdown editor's
+   * selection, ask for an entity name (prefilled from the leading words), then
+   * write a new `entities/<dir>/<id>.yaml` file, optionally wrap the selection
+   * as a `[[kind:id|label]]` semantic tag pointing at it, open the created file
+   * in the entity form editor, and report the result. Mirrors the "Save
+   * Selection as Citation..." UX in `source-library-view-contribution.ts`.
+   *
+   * The yaml `id` is always kept equal to the final filename stem — when a name
+   * collides on disk `uniqueRelativePath` suffixes the filename, and the tag we
+   * write points at that suffixed id so tags and files agree.
+   */
+  protected async saveSelectionAsEntity(kind: CreatableEntityKind): Promise<void> {
+    const editor = this.getMarkdownEditor();
+    if (!editor) {
+      await this.messages.warn('Open a Markdown editor before saving a selection as an entity.');
+      return;
+    }
+
+    const selection = editor.selection;
+    const selectedText = editor.document.getText(selection);
+    if (!selectedText.trim()) {
+      await this.messages.warn('Select text before saving it as a new entity.');
+      return;
+    }
+
+    const root = await this.getRoot();
+    if (!root) {
+      await this.messages.warn('Open a manuscript workspace before saving a selection as an entity.');
+      return;
+    }
+
+    const kindLabel = ENTITY_KIND_LABEL[kind];
+    const rawName = await this.quickInput.input({
+      title: `Save Selection as New ${kindLabel}`,
+      prompt: `${kindLabel} name`,
+      value: suggestEntityName(selectedText),
+      validateInput: async value => (value.trim() ? undefined : `${kindLabel} name cannot be empty.`)
+    });
+    if (rawName === undefined) {
+      return;
+    }
+    const name = rawName.trim();
+    if (!name) {
+      return;
+    }
+
+    const tagKind = ENTITY_KIND_TAG[kind];
+    const desiredPath = entityRelativePath(kind, createSemanticEntityId(tagKind, name));
+    const dirRelative = desiredPath.slice(0, desiredPath.lastIndexOf('/'));
+
+    // Snapshot the target directory so `uniqueRelativePath` can resolve a
+    // collision-free filename against a synchronous existence check.
+    const existing = new Set<string>();
+    const dirStat = await this.fileService.resolve(root.resolve(dirRelative)).catch(() => undefined);
+    for (const child of dirStat?.children ?? []) {
+      existing.add(`${dirRelative}/${child.name}`);
+    }
+    const finalPath = uniqueRelativePath(desiredPath, candidate => existing.has(candidate));
+    const finalId = finalPath.slice(finalPath.lastIndexOf('/') + 1).replace(/\.yaml$/, '');
+    const fileUri = root.resolve(finalPath);
+
+    try {
+      await this.ensureFolder(root.resolve(dirRelative));
+      await this.fileService.create(fileUri, buildEntityYaml({
+        id: finalId,
+        name,
+        summary: selectionToSummary(selectedText, name)
+      }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.messages.error(`Could not save ${kindLabel.toLowerCase()}: ${detail}`);
+      return;
+    }
+
+    if (shouldWrapSelectionAsTag(selectedText)) {
+      const safeLabel = selectedText.trim().replace(/[|\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (safeLabel) {
+        const leading = selectedText.match(/^\s*/)?.[0] ?? '';
+        const trailing = selectedText.match(/\s*$/)?.[0] ?? '';
+        await editor.replaceText({
+          source: `ai-focused-editor.semanticMarkdown.saveSelectionAs.${kind}`,
+          replaceOperations: [{
+            range: selection,
+            text: `${leading}[[${tagKind}:${finalId}|${safeLabel}]]${trailing}`
+          }]
+        });
+      }
+    }
+
+    await open(this.openerService, fileUri);
+    await this.messages.info(`Saved selection as ${kindLabel.toLowerCase()} ${tagKind}:${finalId}`);
   }
 
   protected async copyTagSummary(): Promise<void> {
@@ -329,27 +505,41 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
     return editor;
   }
 
+  /** True when a Markdown editor is active and its selection has non-blank text. */
+  protected hasMarkdownSelection(): boolean {
+    const editor = this.getMarkdownEditor();
+    if (!editor) {
+      return false;
+    }
+    return editor.document.getText(editor.selection).trim().length > 0;
+  }
+
+  protected async getRoot(): Promise<URI | undefined> {
+    await this.workspaceService.ready;
+    const root = this.workspaceService.tryGetRoots()[0] ?? (await this.workspaceService.roots)[0];
+    return root?.resource;
+  }
+
+  protected async ensureFolder(uri: URI): Promise<void> {
+    try {
+      await this.fileService.createFolder(uri);
+    } catch {
+      // Folder already exists — expected.
+    }
+  }
+
   protected isMarkdownEditor(editor: TextEditor): boolean {
     return editor.uri.path.ext.toLowerCase() === '.md' || editor.document.languageId === 'markdown';
   }
 
+  /**
+   * Thin wrapper over the shared, Theia-free `createSemanticEntityId` in
+   * `common/entity-creation.ts` (which mirrors this file's former local slug/hash
+   * pair byte-for-byte) so tag ids and the entity files they point at are
+   * generated by a single source of truth.
+   */
   protected createSemanticId(kind: SemanticQuickActionKind, label: string): string {
-    const slug = label.normalize('NFKD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9_.:-]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 48);
-
-    return slug || `${kind}-${this.hashLabel(label)}`;
-  }
-
-  protected hashLabel(label: string): string {
-    let hash = 0;
-    for (let index = 0; index < label.length; index++) {
-      hash = ((hash << 5) - hash + label.charCodeAt(index)) | 0;
-    }
-    return Math.abs(hash).toString(36);
+    return createSemanticEntityId(kind, label);
   }
 
   protected getKindLabel(kind: SemanticQuickActionKind): string {
@@ -360,6 +550,8 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
         return 'term';
       case 'artifact':
         return 'artifact';
+      case 'location':
+        return 'location';
     }
   }
 
