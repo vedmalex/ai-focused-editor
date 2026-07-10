@@ -2,23 +2,26 @@
 type: concept
 slug: ai-focused-editor-feature-map
 created_at: 2026-07-10T04:24:31Z
-updated_at: 2026-07-10T06:38:03Z
+updated_at: 2026-07-10T08:03:47Z
 ---
 
 # AI Focused Editor — Feature Map
 
 A complete, code-accurate map of the **AI Focused Editor**, a [Theia](https://theia-ide.org)-based writing IDE for long-form Markdown manuscripts with semantic tags, project knowledge, source-aware review, and multi-provider AI. It builds on Theia's [[contribution-points|contribution points]], [[widgets-and-views|widgets/views]], [[dependency-injection|DI]], [[frontend-backend-separation|frontend/backend separation]], [[theia-ai|Theia AI]], [[language-models|language models]], [[prompt-fragments]], and [[context-variables]].
 
-The product ships in one npm package: **`@ai-focused-editor/manuscript-workspace`** (`packages/manuscript-workspace`), which registers **six** Theia extension modules via `theiaExtensions` in its `package.json`:
+The product ships in one npm package: **`@ai-focused-editor/manuscript-workspace`** (`packages/manuscript-workspace`), which registers **nine** Theia extension entries via `theiaExtensions` in its `package.json` (one carries both a frontend and a backend module; the rest are frontend-only):
 
 | Module | Front/back | Purpose |
 |--------|-----------|---------|
-| `manuscript-workspace-frontend-module` + `manuscript-workspace-backend-module` | both | Core: unified author navigator, preview, model-config, AI debug, sources, AI stack, chat agent, tools, markdown grammar, git actions |
+| `manuscript-workspace-frontend-module` + `manuscript-workspace-backend-module` | both | Core: unified author navigator, preview, model-config, AI debug, sources, AI stack, chat agent, tools, markdown grammar, git actions, AI profile status bar, AI-mode prompt fragments |
 | `entity-editor-frontend-module` | frontend | Form-based entity YAML editor (FR-025) |
 | `citation-editor-frontend-module` | frontend | Form-based `sources/citations.yaml` editor (default opener) |
+| `book-config-editor-frontend-module` | frontend | Wave-8 form editors for workspace-root `metadata.yaml` + `manifest.yaml` (default openers, priority 500; Edit Book Metadata… / Edit Manifest…) |
 | `knowledge-generation-frontend-module` | frontend | Chapter summaries / scene plans / author questions (FR-011) |
+| `ai-mode-dynamic-frontend-module` | frontend | Author-defined AI modes as dynamic editor commands / context-menu entries / chat agents (see *AI Stack*) |
 | `narrative-graph-frontend-module` | frontend | Narrative Map view + narrative-graph service proxy (FR-007) |
 | `semantic-history-frontend-module` | frontend | Read-only semantic (git) history view (FR-017) |
+| `ai-rotation-frontend-module` | frontend | Live `Switch AI Alias…` / `Switch AI Endpoint…` rotation commands (see *AI Stack*) |
 
 Supporting packages: **`@ai-focused-editor/semantic-markdown`** (`[[kind:id|label]]` parse/validate/normalize/preview), **`@ai-focused-editor/book-export`** (EPUB/PDF/HTML generators), and **`@ai-focused-editor/git`** — a temporary local fork of `@theia/git@1.60.2` rebuilt for Theia 1.73 (`packages/theia-git-fork`, see *Git & History*). The AI transport layer is the external **`@vedmalex/ai-connect`** library.
 
@@ -35,7 +38,7 @@ Widget IDs are the `static readonly ID` on each widget class; every view is togg
 | **Semantic Preview** | `ai-focused-editor.semantic-markdown.preview` | right (220) | `ai-focused-editor.semanticMarkdown.preview.open` | `fa fa-eye` | Live preview of the active `.md`; `[[kind:id\|label]]` → **label** _(kind:id)_; GFM task lists render as `☐`/`☑` glyphs; optional tag-chip row (pref `aiFocusedEditor.preview.showTagChips`). **`ExtractableWidget`** (`isExtractable = true`) — tears off to its own OS window (FR-021) |
 | **Knowledge Cards** | `ai-focused-editor.entity-cards` | right (220) | `ai-focused-editor.entities.openCards` | `fa fa-address-card` | Entity cards grouped **Characters → Artifacts → Locations → Terms**; each card: label+kind badge, id, aliases, epithets, summary, arc, collapsible speech patterns / backstory / notes, "Open YAML" |
 | **Narrative Map** | `ai-focused-editor.narrative-map` | right (230) | `ai-focused-editor.narrative.openMap` | `fa fa-project-diagram` | Timeline (artifact ownership chains + per-chapter entity chips) and a **Relations SVG graph** (ring layout, node radius ∝ appearances, edge width ∝ co-occurrence) |
-| **AI Model Config** | `ai-focused-editor.model-config` | right (230) | `ai-focused-editor.modelConfig.open` | `fa fa-sliders` | Multi-profile list (drag-reorder, radio=active, clone/delete), edit form (label/provider/model/transport/account/endpoint/allowed-models/API key), buttons: Save, Verify Active, Use Local Proxy, Discover Models |
+| **AI Model Config** | `ai-focused-editor.model-config` | right (230) | `ai-focused-editor.modelConfig.open` | `fa fa-sliders` | Stacked sections: **Endpoints** (channels) and **Aliases** (chains) managed lists **above** the legacy profiles list. Endpoint editor draft has a **Verify** button (test-connect a model without saving) and **verify-on-configure** (auto-verify ping after saving a new endpoint); per-endpoint availability windows. **Import ai-editor v1 Settings…** reads `rag-endpoints.json`/`rag-aliases.json`. Legacy **Profiles**: drag-reorder, radio=active, clone/delete, edit form (label/provider/model/transport/account/endpoint/allowed-models/API key), buttons: Save, Verify Active, Use Local Proxy, Discover Models |
 | **AI Debug** | `ai-focused-editor.ai-debug` | right (240) | `ai-focused-editor.aiDebug.open` | `fa fa-bug` | Provider/Profile status table, Project AI Modes, Active Editor, Manuscript Context dump, and a **Request Log**: kind select (`Chat requests` / `Context snapshots`), day picker (`listHistoryDays`), Refresh, Open JSONL; per-entry route chip + JSON |
 | **Semantic History** | `ai-focused-editor.semantic-history` | right (240) | `ai-focused-editor.semantic-history.open` | `fa fa-history` | Read-only git history filtered to semantic-domain commits (`getSemanticHistory`, limit 50); per-commit entity/path change chips (add/modify/delete/rename) |
 | **Entity Form Editor** | factory `ai-focused-editor.entity-editor` (widget id `FACTORY_ID:<uri>`) | main | opener (priority 500) + `ai-focused-editor.entity.openFormEditor` | `fa fa-id-badge` | Structured form for entity YAML. Default opener for `entities/{characters,artifacts,locations,terms}/*.yaml`; preserves comments/unknown keys via `yaml` `parseDocument` |
@@ -44,7 +47,7 @@ Widget IDs are the `static readonly ID` on each widget class; every view is togg
 **The unified author navigator** (`author-materials.ts` + `manuscript-tree-*.ts`) replaces the old manuscript-only tree. Section order and labels are fixed by `AUTHOR_MATERIALS_SECTION_ORDER`; each header renders as `Label (count)` via `formatSectionLabel` (only **Manuscript** starts expanded). Counts: manuscript = recursive leaf-file count; entity sections = filtered entity-list length; Citations = citation count; Sources/Knowledge = recursive material-file count. Files surface only via **`isAllowedMaterialFile`** (documents `.md .markdown .txt .pdf .doc .docx .odt .rtf .epub .html .htm`, images `.png .jpg .jpeg .gif .svg .webp .tif .tiff .bmp`, structural `.yaml .yml .json .jsonl`; dotfiles rejected; Knowledge further narrows to `.yaml/.yml/.md`). Characters/Terms/Artifacts/Locations/Citations are flat; **Sources and Knowledge keep nested folder structure** (`buildMaterialFileTree`, empty folders pruned). Icons are codicons with per-kind accents (`.afe-ico-manuscript` blue, `.afe-ico-characters` purple, `.afe-ico-terms` green, `.afe-ico-artifacts` orange, `.afe-ico-locations` red, `.afe-ico-citations`/`.afe-ico-knowledge` yellow, `.afe-ico-sources` description-foreground — `style/index.css`). On a fresh layout the navigator opens revealed (not the developer file explorer).
 
 **Status bar contributions** (`FrontendApplicationContribution`s):
-- **AI profile** (`ai-focused-editor.ai-profile-status`, right, priority 120): `AI: <label> · provider/model` or `⚠ AI: configure`; click opens Model Config; tooltip shows failover-chain length, transport, API-key state.
+- **AI profile** (`ai-focused-editor.ai-profile-status`, right, priority 120): in **alias mode** reads `$(symbol-misc) [$(pin) ]AI: <alias> · <endpoint>` (the `$(pin)` prefix appears when an endpoint is pinned); in legacy profile mode `$(symbol-misc) AI: <label> · provider/model`; `$(warning) AI: configure` when incomplete. Click opens Model Config; tooltip lists alias/endpoint, pinned endpoint, failover-chain length, transport, API-key state, and any skipped endpoints with reasons.
 - **Git** (`ai-focused-editor.git-status`, left, priority 100): `$(source-control) <branch> •<dirty> ↑ahead ↓behind`; polls every 15 s (`REFRESH_INTERVAL_MS`) + 1.5 s-debounced file-change refresh; read-only (commits stay manual).
 
 **Focus Mode** (`ai-focused-editor.focusMode.toggle`): collapses left/right/bottom panels around the editor and restores them on toggle.
@@ -53,9 +56,9 @@ Widget IDs are the `static readonly ID` on each widget class; every view is togg
 
 ## Menu & Commands
 
-The product menu lives under `MAIN_MENU_BAR` at path `['8_ai_focused_editor']`, label **Manuscript** (`ai-focused-editor-menu.ts`). The menu tree is registered by a **single central `registerSubmenu` block** in `ManuscriptWorkspaceMenuContribution.registerMenus` (`manuscript-workspace-contribution.ts`): the `MAIN` menu plus six submenus — `2_semantic-markdown` (Semantic Markdown), `3_build` (Build), `4_knowledge` (Knowledge), `5_sources` (Sources), `6_ai-modes` (AI Modes), `7_ai-debug` (AI Debug). All other contributions only add `registerMenuAction`s (repeated `registerSubmenu` for the same path would create duplicate menu-bar entries — enforced by the `AFE-02-MENU-NO-DUPLICATES` UI flow check).
+The product menu lives under `MAIN_MENU_BAR` at path `['8_ai_focused_editor']`, label **Manuscript** (`ai-focused-editor-menu.ts`). The menu tree is registered by a **single central `registerSubmenu` block** in `ManuscriptWorkspaceMenuContribution.registerMenus` (`manuscript-workspace-contribution.ts`): the `MAIN` menu plus six submenus — `2_semantic-markdown` (Semantic Markdown), `3_build` (Build), `4_knowledge` (Knowledge), `5_sources` (Sources), `6_ai-modes` (AI Modes), `7_ai-debug` (AI Debug). All other contributions only add `registerMenuAction`s (repeated `registerSubmenu` for the same path would create duplicate menu-bar entries — enforced by the `AFE-02-MENU-NO-DUPLICATES` UI flow check) — e.g. the rotation commands (`Switch AI Alias…`/`…Endpoint…`) and the book-config actions (`Edit Book Metadata…`/`Edit Manifest…`, group `1_book-config`) add actions into `MAIN`. The one other `registerSubmenu` lives in a **different** menu (the editor context menu): `AiModeDynamicContribution` registers the dynamic **AI Modes** submenu there once for the app lifetime (see *AI Stack*).
 
-Command table (**55 commands**, `id | label | menu | keybinding`). Category is `AI Focused Editor` throughout.
+Command table (**57 commands**, `id | label | menu | keybinding`). Category is `AI Focused Editor` throughout (rotation commands too). Author-defined AI modes also register **dynamic** per-mode run commands (`ai-focused-editor.mode.run.<id>`, category **AI Modes**) at runtime — one per `menu: true` mode — which are not counted here (see *AI Stack*).
 
 | Command id | Label | Menu | Keybinding |
 |------------|-------|------|-----------|
@@ -74,6 +77,8 @@ Command table (**55 commands**, `id | label | menu | keybinding`). Category is `
 | `ai-focused-editor.ai.verifyProfile` | Verify AI Profile | Manuscript | — |
 | `ai-focused-editor.ai.suggestCoreference` | Suggest Coreference Tags | Manuscript + editor ctx (z2) | — |
 | `ai-focused-editor.ai.reviewChapter` | **AI Review Current Chapter** | Manuscript + editor ctx (z3) | — |
+| `ai-focused-editor.ai.switchAlias` | **Switch AI Alias…** | Manuscript (1_rotation_a) | — |
+| `ai-focused-editor.ai.switchEndpoint` | **Switch AI Endpoint…** | Manuscript (1_rotation_b) | — |
 | `ai-focused-editor.git.initRepository` | **Initialize Git Repository** | Manuscript (z8) | — |
 | `reset.layout` (built-in) | **Reset Workbench Layout (This Folder)** | Manuscript (z9) | — |
 | `ai-focused-editor.git.addToGitignore` | **Add to .gitignore** | navigator context (z_afe) | — |
@@ -114,7 +119,7 @@ Command table (**55 commands**, `id | label | menu | keybinding`). Category is `
 
 The editor context menu (`EDITOR_CONTEXT_MENU` + `MODIFICATION`) carries the writer AI actions — Improve Selected (z1), Suggest Coreference (z2), AI Review Current Chapter (z3) — plus Save Selection as Citation (z3, from the source-library contribution) and the Semantic Markdown wrap/normalize actions.
 
-Preferences are defined in `ai-focused-editor-preferences.ts` (see [[preferences-system]]), scope Folder. AI keys under `aiFocusedEditor.ai.*`: `provider`, `model`, `apiKey`, `endpointUrl`, `transportKind` (`api|proxy|acp|cli|server`), `transportId`, `profileId`, plus the multi-profile keys **`profiles`** (array), **`activeProfile`** (id), **`apiKeys`** (object, per-profile, User scope). Legacy single keys apply only when `profiles` is empty. New: **`aiFocusedEditor.preview.showTagChips`** (boolean, default `true`) — shows/hides the tag-chip row atop Semantic Preview; toggled by `…preview.toggleTagChips` (written to User scope).
+Preferences are defined in `ai-focused-editor-preferences.ts` (see [[preferences-system]]), scope Folder. AI keys under `aiFocusedEditor.ai.*`: `provider`, `model`, `apiKey`, `endpointUrl`, `transportKind` (`api|proxy|acp|cli|server`), `transportId`, `profileId`, plus the multi-profile keys **`profiles`** (array), **`activeProfile`** (id), **`apiKeys`** (object, keyed by profile **or endpoint** id, User scope). The **two-level connection model** adds **`endpoints`** (array of channels — see *AI Stack*), **`aliases`** (array of endpoint→model chains), **`activeAlias`** (id, the user default), and **`pinnedEndpoint`** (id pinned to the front of the active chain). Resolution ladder: whenever at least one alias exists, the active alias chain supersedes `profiles`; `profiles` supersede the legacy single `aiFocusedEditor.ai.*` keys (which apply only when `profiles` is empty). **`aiFocusedEditor.preview.showTagChips`** (boolean, default `true`) — shows/hides the tag-chip row atop Semantic Preview; toggled by `…preview.toggleTagChips` (written to User scope).
 
 ---
 
@@ -143,9 +148,19 @@ Bridges the app to [[theia-ai]] and [[language-models]] via `@vedmalex/ai-connec
 
 **Streaming push channel**: `LocalAiConnectionServicePath` is a **duplex** RPC — the frontend registers `LocalAiStreamClientImpl` as the callback client; `NodeLocalAiConnectionService.startStream` `emit`s `{type:'delta'|'result'|'end'|'error'}` wire events to all connected clients; `cancelStream` aborts. `BrowserAiConnectionService.streamLocalTransport` drains those pushes into an async iterator.
 
-**Multi-profile registry** (`ai-profile-preference-service.ts`, bound as `ModelProviderRegistry`): named `profiles` in Folder scope; `apiKeys` (per-profile) in User scope. **Failover chain** = active profile first, then remaining `enabled` profiles in list order, incomplete profiles filtered out.
+**Multi-profile registry** (`ai-profile-preference-service.ts`, bound as `ModelProviderRegistry`): named `profiles` in Folder scope; `apiKeys` (keyed by profile **or** endpoint id) in User scope. **Failover chain** = active profile first, then remaining `enabled` profiles in list order, incomplete profiles filtered out. This registry also owns the two-level endpoints/aliases model (below): when any alias exists it runs in **alias mode** and the active alias chain becomes the failover chain.
 
 **Failover**: `generateWithFailover` (`ai-failover.ts`) tries the chain in order, returns first success, throws an aggregate error if all fail. The Theia AI streaming path retries onto the next profile only while nothing has been emitted.
+
+**Two-level connection model** (`common/ai-alias-resolution.ts` + `common/ai-time-windows.ts`, resolved by `ai-profile-preference-service.ts`) separates *where/how to reach a provider* from *which chain to try*:
+
+- **Endpoints** (`StoredAiEndpoint`, pref `aiFocusedEditor.ai.endpoints`) are channels: `id`, `provider`, `transportKind`/`transportId`, `endpointUrl`, `command`, `env`, `enabled`, and **`timeWindows`** — compact availability strings. Secrets are **never** stored on the endpoint; API keys live in the `apiKeys` User-scope map keyed by endpoint id. The record also accepts ai-editor v1 fallback fields (`transport`, `url`/`endpoint`, `apiKey`/`token`) so a freshly imported endpoint resolves identically.
+- **Availability windows** (`isWithinWindows`/`parseTimeWindows`): strings like `"09:00-18:00"` (daily), `"1-5 09:00-18:00"` (ISO weekday **range** prefix, 1=Mon..7=Sun), `"6,7 10:00-14:00"` (weekday **set**), `"22:00-06:00"` (**overnight**, wraps past midnight, matched against the correct start day). Matching is local wall-clock. Empty/absent list = always on; malformed entries are skipped with a warning flag, and an **all-malformed** list is treated as always available (**fail-open**, never silently unreachable).
+- **Aliases** (`StoredAiAlias`, pref `aiFocusedEditor.ai.aliases`) are ordered **chains** of `{ endpointId, model }` legs. **`activeAlias`** (default = first alias) is the user default; **`pinnedEndpoint`** moves its legs to the front of the chain.
+- **Resolution** (`resolveChainFromConfig`): reorder-for-pin, then for each leg emit an `AiConnectionProfile` (`resolveEndpointLeg`, with the v1 field fallbacks and the user-scope secret) **unless** the endpoint is missing, `enabled: false`, or outside its time window — those legs are collected in a **`skipped`** list with a `ChainSkipReason` (`missing-endpoint` | `disabled` | `outside-time-window`) surfaced in the status-bar tooltip and Model Config. **Resolution ladder**: alias mode (any alias exists) → active alias chain; else `profiles`; else legacy single keys.
+- **v1 import** (`parseV1Import`): normalizes `rag-endpoints.json` + `rag-aliases.json` into endpoints/aliases with the exact fallbacks (`apiKey|token`, `url|endpoint`, `transport`, provider default `openai`), pulling secrets out into the `apiKeys` map.
+
+**Rotation commands** (`ai-rotation-contribution.ts`, its own `ai-rotation-frontend-module`): **Switch AI Alias…** (`ai.switchAlias`) sets `activeAlias`; **Switch AI Endpoint…** (`ai.switchEndpoint`) pins an endpoint to the front of the active chain (or clears the pin). The quick-picks badge each entry with availability-now / disabled / window / malformed-window state and mark the active alias (`$(check)`) and pinned endpoint (`$(pin)`).
 
 **Theia AI integration** (`ai-connect-theia-language-model.ts`): registers `AiConnectTheiaLanguageModel` (id `ai-focused-editor.ai-connect`) as a Theia `LanguageModelProvider`. Maps Theia messages/tools ↔ ai-connect; **tools** become ai-connect `clientTools` executed in-process (effective only on `api`). **Provenance**: every request is logged to AI history (`kind: 'theia-ai-language-model-request'`) with `sessionId`/`requestId`/`agentId`/`promptVariantId`/`route`, the **bounded outgoing messages** (`toLoggedMessages`, each truncated at `MAX_MESSAGE_CHARS = 4000`), the **tool names** (`clientTools[].function.name`), the **response text** (truncated at `MAX_RESPONSE_CHARS = 12000`), `warnings`, and `usage`.
 
@@ -170,7 +185,12 @@ Bridges the app to [[theia-ai]] and [[language-models]] via `@vedmalex/ai-connec
 
 **Prompt fragments** ([[prompt-fragments]], `ai-mode-prompt-fragment-contribution.ts`): each project **AI mode** becomes a built-in prompt fragment `ai-focused-editor.project-mode.<id>`, exposed as chat command `afe-<id>`; re-synced on workspace/file changes.
 
-**AI modes** shipped in `examples/sample-book/ai/prompts/custom-modes.yaml` (`version: 1`, **8 modes**; each: `id`, `label`, `description`, `systemPrompt`, optional `userPrompt`, `parameters.temperature`):
+**Author-defined AI modes (dynamic)** (`common/ai-mode-protocol.ts` + `ai-mode-dynamic-contribution.ts`, its own `ai-mode-dynamic-frontend-module`). Beyond the original prompt fields, an `AiMode` may now declare **`context`** (`selection` | `word` | `chapter` | `chat`, default `chat` — the input source), **`menu`** (expose in the editor context menu), **`apply`** (`replace` | `insert` | `chat` — how the result is delivered; `replace`/`insert` collapse to `chat` outside `selection`/`word`, resolved by `resolveAiModeApply`), **`agent`** (register the mode as a chat `@agent`), and **`icon`** (codicon name). A single `FrontendApplicationContribution` owns the lifecycle:
+- **Dynamic "AI Modes" submenu** in the editor context menu (`[...EDITOR_CONTEXT_MENU, 'ai-focused-editor-modes']`): one command (`ai-focused-editor.mode.run.<id>`, category **AI Modes**) per `menu: true` mode, each **context-aware enabled** — a `selection` mode needs a selection, `word` a word under the cursor, `chapter` an active markdown editor, `chat` always on (the same check re-applies when run from the command palette).
+- **Delivery**: `replace`/`insert` modes build a native **Change Set** (modify element, opened as a diff in the chat view for Accept/Reject), generated through the failover chain; `chat` modes route via `ChatService.sendRequest` into the active/new session (prefixed `@<agent-name>` when the mode is also an agent).
+- **Chat `@agents`**: `agent: true` modes are registered via `CustomAgentFactory` (backed by the ai-connect language model, prompt referencing `{{manuscript}}`) and **hot re-registered** — `ChatAgentService`/`AgentService` unregister on change, so editing or removing a mode updates its agent live without an app reload. Runs are logged to AI history (`kind: 'ai-mode-run'`). Re-synced (300 ms debounce) on workspace/`custom-modes.yaml` changes.
+
+**AI modes** shipped in `examples/sample-book/ai/prompts/custom-modes.yaml` (`version: 1`, **10 modes**; each: `id`, `label`, `description`, `systemPrompt`, optional `userPrompt`, `parameters.temperature`, plus the optional `context`/`menu`/`apply`/`agent`/`icon` fields above):
 
 | id | Purpose |
 |----|---------|
@@ -182,6 +202,8 @@ Bridges the app to [[theia-ai]] and [[language-models]] via `@vedmalex/ai-connec
 | `author-questions` | Developmental questions → JSON `{questions:[]}` |
 | `coreference-tags` | Wrap untagged references as `[[kind:id\|surface]]`, return full Markdown |
 | `analyze-source` | Extract `{excerpts[], citations[]}` from a source doc |
+| `rewrite-dialogue` | **Showcase** `context: selection`, `menu: true`, `apply: replace`, `icon: comment-discussion` — rewrites selected dialogue and delivers it as a reviewable Change Set diff |
+| `lore-keeper` | **Showcase** `context: chat`, `agent: true`, `icon: book` — answers questions about the book world as chat `@lore-keeper`, grounded in `{{manuscript}}` |
 
 (Command handlers fall back to built-in prompts when a mode is absent.)
 
@@ -297,25 +319,30 @@ Browser-only (no RPC): `AiConnectionService` → `BrowserAiConnectionService`; `
 
 ## Test Inventory
 
-Runner: **`bun test`** (`bun:test`); root script `"test": "bun test packages"`. **186 `test()` cases across 15 files.**
+Runner: **`bun test`** (`bun:test`); root script `"test": "bun test packages"`. **297 `test()` cases across 20 files** (`bun test packages` → 297 pass; includes live-validation, EPUB footnote, and PDF-extraction additions landed alongside wave 9's refresh).
 
 | Test file | Tests | Covers |
 |-----------|:----:|--------|
 | `packages/book-export/src/epub-generator.test.ts` | 7 | EPUB generation: nav tree, XHTML conversion, OPF/NCX, cover embed, ZIP structure |
 | `packages/book-export/src/markdown-converter.test.ts` | 3 | Markdown→`TelegraphNode` conversion (incl. GFM strikethrough/tables/task-list glyphs) |
 | `packages/book-export/src/pdf-generator.test.ts` | 6 | HTML→PDF via puppeteer (Chrome-gated `test.skipIf`) |
+| `common/ai-alias-resolution.test.ts` | 15 | `resolveEndpointLeg` v1 field parity; `resolveChainFromConfig` (skip reasons, pin reorder, alias fallback); `parseV1Import` |
 | `common/ai-connect-config.test.ts` | 17 | Local-proxy defaults; endpoint/model-probe URL normalization; catalog exposure; config-input build per transport; route-selector composition |
 | `common/ai-failover.test.ts` | 4 | `generateWithFailover`: first success, fail-over records, aggregate error, empty chain |
 | `common/ai-history-log.test.ts` | 7 | `parseHistoryJsonl`: valid/malformed/blank lines, newest-first, limit/default-100, field defaults |
+| `common/ai-time-windows.test.ts` | 19 | `parseTimeWindows`/`isWithinWindows`: daily / weekday-set / weekday-range / overnight windows; malformed-skip; fail-open |
 | `common/author-materials.test.ts` | 16 | `buildAuthorMaterialsSections` (8-section order, counts, expand default); `isAllowedMaterialFile`/`isKnowledgeFile` (dotfile/extension rules); nested vs flat trees |
+| `common/book-config-forms.test.ts` | 21 | `extractMetadataFields`/`validateMetadata` (known + unknown keys); `normalizeManifestPath` + manifest rows (book-config form editors) |
+| `common/entity-mentions.test.ts` | 7 | `extractEntityMentions`: `[[kind:id\|label]]` and bare `[[id]]` fallback forms |
 | `common/knowledge-generation.test.ts` | 22 | `slugifyChapter`; `extractJsonValue`; `coerceSummary`/`coercePlan`/`coerceQuestions` |
 | `common/source-analysis.test.ts` | 24 | `coerceSourceAnalysis`; `normalizeExcerpts`/`normalizeCitations`; `buildExcerptRecords`; `dedupeCitations` |
-| `node/node-book-build-service.test.ts` | 23 | `slugifyBase`/`createSlugger`/`naturalCompare`; TOC + anchors; `include:false` exclusion; GFM task-list checkboxes/tables; EPUB zip; PDF magic-header (Chrome-gated) |
-| `node/node-domain-knowledge-service.test.ts` | 25 | `NodeNarrativeEntityService`; `NodeSourceLibraryService` (recursive listing, citations/excerpts, diagnostics); `NodeAiModeRegistryService` |
+| `common/word-at-offset.test.ts` | 15 | `wordAtOffset` cursor word-boundary detection (drives the AI-mode `word` context) |
+| `node/node-book-build-service.test.ts` | 25 | `slugifyBase`/`createSlugger`/`naturalCompare`; TOC + anchors; `include:false` exclusion; GFM task-list checkboxes/tables; EPUB zip; PDF magic-header (Chrome-gated) |
+| `node/node-domain-knowledge-service.test.ts` | 32 | `NodeNarrativeEntityService`; `NodeSourceLibraryService` (recursive listing, citations/excerpts, diagnostics); `NodeAiModeRegistryService` |
 | `node/node-git-status-service.test.ts` | 8 | `getSemanticHistory` on a real scratch repo (`describe.skipIf(!git)`): ordering, metadata, entity kind/id, rename, limit, non-repo cases |
 | `node/node-manuscript-workspace-service.test.ts` | 9 | Manifest mutations (reorder, comment-preserving rewrite, move-into-folder, rejects); build-inclusion toggle; unicode-slug chapter creation; duplicate-path diagnostics |
 | `node/node-narrative-graph-service.test.ts` | 8 | `getSnapshot`: timeline/`include` propagation; appearance counts; co-occurrence weights; node ranking; ownership chains; malformed-ownership diagnostics |
-| `packages/semantic-markdown/src/semantic-markdown.test.ts` | 7 | `parseSemanticMarkdown`/`renderSemanticMarkdownPreview`/`validateSemanticMarkdown`/`normalizeSemanticMarkdownTags` |
+| `packages/semantic-markdown/src/semantic-markdown.test.ts` | 12 | `parseSemanticMarkdown`/`renderSemanticMarkdownPreview`/`validateSemanticMarkdown`/`normalizeSemanticMarkdownTags` |
 
 **UI flow pack** (`scripts/ui-flows`, `bun run test:ui:flows` → `run-flow-checks.sh` boots the browser app against `examples/sample-book` and drives the `playwright-flow-scenario-builder` runner over `afe-flow-pack.mjs`): **6 scenarios** — `AFE-01-SHELL-BOOT` (workbench boot), `AFE-02-MENU-NO-DUPLICATES` (single Manuscript/Knowledge/Build menu), `AFE-03-MANUSCRIPT-TREE` (tree nodes incl. excluded), `AFE-04-EDITOR-PREVIEW` (open chapter + semantic preview), `AFE-05-MODEL-CONFIG` (AI Profiles panel), `AFE-06-BUILD-MENU` (all four build entries present).
 

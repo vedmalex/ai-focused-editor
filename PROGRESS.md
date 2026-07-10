@@ -1,6 +1,6 @@
 # AI Focused Editor Progress
 
-Updated: 2026-07-10 (wave 9 — endpoints/aliases, author agents)
+Updated: 2026-07-10 (wave 10 — live validation, EPUB footnotes, PDF analysis)
 
 This file tracks implementation progress against `spec.md`. It records verified repository state, not planned intent.
 
@@ -154,10 +154,15 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **Author-defined prompts & agents**: `custom-modes.yaml` gains `context: selection|word|chapter|chat`, `menu`, `apply: replace|insert|chat`, `agent`, `icon`. `menu:true` modes appear as dynamic entries in an "AI Modes" editor context submenu with context-aware enablement (selection/word-under-cursor/chapter); replace/insert deliver Change Set diffs; chat modes route via ChatService (prefixed `@agent` when applicable). `agent:true` modes register as chat @agents with hot re-registration on yaml edits (add/edit/remove — no reload). Sample gains `rewrite-dialogue` and `lore-keeper`.
 - Tests: 277 across 21 files (time windows, alias resolution incl. v1 parity, mode field parsing, word-at-offset).
 
+## Wave 10 — Live validation, EPUB footnotes, PDF analysis (shipped)
+
+- **Live incremental validation** (the practical value of the LSP item): the active document lints as the author types (400ms debounce, unsaved buffer) — semantic Markdown, entity YAML schemas, manifest/metadata; markers under a dedicated `ai-focused-editor.live` owner; gated by `aiFocusedEditor.validation.live` (default on). The manual whole-workspace command stays complementary.
+- **EPUB footnotes**: `[^N]` references render as sup anchors with per-chapter unique ids and an end-of-chapter Notes section with back-links (sentinel-through-AST technique; generic `transformNodes` hook added to EpubGenerator so book-export stays footnote-agnostic).
+- **PDF source analysis**: `Analyze Source Document...` now accepts PDFs — backend `extractSourceText` extracts text via lazy-required `unpdf` (zero hard deps, stays out of the esbuild bundle), with graceful failure paths; feeds the existing 24k-capped AI flow.
+- Feature map in `.llm-wiki` refreshed for waves 9–10 (9 modules, 57 commands, connection-model + dynamic-modes sections).
+- Tests: 297 across 20 files.
+
 ## Backlog (queued)
 
-1. Dedicated LSP for incremental text validation (supersedes the backend-RPC validation path).
+1. Full LSP transport if live validation ever needs cross-file incremental analysis (current backend-RPC path covers the active-document case).
 2. Drop the git fork when a platform-compatible `@theia/git` ships; exercise the fork on the electron target.
-3. PDF text extraction for the §5.4 source analyzer.
-4. EPUB footnote rendering (currently GFM source passes through).
-5. Refresh the llm-wiki feature map after wave 9 (endpoints/aliases, rotation commands, dynamic AI Modes menu, author agents).
