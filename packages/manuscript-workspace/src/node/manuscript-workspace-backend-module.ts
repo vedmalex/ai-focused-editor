@@ -2,7 +2,9 @@ import { BackendApplicationContribution } from '@theia/core/lib/node';
 import { injectable, ContainerModule } from '@theia/core/shared/inversify';
 import { ConnectionHandler } from '@theia/core/lib/common/messaging/handler';
 import { RpcConnectionHandler } from '@theia/core/lib/common/messaging/proxy-factory';
+import { LocalizationContribution } from '@theia/core/lib/node/i18n/localization-contribution';
 import { TaskRunnerContribution } from '@theia/task/lib/node/task-runner';
+import { ManuscriptRuLocalizationContribution } from './i18n/manuscript-ru-localization-contribution';
 import {
   AiModeRegistryBackendService,
   AiModeRegistryBackendServicePath,
@@ -107,4 +109,9 @@ export default new ContainerModule(bind => {
     )
   ).inSingletonScope();
   bind(BackendApplicationContribution).to(ManuscriptWorkspaceBackendContribution).inSingletonScope();
+  // Registers our ru dictionary (i18n/ru/*.json) with the core localization
+  // registry. `languagePack: true` on the descriptor is what makes ru actually
+  // apply on the frontend AND surface in 'Configure Display Language'.
+  bind(ManuscriptRuLocalizationContribution).toSelf().inSingletonScope();
+  bind(LocalizationContribution).toService(ManuscriptRuLocalizationContribution);
 });

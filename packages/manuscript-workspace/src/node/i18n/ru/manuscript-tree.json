@@ -1,0 +1,19 @@
+{
+  "ai-focused-editor": {
+    "manuscript-tree": {
+      "open": "Открыть обзор рукописи",
+      "refresh": "Обновить обзор рукописи",
+      "move-up": "Переместить главу вверх",
+      "move-down": "Переместить главу вниз",
+      "toggle-build-inclusion": "Включить или исключить из сборки книги",
+      "new-chapter": "Новая глава…",
+      "category": "AI Focused Editor",
+      "chapter-title-prompt": "Название главы",
+      "chapter-title-placeholder": "например: Глава 1. Начало",
+      "move-failed": "Не удалось переместить главу: {0}",
+      "build-inclusion-failed": "Не удалось обновить участие в сборке: {0}",
+      "create-chapter-failed": "Не удалось создать главу: {0}",
+      "unknown-error": "неизвестная ошибка"
+    }
+  }
+}

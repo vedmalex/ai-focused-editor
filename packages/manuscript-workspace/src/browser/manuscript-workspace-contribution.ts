@@ -6,6 +6,7 @@ import {
   MenuModelRegistry,
   MessageService
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 import { ApplicationShell } from '@theia/core/lib/browser/shell/application-shell';
 import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
@@ -897,7 +898,14 @@ export class ManuscriptWorkspaceMenuContribution implements MenuContribution {
     // The product menu tree is registered EXACTLY ONCE here: repeated
     // registerSubmenu calls for the same path create duplicate menu bar
     // entries in the current Theia menu model.
-    menus.registerSubmenu(AiFocusedEditorMenus.MAIN, AI_FOCUSED_EDITOR_MENU_LABEL);
+    // registerSubmenu stores the label statically; it is resolved here once at
+    // frontend startup, AFTER the i18n preloader applied the active locale. A
+    // locale switch always triggers a full window reload, so the label is
+    // re-resolved for the new locale — no per-locale re-registration needed.
+    menus.registerSubmenu(
+      AiFocusedEditorMenus.MAIN,
+      nls.localize('ai-focused-editor/menu/manuscript', AI_FOCUSED_EDITOR_MENU_LABEL)
+    );
     menus.registerSubmenu(AiFocusedEditorMenus.SEMANTIC_MARKDOWN, 'Semantic Markdown');
     menus.registerSubmenu(AiFocusedEditorMenus.BUILD, 'Build');
     menus.registerSubmenu(AiFocusedEditorMenus.KNOWLEDGE, 'Knowledge');

@@ -6,6 +6,7 @@ import {
   QuickInputService,
   SelectionService
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import type { FrontendApplication, FrontendApplicationContribution, Widget } from '@theia/core/lib/browser';
@@ -21,41 +22,72 @@ import {
 } from './ai-focused-editor-menu';
 
 export namespace ManuscriptTreeCommands {
-  export const OPEN: Command = {
-    id: 'ai-focused-editor.manuscriptTree.open',
-    category: 'AI Focused Editor',
-    label: 'Open Manuscript View'
-  };
+  // en labels stay inline as the source of truth; ru comes from
+  // i18n/ru/manuscript-tree.json keyed by `ai-focused-editor/manuscript-tree/*`.
+  // `Command.toLocalizedCommand(cmd, labelKey, categoryKey)` resolves both label
+  // and category through nls at module load (after the i18n preloader has applied
+  // the active locale), keeping the original en strings as originalLabel/Category.
+  const CATEGORY_KEY = 'ai-focused-editor/manuscript-tree/category';
 
-  export const REFRESH: Command = {
-    id: 'ai-focused-editor.manuscriptTree.refresh',
-    category: 'AI Focused Editor',
-    label: 'Refresh Manuscript View'
-  };
+  export const OPEN: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.manuscriptTree.open',
+      category: 'AI Focused Editor',
+      label: 'Open Manuscript View'
+    },
+    'ai-focused-editor/manuscript-tree/open',
+    CATEGORY_KEY
+  );
 
-  export const MOVE_UP: Command = {
-    id: 'ai-focused-editor.manuscriptTree.moveUp',
-    category: 'AI Focused Editor',
-    label: 'Move Chapter Up'
-  };
+  export const REFRESH: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.manuscriptTree.refresh',
+      category: 'AI Focused Editor',
+      label: 'Refresh Manuscript View'
+    },
+    'ai-focused-editor/manuscript-tree/refresh',
+    CATEGORY_KEY
+  );
 
-  export const MOVE_DOWN: Command = {
-    id: 'ai-focused-editor.manuscriptTree.moveDown',
-    category: 'AI Focused Editor',
-    label: 'Move Chapter Down'
-  };
+  export const MOVE_UP: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.manuscriptTree.moveUp',
+      category: 'AI Focused Editor',
+      label: 'Move Chapter Up'
+    },
+    'ai-focused-editor/manuscript-tree/move-up',
+    CATEGORY_KEY
+  );
 
-  export const TOGGLE_BUILD_INCLUSION: Command = {
-    id: 'ai-focused-editor.manuscriptTree.toggleBuildInclusion',
-    category: 'AI Focused Editor',
-    label: 'Include/Exclude in Book Build'
-  };
+  export const MOVE_DOWN: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.manuscriptTree.moveDown',
+      category: 'AI Focused Editor',
+      label: 'Move Chapter Down'
+    },
+    'ai-focused-editor/manuscript-tree/move-down',
+    CATEGORY_KEY
+  );
 
-  export const NEW_CHAPTER: Command = {
-    id: 'ai-focused-editor.manuscriptTree.newChapter',
-    category: 'AI Focused Editor',
-    label: 'New Chapter...'
-  };
+  export const TOGGLE_BUILD_INCLUSION: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.manuscriptTree.toggleBuildInclusion',
+      category: 'AI Focused Editor',
+      label: 'Include/Exclude in Book Build'
+    },
+    'ai-focused-editor/manuscript-tree/toggle-build-inclusion',
+    CATEGORY_KEY
+  );
+
+  export const NEW_CHAPTER: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.manuscriptTree.newChapter',
+      category: 'AI Focused Editor',
+      label: 'New Chapter...'
+    },
+    'ai-focused-editor/manuscript-tree/new-chapter',
+    CATEGORY_KEY
+  );
 }
 
 @injectable()
@@ -157,7 +189,7 @@ export class ManuscriptTreeViewContribution extends AbstractViewContribution<Man
       id: 'ai-focused-editor.manuscriptTree.toolbar.newChapter',
       command: ManuscriptTreeCommands.NEW_CHAPTER.id,
       icon: 'codicon codicon-add',
-      tooltip: 'New Chapter...',
+      tooltip: nls.localize('ai-focused-editor/manuscript-tree/new-chapter', 'New Chapter...'),
       priority: 2,
       isVisible: (widget: Widget) => widget instanceof ManuscriptTreeWidget
     });
@@ -165,7 +197,7 @@ export class ManuscriptTreeViewContribution extends AbstractViewContribution<Man
       id: 'ai-focused-editor.manuscriptTree.toolbar.refresh',
       command: ManuscriptTreeCommands.REFRESH.id,
       icon: 'codicon codicon-refresh',
-      tooltip: 'Refresh Manuscript View',
+      tooltip: nls.localize('ai-focused-editor/manuscript-tree/refresh', 'Refresh Manuscript View'),
       priority: 3,
       isVisible: (widget: Widget) => widget instanceof ManuscriptTreeWidget
     });
@@ -197,7 +229,11 @@ export class ManuscriptTreeViewContribution extends AbstractViewContribution<Man
       index: targetIndex
     });
     if (!result.ok) {
-      this.messages.warn(`Move failed: ${result.message ?? 'unknown error'}`);
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/manuscript-tree/move-failed',
+        'Move failed: {0}',
+        result.message ?? nls.localize('ai-focused-editor/manuscript-tree/unknown-error', 'unknown error')
+      ));
     }
   }
 
@@ -213,15 +249,19 @@ export class ManuscriptTreeViewContribution extends AbstractViewContribution<Man
       !node.manuscript.buildIncluded
     );
     if (!result.ok) {
-      this.messages.warn(`Could not update build inclusion: ${result.message ?? 'unknown error'}`);
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/manuscript-tree/build-inclusion-failed',
+        'Could not update build inclusion: {0}',
+        result.message ?? nls.localize('ai-focused-editor/manuscript-tree/unknown-error', 'unknown error')
+      ));
     }
   }
 
   protected async createChapter(): Promise<void> {
     const widget = await this.openView({ activate: true, reveal: true });
     const title = await this.quickInput.input({
-      prompt: 'Chapter title',
-      placeHolder: 'e.g. Глава 1. Начало'
+      prompt: nls.localize('ai-focused-editor/manuscript-tree/chapter-title-prompt', 'Chapter title'),
+      placeHolder: nls.localize('ai-focused-editor/manuscript-tree/chapter-title-placeholder', 'e.g. Глава 1. Начало')
     });
     if (!title?.trim()) {
       return;
@@ -231,7 +271,11 @@ export class ManuscriptTreeViewContribution extends AbstractViewContribution<Man
     const parentPath = ManuscriptTreeNode.isFolder(selected) ? selected.manuscript.path : undefined;
     const result = await widget.manuscriptModel.createChapter(parentPath, title.trim());
     if (!result.ok) {
-      this.messages.warn(`Could not create chapter: ${result.message ?? 'unknown error'}`);
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/manuscript-tree/create-chapter-failed',
+        'Could not create chapter: {0}',
+        result.message ?? nls.localize('ai-focused-editor/manuscript-tree/unknown-error', 'unknown error')
+      ));
     }
   }
 }
