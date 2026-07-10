@@ -191,6 +191,13 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - Tests: 410 across 24 files; `verify:full` green (browser + electron smokes, 7/7 UI flows).
 - **Follow-up (context keys)**: section gating moved from command `isVisible` (which the menu bar honors too) to `when` clauses on the context-menu actions, driven by the `afeManuscriptSection` context key tracking tree selection — the menu bar never hides create commands / `New Chapter...` regardless of tree selection; flow AFE-08 guards it.
 
+## Wave 14 — Excerpts form editor (shipped)
+
+- **Excerpts form editor** for `sources/excerpts.jsonl` (the excerpt store behind Save Selection as Citation / source analysis): expandable cards with id, text, citation link (select fed by `citations.yaml` ids), ref, note, source path, and the manuscript back-link (targetPath/targetAnchor/targetLine). Opens as the default editor (priority 500, raw JSONL via Open With); `Edit Excerpts...` command next to `Edit Citations...` seeds the file when missing.
+- **Data safety**: unparsable JSONL lines are preserved verbatim (rendered as a warning block), unknown record keys survive round-trips, empty fields are omitted on save; validation flags empty/duplicate ids, empty text, and broken line targets. Pure helpers in `common/excerpt-forms.ts` (23 tests incl. a byte-for-byte round-trip of the sample book file).
+- **Electron smoke de-flaked**: the stale-instance sweep now waits until the old process is really gone (pgrep poll, up to 5s) and the launch retries once — the single-instance lock race killed the first window when the smoke ran right after other Playwright/Theia activity.
+- Tests: 433 across 25 files; `verify:full` green (browser + electron smokes, 8/8 UI flows).
+
 ## Backlog (queued)
 
 1. Full LSP transport if live validation ever needs cross-file incremental analysis (current backend-RPC path covers the active-document case).
