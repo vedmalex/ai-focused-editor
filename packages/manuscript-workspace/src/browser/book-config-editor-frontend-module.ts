@@ -12,9 +12,14 @@ import {
   NavigatableWidgetOpenHandler,
   NavigatableWidgetOptions,
   OpenHandler,
+  Widget,
   WidgetFactory,
   WidgetOpenerOptions
 } from '@theia/core/lib/browser';
+import {
+  TabBarToolbarContribution,
+  TabBarToolbarRegistry
+} from '@theia/core/lib/browser/shell/tab-bar-toolbar';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import {
@@ -25,6 +30,8 @@ import {
 import { MetadataEditorWidget } from './metadata-editor-widget';
 import { ManifestEditorWidget } from './manifest-editor-widget';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
+import { ManuscriptTreeWidget } from './manuscript-tree-widget';
+import { AFE_MANUSCRIPT_SECTION_CONTEXT_KEY } from './manuscript-tree';
 
 /**
  * Priority returned for the workspace-root book-config files. The text editor's
@@ -35,6 +42,21 @@ const BOOK_CONFIG_EDITOR_PRIORITY = 500;
 
 /** Own group under the Manuscript menu so both actions sit together at the top. */
 const CONFIG_MENU: MenuPath = [...AiFocusedEditorMenus.MAIN, '1_book-config'];
+
+/**
+ * Book-properties group in the manuscript tree's own context menu, so the
+ * metadata/manifest forms are reachable straight from the view. Sits after the
+ * '1_create' per-section create group.
+ */
+const TREE_BOOK_MENU: MenuPath = [...ManuscriptTreeWidget.CONTEXT_MENU, '2_book'];
+
+/**
+ * Show the book-properties actions only when the tree selection is the
+ * Manuscript section (or nothing) — book-config is manuscript-scoped, so it
+ * stays out of author-materials section context menus.
+ */
+const TREE_BOOK_MENU_WHEN =
+  `${AFE_MANUSCRIPT_SECTION_CONTEXT_KEY} == 'none' || ${AFE_MANUSCRIPT_SECTION_CONTEXT_KEY} == 'manuscript'`;
 
 const STARTER_METADATA_YAML = 'title: Untitled\nlanguage: en\n';
 const STARTER_MANIFEST_YAML = 'version: 1\ncontent: []\n';
@@ -97,7 +119,8 @@ export namespace BookConfigEditorCommands {
 }
 
 @injectable()
-export class BookConfigEditorCommandContribution implements CommandContribution, MenuContribution {
+export class BookConfigEditorCommandContribution
+  implements CommandContribution, MenuContribution, TabBarToolbarContribution {
   @inject(MetadataEditorOpenHandler)
   protected readonly metadataHandler!: MetadataEditorOpenHandler;
 
@@ -147,6 +170,29 @@ export class BookConfigEditorCommandContribution implements CommandContribution,
     menus.registerMenuAction(CONFIG_MENU, {
       commandId: BookConfigEditorCommands.EDIT_MANIFEST.id,
       order: '2'
+    });
+
+    // Reach the same forms straight from the manuscript tree's context menu.
+    menus.registerMenuAction(TREE_BOOK_MENU, {
+      commandId: BookConfigEditorCommands.EDIT_METADATA.id,
+      order: '1',
+      when: TREE_BOOK_MENU_WHEN
+    });
+    menus.registerMenuAction(TREE_BOOK_MENU, {
+      commandId: BookConfigEditorCommands.EDIT_MANIFEST.id,
+      order: '2',
+      when: TREE_BOOK_MENU_WHEN
+    });
+  }
+
+  registerToolbarItems(registry: TabBarToolbarRegistry): void {
+    registry.registerItem({
+      id: 'ai-focused-editor.bookConfig.toolbar.properties',
+      command: BookConfigEditorCommands.EDIT_METADATA.id,
+      icon: 'codicon codicon-book',
+      tooltip: 'Book Properties (metadata.yaml)',
+      priority: 1,
+      isVisible: (widget: Widget) => widget instanceof ManuscriptTreeWidget
     });
   }
 
@@ -203,4 +249,5 @@ export default new ContainerModule(bind => {
   bind(BookConfigEditorCommandContribution).toSelf().inSingletonScope();
   bind(CommandContribution).toService(BookConfigEditorCommandContribution);
   bind(MenuContribution).toService(BookConfigEditorCommandContribution);
+  bind(TabBarToolbarContribution).toService(BookConfigEditorCommandContribution);
 });
