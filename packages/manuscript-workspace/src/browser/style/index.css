@@ -172,10 +172,6 @@
   border-bottom: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
 }
 
-.afe-model-config-legacy {
-  opacity: 0.92;
-}
-
 .afe-endpoint-badge {
   font-size: 11px;
   padding: 1px 5px;

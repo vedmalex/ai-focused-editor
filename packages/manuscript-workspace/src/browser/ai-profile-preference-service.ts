@@ -23,59 +23,20 @@ import {
   AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS,
   AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE,
   AI_FOCUSED_EDITOR_AI_ALIASES,
-  AI_FOCUSED_EDITOR_AI_API_KEY,
   AI_FOCUSED_EDITOR_AI_API_KEYS,
-  AI_FOCUSED_EDITOR_AI_ENDPOINT_URL,
   AI_FOCUSED_EDITOR_AI_ENDPOINTS,
-  AI_FOCUSED_EDITOR_AI_MODEL,
   AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT,
-  AI_FOCUSED_EDITOR_AI_PROFILE_ID,
-  AI_FOCUSED_EDITOR_AI_PROFILES,
-  AI_FOCUSED_EDITOR_AI_PROVIDER,
-  AI_FOCUSED_EDITOR_AI_TRANSPORT_ID,
-  AI_FOCUSED_EDITOR_AI_TRANSPORT_KIND
+  AI_FOCUSED_EDITOR_AI_PROFILES
 } from './ai-focused-editor-preferences';
+import { buildUnconfiguredAiProfileStatus, type AiProfileStatus } from './ai-profile-status';
 
-export const LEGACY_PROFILE_ID = 'default';
-
-export interface AiProfileStatus {
-  configured: boolean;
-  missing: string[];
-  profile?: AiConnectionProfile;
-  summary: {
-    provider: string;
-    model: string;
-    transportKind: string;
-    transportId: string;
-    profileId: string;
-    endpointUrl: string;
-    hasApiKey: boolean;
-    /** Label of the active named profile/alias ('' in legacy single-profile mode). */
-    activeProfileLabel: string;
-    /** Number of configured profiles in the failover chain. */
-    chainLength: number;
-    /** True when resolution runs through the endpoints/aliases model. */
-    aliasMode: boolean;
-    /** Active alias id ('' when not in alias mode). */
-    activeAlias: string;
-    /** Active alias label (falls back to id; '' when not in alias mode). */
-    activeAliasLabel: string;
-    /** Resolved first-leg endpoint id ('' when not in alias mode or unresolved). */
-    activeEndpoint: string;
-    /** Resolved first-leg endpoint label (falls back to id). */
-    activeEndpointLabel: string;
-    /** Pinned endpoint id ('' when no pin). */
-    pinnedEndpoint: string;
-    /** Endpoints skipped while resolving the active alias chain (for logging/UI). */
-    skipped: ResolvedAliasChain['skipped'];
-  };
-}
+export type { AiProfileStatus } from './ai-profile-status';
 
 /**
  * FR-013 profile registry: named profiles ("aliases") persisted in workspace
  * preferences, API keys in a user-scope map, an active profile selection, and
- * an ordered failover chain. Falls back to the legacy single-profile
- * aiFocusedEditor.ai.* keys when no named profile exists.
+ * an ordered failover chain. When no named profile (and no alias) exists the
+ * status is an explicit "not configured" state — there is no active connection.
  */
 @injectable()
 export class AiProfilePreferenceService implements ModelProviderRegistry {
@@ -96,14 +57,18 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
       return this.getAliasStatus(resourceUri);
     }
     const stored = this.readStoredProfiles(resourceUri);
+    if (stored.length === 0) {
+      return buildUnconfiguredAiProfileStatus();
+    }
     const activeId = this.getActiveProfileId(stored, resourceUri);
-    const active = stored.find(profile => profile.id === activeId) ?? this.readLegacyProfile(resourceUri);
+    const active = stored.find(profile => profile.id === activeId) ?? stored[0];
     const missing = this.getMissingFields(active, resourceUri);
     const resolved = missing.length === 0 ? this.resolveProfile(active, resourceUri) : undefined;
     const chain = await this.getFailoverChain(resourceUri);
 
     return {
       configured: Boolean(resolved),
+      notConfigured: false,
       missing,
       profile: resolved,
       summary: {
@@ -114,7 +79,7 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
         profileId: active.profileId ?? '',
         endpointUrl: active.endpointUrl ?? '',
         hasApiKey: Boolean(this.getApiKeyFor(active.id, resourceUri)),
-        activeProfileLabel: this.isLegacyMode(resourceUri) ? '' : (active.label || active.id),
+        activeProfileLabel: active.label || active.id,
         chainLength: chain.length,
         aliasMode: false,
         activeAlias: '',
@@ -141,6 +106,7 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
 
     return {
       configured,
+      notConfigured: false,
       missing,
       profile: usable,
       summary: {
@@ -191,8 +157,7 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
 
   async listProfiles(resourceUri?: string): Promise<AiProfileDescriptor[]> {
     await this.preferenceService.ready;
-    const stored = this.readStoredProfiles(resourceUri);
-    const profiles = stored.length > 0 ? stored : [this.readLegacyProfile(resourceUri)];
+    const profiles = this.readStoredProfiles(resourceUri);
     const activeId = this.getActiveProfileId(profiles, resourceUri);
 
     return profiles.map(profile => {
@@ -223,8 +188,7 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
     if (this.isAliasMode(resourceUri)) {
       return this.resolveAliasChainDetailed(undefined, new Date(), resourceUri).chain;
     }
-    const stored = this.readStoredProfiles(resourceUri);
-    const profiles = stored.length > 0 ? stored : [this.readLegacyProfile(resourceUri)];
+    const profiles = this.readStoredProfiles(resourceUri);
     const activeId = this.getActiveProfileId(profiles, resourceUri);
 
     const ordered = [
@@ -568,18 +532,9 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
     return next;
   }
 
-  /**
-   * The editable stored shapes for the config UI. In legacy single-profile
-   * mode this synthesizes one 'default' entry from the flat keys, so saving
-   * it migrates the workspace to the named-profiles model.
-   */
+  /** The editable stored profiles for the config UI (empty when none exist). */
   getStoredProfileList(resourceUri?: string): StoredAiProfile[] {
-    const stored = this.readStoredProfiles(resourceUri);
-    return stored.length > 0 ? stored : [this.readLegacyProfile(resourceUri)];
-  }
-
-  protected isLegacyMode(resourceUri?: string): boolean {
-    return this.readStoredProfiles(resourceUri).length === 0;
+    return this.readStoredProfiles(resourceUri);
   }
 
   protected readStoredProfiles(resourceUri?: string): StoredAiProfile[] {
@@ -592,34 +547,21 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
     );
   }
 
-  /** Legacy single-profile mode: synthesize a profile from the flat keys. */
-  protected readLegacyProfile(resourceUri?: string): StoredAiProfile {
-    return {
-      id: LEGACY_PROFILE_ID,
-      provider: this.getPreferenceText(AI_FOCUSED_EDITOR_AI_PROVIDER, resourceUri),
-      model: this.getPreferenceText(AI_FOCUSED_EDITOR_AI_MODEL, resourceUri),
-      transportKind: this.getPreferenceText(AI_FOCUSED_EDITOR_AI_TRANSPORT_KIND, resourceUri) || 'api',
-      transportId: this.getPreferenceText(AI_FOCUSED_EDITOR_AI_TRANSPORT_ID, resourceUri) || undefined,
-      profileId: this.getPreferenceText(AI_FOCUSED_EDITOR_AI_PROFILE_ID, resourceUri) || undefined,
-      endpointUrl: this.getPreferenceText(AI_FOCUSED_EDITOR_AI_ENDPOINT_URL, resourceUri) || undefined
-    };
-  }
-
   protected getActiveProfileId(profiles: StoredAiProfile[], resourceUri?: string): string {
     const configured = this.getPreferenceText(AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE, resourceUri);
     if (configured && profiles.some(profile => profile.id === configured)) {
       return configured;
     }
-    return profiles[0]?.id ?? LEGACY_PROFILE_ID;
+    return profiles[0]?.id ?? '';
   }
 
   protected getMissingFields(profile: StoredAiProfile, resourceUri?: string): string[] {
     const missing: string[] = [];
     if (!profile.provider) {
-      missing.push(AI_FOCUSED_EDITOR_AI_PROVIDER);
+      missing.push('provider');
     }
     if (!profile.model) {
-      missing.push(AI_FOCUSED_EDITOR_AI_MODEL);
+      missing.push('model');
     }
     // API keys only gate the api transport; acp/cli/server authorize through
     // the underlying agent (OAuth, CLI login), matching ai-editor v1 behavior.
@@ -630,7 +572,7 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
         transportId: profile.transportId
       });
       if (effectiveTransportKind === 'api' && !this.getApiKeyFor(profile.id, resourceUri)) {
-        missing.push(AI_FOCUSED_EDITOR_AI_API_KEY);
+        missing.push('API key');
       }
     }
     return missing;
@@ -652,16 +594,9 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
     };
   }
 
-  protected getApiKeyFor(profileId: string, resourceUri?: string): string {
+  protected getApiKeyFor(profileId: string, _resourceUri?: string): string {
     const keys = this.readApiKeys();
-    const mapped = typeof keys[profileId] === 'string' ? keys[profileId].trim() : '';
-    if (mapped) {
-      return mapped;
-    }
-    if (profileId === LEGACY_PROFILE_ID || this.isLegacyMode(resourceUri)) {
-      return this.getPreferenceText(AI_FOCUSED_EDITOR_AI_API_KEY, resourceUri);
-    }
-    return '';
+    return typeof keys[profileId] === 'string' ? keys[profileId].trim() : '';
   }
 
   protected readApiKeys(): Record<string, string> {

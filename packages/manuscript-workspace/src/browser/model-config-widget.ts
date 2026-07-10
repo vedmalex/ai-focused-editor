@@ -41,28 +41,14 @@ import {
   AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS,
   AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE,
   AI_FOCUSED_EDITOR_AI_ALIASES,
-  AI_FOCUSED_EDITOR_AI_API_KEY,
   AI_FOCUSED_EDITOR_AI_API_KEYS,
-  AI_FOCUSED_EDITOR_AI_ENDPOINT_URL,
   AI_FOCUSED_EDITOR_AI_ENDPOINTS,
-  AI_FOCUSED_EDITOR_AI_MODEL,
   AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT,
-  AI_FOCUSED_EDITOR_AI_PROFILE_ID,
-  AI_FOCUSED_EDITOR_AI_PROFILES,
-  AI_FOCUSED_EDITOR_AI_PROVIDER,
-  AI_FOCUSED_EDITOR_AI_TRANSPORT_ID,
-  AI_FOCUSED_EDITOR_AI_TRANSPORT_KIND
+  AI_FOCUSED_EDITOR_AI_PROFILES
 } from './ai-focused-editor-preferences';
 import { AiFocusedEditorCommands } from './manuscript-workspace-contribution';
 
 const AI_PROFILE_PREFERENCE_KEYS = [
-  AI_FOCUSED_EDITOR_AI_PROVIDER,
-  AI_FOCUSED_EDITOR_AI_MODEL,
-  AI_FOCUSED_EDITOR_AI_API_KEY,
-  AI_FOCUSED_EDITOR_AI_ENDPOINT_URL,
-  AI_FOCUSED_EDITOR_AI_TRANSPORT_KIND,
-  AI_FOCUSED_EDITOR_AI_TRANSPORT_ID,
-  AI_FOCUSED_EDITOR_AI_PROFILE_ID,
   AI_FOCUSED_EDITOR_AI_PROFILES,
   AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE,
   AI_FOCUSED_EDITOR_AI_API_KEYS,
@@ -228,14 +214,16 @@ export class ModelConfigWidget extends ReactWidget {
       this.renderEndpointsSection(),
       this.renderAliasesSection(),
       this.renderImportSection(),
-      this.renderLegacyProfilesSection(status)
+      this.renderProfilesSection(status)
     );
   }
 
   protected renderTopStatus(status: AiProfileStatus): React.ReactNode {
     const summary = status.summary;
     let message: string;
-    if (!status.configured) {
+    if (status.notConfigured) {
+      message = 'No AI connection configured yet — add a profile or alias below.';
+    } else if (!status.configured) {
       message = `Active connection incomplete: ${status.missing.join(', ')}`;
     } else if (summary.aliasMode) {
       const endpoint = summary.activeEndpointLabel || summary.activeEndpoint;
@@ -251,16 +239,24 @@ export class ModelConfigWidget extends ReactWidget {
     );
   }
 
-  protected renderLegacyProfilesSection(status: AiProfileStatus): React.ReactNode {
+  protected renderProfilesSection(status: AiProfileStatus): React.ReactNode {
+    const hasProfiles = this.descriptors.length > 0;
     return React.createElement(
       'div',
-      { className: 'afe-model-config-section afe-model-config-legacy' },
-      React.createElement('h3', undefined, 'Legacy AI Profiles'),
+      { className: 'afe-model-config-section' },
+      React.createElement('h3', undefined, 'AI Profiles'),
       React.createElement(
         'p',
         { className: 'afe-model-config-help' },
-        'Aliases (above) supersede these single profiles: whenever at least one alias exists, resolution runs through the active alias chain. Profiles remain as a fallback when no alias is defined.'
+        'Profiles are single provider/model connections. Aliases (above) supersede them: whenever at least one alias exists, resolution runs through the active alias chain, and profiles serve as the fallback when no alias is defined.'
       ),
+      hasProfiles
+        ? undefined
+        : React.createElement(
+            'p',
+            { className: 'afe-model-config-help afe-model-config-empty' },
+            'No AI profiles yet — add one below.'
+          ),
       this.renderProfileList(),
       React.createElement('h4', undefined, this.draft.id ? `Edit Profile: ${this.draft.label || this.draft.id}` : 'New Profile'),
       React.createElement(

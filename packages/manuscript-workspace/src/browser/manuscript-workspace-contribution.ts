@@ -39,12 +39,6 @@ import {
   WorkspaceDiagnostic
 } from '../common';
 import type { NarrativeEntityService as NarrativeEntityServiceType } from '../common';
-import {
-  AI_FOCUSED_EDITOR_AI_API_KEY,
-  AI_FOCUSED_EDITOR_AI_ENDPOINT_URL,
-  AI_FOCUSED_EDITOR_AI_MODEL,
-  AI_FOCUSED_EDITOR_AI_PROVIDER
-} from './ai-focused-editor-preferences';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
 import {
   AiHistoryRecord,
@@ -428,7 +422,7 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
 
     const profile = await this.aiProfilePreferences.getConfiguredProfile(editor.uri.toString());
     if (!profile) {
-      await this.messages.warn(`Configure ${AI_FOCUSED_EDITOR_AI_PROVIDER}, ${AI_FOCUSED_EDITOR_AI_MODEL}, and ${AI_FOCUSED_EDITOR_AI_API_KEY} before running Improve Selected.`);
+      await this.messages.warn('Configure an AI connection (profile or alias) in AI Model Config before running Improve Selected.');
       return;
     }
 

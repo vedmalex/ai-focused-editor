@@ -10,30 +10,16 @@ import {
   AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS,
   AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE,
   AI_FOCUSED_EDITOR_AI_ALIASES,
-  AI_FOCUSED_EDITOR_AI_API_KEY,
   AI_FOCUSED_EDITOR_AI_API_KEYS,
-  AI_FOCUSED_EDITOR_AI_ENDPOINT_URL,
   AI_FOCUSED_EDITOR_AI_ENDPOINTS,
-  AI_FOCUSED_EDITOR_AI_MODEL,
   AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT,
-  AI_FOCUSED_EDITOR_AI_PROFILE_ID,
-  AI_FOCUSED_EDITOR_AI_PROFILES,
-  AI_FOCUSED_EDITOR_AI_PROVIDER,
-  AI_FOCUSED_EDITOR_AI_TRANSPORT_ID,
-  AI_FOCUSED_EDITOR_AI_TRANSPORT_KIND
+  AI_FOCUSED_EDITOR_AI_PROFILES
 } from './ai-focused-editor-preferences';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
 import { ModelConfigCommands } from './model-config-view-contribution';
 
 const STATUS_BAR_ID = 'ai-focused-editor.ai-profile-status';
 const AI_PROFILE_PREFERENCES = new Set([
-  AI_FOCUSED_EDITOR_AI_PROVIDER,
-  AI_FOCUSED_EDITOR_AI_MODEL,
-  AI_FOCUSED_EDITOR_AI_API_KEY,
-  AI_FOCUSED_EDITOR_AI_ENDPOINT_URL,
-  AI_FOCUSED_EDITOR_AI_TRANSPORT_KIND,
-  AI_FOCUSED_EDITOR_AI_TRANSPORT_ID,
-  AI_FOCUSED_EDITOR_AI_PROFILE_ID,
   AI_FOCUSED_EDITOR_AI_PROFILES,
   AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE,
   AI_FOCUSED_EDITOR_AI_API_KEYS,
@@ -75,9 +61,11 @@ export class AiProfileStatusBarContribution implements FrontendApplicationContri
     const pinIcon = summary.aliasMode && summary.pinnedEndpoint ? '$(pin) ' : '';
 
     // In alias mode the primary label reads `alias · endpoint`; otherwise the
-    // legacy `profile · provider/model` label.
+    // `profile · provider/model` label.
     let text: string;
-    if (!status.configured) {
+    if (status.notConfigured) {
+      text = '$(warning) AI: not configured';
+    } else if (!status.configured) {
       text = '$(warning) AI: configure';
     } else if (summary.aliasMode) {
       const endpoint = summary.activeEndpointLabel || summary.activeEndpoint;
@@ -115,7 +103,9 @@ export class AiProfileStatusBarContribution implements FrontendApplicationContri
               summary.endpointUrl ? 'Endpoint: custom' : 'Endpoint: provider default',
               `API key: ${summary.hasApiKey ? 'configured' : 'missing'}`
             ].filter((line): line is string => Boolean(line)).join('\n'))
-      : `AI Focused Editor connection is incomplete.\nMissing: ${status.missing.join(', ')}\nClick to open AI Model Config.`;
+      : status.notConfigured
+        ? 'No AI connection configured yet.\nAdd a profile or alias in AI Model Config.\nClick to open AI Model Config.'
+        : `AI Focused Editor connection is incomplete.\nMissing: ${status.missing.join(', ')}\nClick to open AI Model Config.`;
 
     await this.statusBar.setElement(STATUS_BAR_ID, {
       text,
