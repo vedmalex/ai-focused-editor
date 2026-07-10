@@ -1,6 +1,6 @@
 # AI Focused Editor Progress
 
-Updated: 2026-07-10 (wave 6 — hardening)
+Updated: 2026-07-10 (wave 7 — writer UX)
 
 This file tracks implementation progress against `spec.md`. It records verified repository state, not planned intent.
 
@@ -121,9 +121,24 @@ This file tracks implementation progress against `spec.md`. It records verified 
 
 All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemented: FR-001–018, FR-020, FR-021, FR-023, FR-025 (+ EPUB/PDF export beyond the matrix). FR-019 is covered in substance (settings widget, clone/cancel flows, stable ordering) without a dedicated modal-UX pass. FR-017's interactive-SCM half waits on upstream `@theia/git`; FR-024 is provenance-only.
 
-## Next Slices
+## Wave 7 — Writer UX (owner intake 2026-07-10, shipped)
 
-1. Revisit `@theia/git` when a platform-compatible release ships (interactive SCM + diff views).
-2. PDF text extraction for the §5.4 source analyzer.
-3. Optional LSP for incremental workspace validation ([Review]).
-4. Product hardening (spec Phase 5): more UI simulation coverage (drag/drop scenarios), desktop/cloud packaging polish.
+- **Unified author navigation**: the Manuscript tree now holds eight sections — Manuscript (manifest, DnD kept), Characters, Terms, Artifacts, Locations, Citations, Sources, Knowledge — with live counts, kind icons, and correct openers (entity form editor, citations form, files); auto-refresh watches entities/sources/knowledge too.
+- **Markdown editor & GFM**: the app shipped NO markdown grammar — a Monarch tokenizer now highlights .md (embedded-language switching deliberately stripped: unregistered languages made the tokenizer throw); markdown-it renders tables/strikethrough out of the box, task lists added everywhere (real checkboxes in HTML/PDF export, ☐/☑ glyphs in preview/EPUB); `aiFocusedEditor.preview.showTagChips` toggles the chip row for plain-markdown reading; GFM showcase in the sample book.
+- **Citations workflow**: `Save Selection as Citation...` (editor context menu + Sources menu) stores an excerpt (`sources/excerpts.jsonl`, back-reference with exact line) and a citation (`citations.yaml`, comment-preserving, id dedupe); citations form editor is the default opener for citations.yaml; Copy buttons on citation/excerpt rows.
+- **Chat mentions beyond `#manuscript`** (the manuscript.md-era single variable): `#chapter[:path]`, `#entity:id`, `#entities`, `#sources`, `#outline` context variables shape the AI context precisely.
+- **Full provenance log**: chat history records now include the outgoing messages (bounded), attached tool names, and the response text; inspect via AI Debug → Request Log or `ai/chat/*.jsonl`.
+- **Outline for writers**: the Outline view shows the chapter's heading hierarchy (fence-aware) with each section's unique entities nested beneath; `Manuscript → Chapter Outline` opens it.
+- **Supplementary texts are linted**: semantic/Markdown validation covers `sources/**/*.md` and `knowledge/**/*.md`; entity YAML validated by schemas.
+- **Layout reset**: `Manuscript → Reset Workbench Layout (This Folder)` — per-folder layout restoration is why a stale folder could hide the AI Chat icon.
+- **Interactive git via local fork**: `packages/theia-git-fork` (`@ai-focused-editor/git`) — @theia/git@1.60.2 sources rebuilt against platform 1.73 (preference/toolbar/scm API drift fixed, in-process repository locator, native `find-git-repositories` compiled by an idempotent build step, octicon inlined). SCM view, changes, stage/commit, branches work with system git from PATH. FORK.md documents provenance (EPL-2.0/GPL-2.0 w/ CPE) and the exact steps to DROP the fork when upstream catches up. Caveat: electron target not yet exercised with the fork's native addon.
+
+## Wave 8 Backlog (queued)
+
+1. Link navigation inside descriptions/cards (entity references in YAML fields open the target card).
+2. Beautiful edit forms for every artifact type shown in manuscript navigation (sources metadata, manifest, metadata.yaml — beyond entity/citation forms).
+3. Footnotes editor for Markdown.
+4. Manifest editor (form UI over manifest.yaml).
+5. Dedicated LSP for incremental text validation (supersedes the backend-RPC validation path).
+6. Drop the git fork when a platform-compatible `@theia/git` ships; exercise the fork on the electron target.
+7. PDF text extraction for the §5.4 source analyzer.
