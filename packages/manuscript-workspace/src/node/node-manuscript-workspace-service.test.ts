@@ -150,3 +150,93 @@ describe('NodeManuscriptWorkspaceService manifest mutations', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
+
+describe('NodeManuscriptWorkspaceService.validateDocumentText', () => {
+  const root = '/tmp/afe-live-root';
+  let service: NodeManuscriptWorkspaceService;
+
+  beforeEach(() => {
+    service = createService();
+  });
+
+  function expectUriEndsWith(diagnostics: Awaited<ReturnType<NodeManuscriptWorkspaceService['validateDocumentText']>>, suffix: string): void {
+    for (const diagnostic of diagnostics) {
+      expect(diagnostic.uri?.endsWith(suffix)).toBe(true);
+    }
+  }
+
+  test('lints Markdown text and returns diagnostics with ranges on the file uri', async () => {
+    // An empty semantic tag label ("[[char:hero|]]") is a semantic-markdown lint error.
+    const diagnostics = await service.validateDocumentText(root, 'content/chapter-01.md', 'Text [[char:hero|]] more.\n');
+    expect(diagnostics.length).toBeGreaterThan(0);
+    expect(diagnostics.every(diagnostic => diagnostic.source === 'semantic-markdown')).toBe(true);
+    expect(diagnostics[0].range).toBeDefined();
+    expect(typeof diagnostics[0].range?.start.line).toBe('number');
+    expectUriEndsWith(diagnostics, 'content/chapter-01.md');
+  });
+
+  test('returns no diagnostics for clean Markdown', async () => {
+    const diagnostics = await service.validateDocumentText(root, 'content/chapter-01.md', '# Title\n\nPlain paragraph.\n');
+    expect(diagnostics).toEqual([]);
+  });
+
+  test('accepts a valid character entity YAML against the schema', async () => {
+    const diagnostics = await service.validateDocumentText(
+      root,
+      'entities/characters/hero.yaml',
+      'id: hero\nname: Hero\naliases:\n  - The Brave\n'
+    );
+    expect(diagnostics).toEqual([]);
+  });
+
+  test('flags a character entity YAML missing required fields', async () => {
+    const diagnostics = await service.validateDocumentText(
+      root,
+      'entities/characters/hero.yaml',
+      'name: Hero\n'
+    );
+    expect(diagnostics.length).toBeGreaterThan(0);
+    expect(diagnostics.every(diagnostic => diagnostic.source === 'yaml-schema')).toBe(true);
+    expect(diagnostics.some(diagnostic => diagnostic.message.includes('character entity'))).toBe(true);
+    expectUriEndsWith(diagnostics, 'entities/characters/hero.yaml');
+  });
+
+  test('routes a .yml term entity extension to the term schema', async () => {
+    const valid = await service.validateDocumentText(root, 'entities/terms/relic.yml', 'id: relic\nterm: Relic\n');
+    expect(valid).toEqual([]);
+    const invalid = await service.validateDocumentText(root, 'entities/terms/relic.yml', 'id: relic\n');
+    expect(invalid.length).toBeGreaterThan(0);
+    expect(invalid.some(diagnostic => diagnostic.message.includes('term entity'))).toBe(true);
+  });
+
+  test('validates manifest.yaml and metadata.yaml against their schemas', async () => {
+    const manifestOk = await service.validateDocumentText(root, 'manifest.yaml', 'version: 1\ncontent: []\n');
+    expect(manifestOk).toEqual([]);
+    const manifestBad = await service.validateDocumentText(root, 'manifest.yaml', 'content: []\n');
+    expect(manifestBad.some(diagnostic => diagnostic.message.includes('manifest.yaml'))).toBe(true);
+
+    const metadataOk = await service.validateDocumentText(root, 'metadata.yaml', 'title: Book\nlanguage: en\n');
+    expect(metadataOk).toEqual([]);
+    const metadataBad = await service.validateDocumentText(root, 'metadata.yaml', 'title: Book\n');
+    expect(metadataBad.some(diagnostic => diagnostic.message.includes('metadata.yaml'))).toBe(true);
+  });
+
+  test('returns a single parse-error diagnostic for malformed YAML', async () => {
+    const diagnostics = await service.validateDocumentText(
+      root,
+      'entities/characters/hero.yaml',
+      'id: hero\nname: "unterminated\n'
+    );
+    expect(diagnostics.length).toBe(1);
+    expect(diagnostics[0].source).toBe('yaml-parser');
+    expect(diagnostics[0].severity).toBe('error');
+    expect(diagnostics[0].message).toContain('Invalid YAML');
+  });
+
+  test('yields no diagnostics for paths outside the schema routing', async () => {
+    expect(await service.validateDocumentText(root, 'notes.txt', 'anything')).toEqual([]);
+    // A YAML file outside the recognised entity folders is not schema-backed.
+    expect(await service.validateDocumentText(root, 'entities/unknown/thing.yaml', 'id: x\n')).toEqual([]);
+    expect(await service.validateDocumentText(root, 'ai/config.yaml', 'foo: bar\n')).toEqual([]);
+  });
+});

@@ -69,4 +69,19 @@ export interface ManuscriptWorkspaceBackendService {
   moveManuscriptEntry(rootUri: string, sourcePath: string, target: ManuscriptMoveTarget): Promise<ManuscriptMutationResult>;
   setManuscriptBuildInclusion(rootUri: string, path: string, include: boolean): Promise<ManuscriptMutationResult>;
   createManuscriptChapter(rootUri: string, parentPath: string | undefined, title: string): Promise<ManuscriptMutationResult>;
+  /**
+   * Live, text-in / diagnostics-out validation for a single document, so the
+   * caller can lint an unsaved editor buffer as the author types.
+   *
+   * Routing by workspace-relative `path`:
+   * - `*.md` / `*.markdown` runs the semantic Markdown linter;
+   * - `entities/{characters,terms,artifacts,locations}/*.ya?ml`,
+   *   `manifest.yaml`, and `metadata.yaml` are parsed and checked against the
+   *   matching domain schema (a parse error becomes a single diagnostic);
+   * - any other path yields no diagnostics.
+   *
+   * Performs no filesystem reads — the passed `text` is the sole source.
+   * Returned diagnostics carry the resolved file uri (rootUri + path).
+   */
+  validateDocumentText(rootUri: string, path: string, text: string): Promise<WorkspaceDiagnostic[]>;
 }

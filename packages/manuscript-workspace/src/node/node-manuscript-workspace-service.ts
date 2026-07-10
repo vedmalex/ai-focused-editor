@@ -55,6 +55,72 @@ export class NodeManuscriptWorkspaceService implements ManuscriptWorkspaceBacken
     return this.getSnapshot(rootUri);
   }
 
+  /**
+   * Live single-document validation for the frontend live-validation feature.
+   * Pure text-in / diagnostics-out: no filesystem reads, so an unsaved editor
+   * buffer can be linted on every keystroke (debounced by the caller).
+   */
+  async validateDocumentText(rootUri: string, path: string, text: string): Promise<WorkspaceDiagnostic[]> {
+    const rootPath = this.toRootPath(rootUri);
+    const normalizedPath = this.normalizeManifestPath(path);
+    const uri = FileUri.create(resolve(rootPath, normalizedPath)).toString();
+
+    if (/\.(md|markdown)$/i.test(normalizedPath)) {
+      return validateSemanticMarkdown(text).map(diagnostic => ({
+        severity: diagnostic.severity,
+        source: 'semantic-markdown',
+        uri,
+        message: diagnostic.message,
+        range: diagnostic.range
+      }));
+    }
+
+    const schemaKind = this.resolveDomainYamlSchemaKind(normalizedPath);
+    if (!schemaKind) {
+      return [];
+    }
+
+    let document: unknown;
+    try {
+      document = parse(text);
+    } catch (error) {
+      return [{
+        severity: 'error',
+        source: 'yaml-parser',
+        uri,
+        message: `Invalid YAML: ${error instanceof Error ? error.message : String(error)}`
+      }];
+    }
+
+    return this.yamlSchemaValidator.validate(schemaKind, uri, document);
+  }
+
+  /**
+   * Maps a workspace-relative path to the domain YAML schema it validates
+   * against, or undefined when the path is not a schema-backed YAML file.
+   */
+  protected resolveDomainYamlSchemaKind(normalizedPath: string): DomainYamlSchemaKind | undefined {
+    if (normalizedPath === 'manifest.yaml') {
+      return 'manifest';
+    }
+    if (normalizedPath === 'metadata.yaml') {
+      return 'metadata';
+    }
+    const entityMatch = /^entities\/(characters|terms|artifacts|locations)\/[^/]+\.ya?ml$/.exec(normalizedPath);
+    switch (entityMatch?.[1]) {
+      case 'characters':
+        return 'character';
+      case 'terms':
+        return 'term';
+      case 'artifacts':
+        return 'artifact';
+      case 'locations':
+        return 'location';
+      default:
+        return undefined;
+    }
+  }
+
   async moveManuscriptEntry(
     rootUri: string,
     sourcePath: string,
