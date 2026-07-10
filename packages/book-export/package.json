@@ -1,0 +1,25 @@
+{
+  "name": "@ai-focused-editor/book-export",
+  "version": "0.1.0",
+  "description": "Self-contained EPUB + PDF export core for AI Focused Editor, derived from the owner's telegraph-publisher library.",
+  "license": "UNLICENSED",
+  "main": "lib/index.js",
+  "typings": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "dependencies": {
+    "puppeteer-core": "^24.34.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "typescript": "~5.8.3"
+  },
+  "scripts": {
+    "build": "rm -rf lib && tsc",
+    "clean": "rm -rf lib *.tsbuildinfo",
+    "watch": "tsc -w",
+    "test": "bun test src/**/*.test.ts"
+  }
+}

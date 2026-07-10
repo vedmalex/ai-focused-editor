@@ -3,7 +3,7 @@ import type { WorkspaceDiagnostic } from './manuscript-workspace-protocol';
 export const BookBuildService = Symbol('BookBuildService');
 export const BookBuildServicePath = '/services/ai-focused-editor/book-build';
 
-export type BookBuildFormat = 'markdown';
+export type BookBuildFormat = 'markdown' | 'html' | 'epub' | 'pdf';
 
 export interface BookBuildRequest {
   rootUri?: string;
@@ -32,4 +32,7 @@ export interface BookBuildResult {
 
 export interface BookBuildService {
   buildMarkdown(request?: BookBuildRequest): Promise<BookBuildResult>;
+  buildHtml(request?: BookBuildRequest): Promise<BookBuildResult>;
+  buildEpub(request?: BookBuildRequest): Promise<BookBuildResult>;
+  buildPdf(request?: BookBuildRequest): Promise<BookBuildResult>;
 }
