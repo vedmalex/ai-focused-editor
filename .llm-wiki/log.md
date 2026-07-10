@@ -17,6 +17,10 @@ Backward parser also accepts old bullet format during transition.
 Types: init | ingest | query | maintain | migrate | remove
 
 <!-- Entries appended below by llm-wiki-* skills -->
+## [2026-07-10] maintain | Feature map refreshed after waves 7+
+
+Refreshed `pages/ai-focused-editor-feature-map.md` against current source (waves 7+): unified 8-section author navigator (`author-materials.ts`, `isAllowedMaterialFile`, `afe-ico-*` icon theme); Monarch markdown grammar + per-surface GFM task lists (checkboxes HTML/PDF, glyphs preview/EPUB); citations workflow (Save Selection as Citation, Citation Form Editor, recursive sources, Copy buttons); six chat context variables (#manuscript/#chapter/#entity/#entities/#sources/#outline); bounded provenance logging; heading-hierarchy outline with per-section entities; local `@ai-focused-editor/git` fork + Initialize Git Repository / Add to .gitignore; `@theia/mini-browser` image/PDF viewers; AI Review Current Chapter; aux `sources`/`knowledge` markdown linting; UI flow pack (6 scenarios). Bumped command table to 55, tests to 186 across 15 files, added `updated_at` frontmatter. Verified every fact against `packages/manuscript-workspace`, `packages/book-export`, `packages/theia-git-fork`, and `apps/*`.
+
 ## 2026-07-10 — Feature map added
 
 Added `pages/ai-focused-editor-feature-map.md` (type: concept) — a code-verified feature map of the Theia-based AI Focused Editor: views, menu/commands, editor features, AI stack, knowledge/sources, build/export, git/history, workspace conventions, RPC map, and test inventory.

@@ -1,6 +1,6 @@
 # AI Focused Editor Progress
 
-Updated: 2026-07-10 (wave 7 — writer UX)
+Updated: 2026-07-10 (wave 8 — forms, footnotes, viewers)
 
 This file tracks implementation progress against `spec.md`. It records verified repository state, not planned intent.
 
@@ -133,12 +133,21 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **Layout reset**: `Manuscript → Reset Workbench Layout (This Folder)` — per-folder layout restoration is why a stale folder could hide the AI Chat icon.
 - **Interactive git via local fork**: `packages/theia-git-fork` (`@ai-focused-editor/git`) — @theia/git@1.60.2 sources rebuilt against platform 1.73 (preference/toolbar/scm API drift fixed, in-process repository locator, native `find-git-repositories` compiled by an idempotent build step, octicon inlined). SCM view, changes, stage/commit, branches work with system git from PATH. FORK.md documents provenance (EPL-2.0/GPL-2.0 w/ CPE) and the exact steps to DROP the fork when upstream catches up. Caveat: electron target not yet exercised with the fork's native addon.
 
-## Wave 8 Backlog (queued)
+## Wave 7.1–8 — Owner feedback and forms (shipped)
 
-1. Link navigation inside descriptions/cards (entity references in YAML fields open the target card).
-2. Beautiful edit forms for every artifact type shown in manuscript navigation (sources metadata, manifest, metadata.yaml — beyond entity/citation forms).
-3. Footnotes editor for Markdown.
-4. Manifest editor (form UI over manifest.yaml).
-5. Dedicated LSP for incremental text validation (supersedes the backend-RPC validation path).
-6. Drop the git fork when a platform-compatible `@theia/git` ships; exercise the fork on the electron target.
-7. PDF text extraction for the §5.4 source analyzer.
+- **Allowed material types only**: navigator and source listings filter to documents/images/structural yaml-json (`isAllowedMaterialFile`); dotfiles excluded; `sources/` listing is recursive and both Sources/Knowledge sections keep nested folder structure; codicon icon theme with per-kind accent colors.
+- **Git setup actions**: `Initialize Git Repository` (Manuscript menu; no-op with message when already a repo) and `Add to .gitignore` (file navigator context menu; creates/dedupes).
+- **Viewers**: `@theia/mini-browser` opens images/PDF in both targets (`@theia/preview` deliberately skipped — version-stalled at 1.72, would duplicate `@theia/core`); the live Markdown preview gained an **open-preview toolbar button** on every `.md` editor tab.
+- **AI Review Current Chapter**: routed through the Theia AI chat pipeline (`ChatService.sendRequest` + `#chapter #entities`), streaming into the chat view with agent tool access.
+- **Form editors for book config**: `Edit Book Metadata...` (title/author/language/cover + free scalar keys) and `Edit Manifest...` (titles + include flags; ordering stays with the navigator tree) — default openers for the root `metadata.yaml`/`manifest.yaml`, comment-preserving yaml writes, raw YAML via Open With.
+- **Footnotes**: `Insert Footnote` command (auto-numbered `[^N]` + definition scaffold, caret jump), bidirectional `[^N]` ⇄ definition links in the editor, superscript+Notes rendering in preview and HTML export (EPUB/markdown keep the GFM source — documented limitation).
+- **Entity mention links**: `[[kind:id|label]]`/`[[id]]` inside card text fields are clickable in Knowledge Cards and shown as "Mentions" chips in the entity form editor.
+- **Chat mentions & provenance & outline** (wave 7 finale): `#chapter/#entity/#entities/#sources/#outline` variables; history records carry bounded messages/tools/response; Outline shows heading hierarchy with per-section entities.
+- Tests: 221 across 18 files; feature map in `.llm-wiki` refreshed (55 commands, 6 modules).
+
+## Backlog (queued)
+
+1. Dedicated LSP for incremental text validation (supersedes the backend-RPC validation path).
+2. Drop the git fork when a platform-compatible `@theia/git` ships; exercise the fork on the electron target.
+3. PDF text extraction for the §5.4 source analyzer.
+4. EPUB footnote rendering (currently GFM source passes through).
