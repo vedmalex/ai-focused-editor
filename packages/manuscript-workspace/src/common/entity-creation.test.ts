@@ -14,6 +14,7 @@ import {
   selectionToSummary,
   shouldWrapSelectionAsTag,
   suggestEntityName,
+  transliterate,
   uniqueRelativePath
 } from './entity-creation';
 
@@ -74,8 +75,29 @@ describe('createSemanticEntityId', () => {
     expect(id).toBe('a'.repeat(48));
   });
 
-  test('falls back to a kind-prefixed hash for a Cyrillic-only label (no allowed characters survive)', () => {
-    const id = createSemanticEntityId('char', 'Кришна');
+  test('transliterates a Cyrillic-only label instead of falling back to a hash', () => {
+    expect(createSemanticEntityId('note', 'проверка')).toBe('proverka');
+  });
+
+  test('transliterates a Cyrillic name, preserving word-slug casing rules', () => {
+    expect(createSemanticEntityId('char', 'Кришна')).toBe('krishna');
+  });
+
+  test('transliterates a mixed Latin-Cyrillic label to a single dash-joined slug', () => {
+    expect(createSemanticEntityId('term', 'Глава 1')).toBe('glava-1');
+  });
+
+  test('transliterates е/ё/й/щ/ъ/ь per the practical Russian-Latin map', () => {
+    // е -> e, ё -> e, й -> i, щ -> sch, ъ and ь drop entirely.
+    expect(createSemanticEntityId('term', 'подъезд')).toBe('podezd');
+    expect(createSemanticEntityId('term', 'ёлка')).toBe('elka');
+    expect(createSemanticEntityId('term', 'йогурт')).toBe('iogurt');
+    expect(createSemanticEntityId('term', 'борщ')).toBe('borsch');
+    expect(createSemanticEntityId('term', 'мать')).toBe('mat');
+  });
+
+  test('falls back to a kind-prefixed hash for a CJK-only label (no allowed characters survive)', () => {
+    const id = createSemanticEntityId('char', '孫悟空');
     expect(id).toMatch(/^char-[0-9a-z]+$/);
   });
 
@@ -85,14 +107,14 @@ describe('createSemanticEntityId', () => {
   });
 
   test('hash fallback is deterministic for the same kind + label', () => {
-    const first = createSemanticEntityId('char', 'Кришна');
-    const second = createSemanticEntityId('char', 'Кришна');
+    const first = createSemanticEntityId('char', '孫悟空');
+    const second = createSemanticEntityId('char', '孫悟空');
     expect(first).toBe(second);
   });
 
   test('hash fallback prefix reflects the kind argument even for identical labels', () => {
-    const charId = createSemanticEntityId('char', 'Кришна');
-    const characterId = createSemanticEntityId('character', 'Кришна');
+    const charId = createSemanticEntityId('char', '孫悟空');
+    const characterId = createSemanticEntityId('character', '孫悟空');
     expect(charId.startsWith('char-')).toBe(true);
     expect(characterId.startsWith('character-')).toBe(true);
     // Same label, different kind prefixes; the hash suffix stays identical.
@@ -108,8 +130,36 @@ describe('createSemanticEntityId', () => {
     expect(createSemanticEntityId('char', label)).toBe(createSemanticEntityId('character', label));
   });
 
+  test('tag id and entity file id agree for a transliterated Cyrillic label regardless of kind argument', () => {
+    const label = 'Кришна';
+    expect(createSemanticEntityId('char', label)).toBe(createSemanticEntityId('character', label));
+  });
+
   test('empty label falls back to a hash id', () => {
     expect(createSemanticEntityId('note', '')).toMatch(/^note-[0-9a-z]+$/);
+  });
+});
+
+describe('transliterate', () => {
+  test('maps lowercase Cyrillic letters to their practical Latin equivalents', () => {
+    expect(transliterate('проверка')).toBe('proverka');
+  });
+
+  test('preserves capitalization shape per letter', () => {
+    expect(transliterate('Кришна')).toBe('Krishna');
+  });
+
+  test('passes non-Cyrillic characters through untouched', () => {
+    expect(transliterate('Hello, мир! 123')).toBe('Hello, mir! 123');
+  });
+
+  test('drops ъ and ь (hard/soft signs)', () => {
+    expect(transliterate('объявление')).toBe('obyavlenie');
+    expect(transliterate('мать')).toBe('mat');
+  });
+
+  test('leaves CJK characters untouched (outside the transliteration map)', () => {
+    expect(transliterate('孫悟空')).toBe('孫悟空');
   });
 });
 
@@ -330,8 +380,13 @@ describe('knowledgeNoteRelativePath', () => {
     expect(knowledgeNoteRelativePath(undefined, 'Chapter Two Outline')).toBe('knowledge/chapter-two-outline.md');
   });
 
-  test('slug falls back to a note-prefixed hash for a Cyrillic-only title', () => {
+  test('transliterates a Cyrillic-only title instead of falling back to a hash', () => {
     const path = knowledgeNoteRelativePath('questions', 'Вопрос');
+    expect(path).toBe('knowledge/questions/vopros.md');
+  });
+
+  test('slug falls back to a note-prefixed hash for a CJK-only title', () => {
+    const path = knowledgeNoteRelativePath('questions', '問題');
     expect(path).toMatch(/^knowledge\/questions\/note-[0-9a-z]+\.md$/);
   });
 });

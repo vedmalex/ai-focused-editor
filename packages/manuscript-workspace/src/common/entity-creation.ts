@@ -59,22 +59,93 @@ function hash36(text: string): string {
 }
 
 /**
- * Build a semantic-tag-safe id from a free-form label. EXACTLY mirrors
+ * Practical Russian-to-Latin transliteration map, keyed by lowercase Cyrillic
+ * letter (Unicode escapes used for source-file portability across editors/
+ * encodings; each key is the single Cyrillic letter U+0430 `а` .. U+044F `я`
+ * plus `ё` `ё`). `transliterate` below handles both letter cases by
+ * looking up the lowercased character and re-casing the mapped result, since
+ * the slug pipeline lowercases its output anyway. `ъ` (hard sign) and
+ * `ь` (soft sign) map to the empty string (dropped) rather than a
+ * Latin letter.
+ */
+const CYRILLIC_TRANSLITERATION_MAP: Record<string, string> = {
+  'а': 'a', // а
+  'б': 'b', // б
+  'в': 'v', // в
+  'г': 'g', // г
+  'д': 'd', // д
+  'е': 'e', // е
+  'ё': 'e', // ё
+  'ж': 'zh', // ж
+  'з': 'z', // з
+  'и': 'i', // и
+  'й': 'i', // й
+  'к': 'k', // к
+  'л': 'l', // л
+  'м': 'm', // м
+  'н': 'n', // н
+  'о': 'o', // о
+  'п': 'p', // п
+  'р': 'r', // р
+  'с': 's', // с
+  'т': 't', // т
+  'у': 'u', // у
+  'ф': 'f', // ф
+  'х': 'h', // х
+  'ц': 'ts', // ц
+  'ч': 'ch', // ч
+  'ш': 'sh', // ш
+  'щ': 'sch', // щ
+  'ъ': '', // ъ (hard sign, dropped)
+  'ы': 'y', // ы
+  'ь': '', // ь (soft sign, dropped)
+  'э': 'e', // э
+  'ю': 'yu', // ю
+  'я': 'ya' // я
+};
+
+/**
+ * Transliterate Cyrillic characters in `text` to their practical Latin
+ * equivalents (e.g. "проверка" -> "proverka", "Кришна" -> "Krishna"),
+ * preserving case shape per-letter (the overall slug pipeline lowercases the
+ * result afterwards, but this keeps the helper meaningful standalone).
+ * Characters outside the Cyrillic map (Latin letters, digits, punctuation,
+ * other scripts such as CJK) pass through untouched.
+ */
+export function transliterate(text: string): string {
+  let result = '';
+  for (const character of text) {
+    const lower = character.toLowerCase();
+    const mapped = CYRILLIC_TRANSLITERATION_MAP[lower];
+    if (mapped === undefined) {
+      result += character;
+      continue;
+    }
+    result += character === lower ? mapped : mapped.charAt(0).toUpperCase() + mapped.slice(1);
+  }
+  return result;
+}
+
+/**
+ * Build a semantic-tag-safe id from a free-form label. First transliterates
+ * Cyrillic characters to Latin via `transliterate` (so e.g. "проверка"
+ * becomes `proverka` instead of falling back to a hash id), then mirrors
  * `createSemanticId`/`hashLabel` in
  * `semantic-markdown-actions-contribution.ts` (~line 336): NFKD-normalize,
  * strip combining marks, lowercase, collapse any run of characters outside
  * `[a-z0-9_.:-]` into a single `-`, trim leading/trailing `-`, cap at 48
  * characters, and fall back to `${kind}-${hash36(label)}` when the slug is
- * empty (e.g. a Cyrillic-only label with no Latin/digit characters survives
- * the allowed-character filter). Copied rather than imported so this
- * Theia-free module has no dependency on the browser contribution, and kept
- * byte-for-byte identical so a tag id and the entity file id it points at
+ * empty (e.g. a CJK-only label has no Latin/digit/Cyrillic characters and
+ * still produces an empty slug after the allowed-character filter). Copied
+ * rather than imported so this Theia-free module has no dependency on the
+ * browser contribution, and kept byte-for-byte identical (modulo the
+ * transliteration pre-step) so a tag id and the entity file id it points at
  * always agree.
  */
 export function createSemanticEntityId(kind: string, label: string): string {
-  const slug = label
+  const slug = transliterate(label)
     .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9_.:-]+/g, '-')
     .replace(/^-+|-+$/g, '')

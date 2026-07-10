@@ -331,8 +331,12 @@ describe('slugifyBookFolderName', () => {
     expect(slugifyBookFolderName('My Great Book')).toBe('my-great-book');
   });
 
-  test('falls back to a book-prefixed hash for a Cyrillic-only title', () => {
-    expect(slugifyBookFolderName('Война и мир')).toMatch(/^book-[0-9a-z]+$/);
+  test('transliterates a Cyrillic-only title instead of falling back to a hash', () => {
+    expect(slugifyBookFolderName('Война и мир')).toBe('voina-i-mir');
+  });
+
+  test('falls back to a book-prefixed hash for a CJK-only title', () => {
+    expect(slugifyBookFolderName('紅樓夢')).toMatch(/^book-[0-9a-z]+$/);
   });
 
   test('is deterministic for the same title', () => {
