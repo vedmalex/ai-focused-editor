@@ -121,7 +121,7 @@ const action = body => ({ eval: `(async () => {${HELPERS}\n${body}\nreturn true;
 
 export default {
   version: '2.0.0',
-  description: 'AI Focused Editor workbench flow checks (menu integrity, tree, editor/preview, model config, build menu, tree create context menu)',
+  description: 'AI Focused Editor workbench flow checks (menu integrity, tree, editor/preview, model config, build menu, tree create context menu, book menu and manuscript-view toolbar)',
   viewports: {
     desktop: { width: 1440, height: 900 }
   },
@@ -229,6 +229,51 @@ export default {
         throw new Error('Menu-bar create items hidden while Characters selected: ' + missing.join(', ') + ' (visible: ' + texts.join(' | ') + ')');
       }
       await closeMenus();
+    `),
+    // A preference-gated Welcome page auto-opens as a main-area tab on startup
+    // whenever no files are open, which is always true for this flow app's
+    // fresh page loads. None of this pack's other actions count main-area
+    // tabs or assert an empty main area — they only check menu-bar labels,
+    // dropdown menu items, tree nodes/icons, or waitForText() substring
+    // matches against document.body.innerText — so an extra 'Welcome' tab
+    // cannot break those assertions and no existing action needed adjusting.
+    assert_book_menu_and_toolbar: action(`
+      await waitForText('Part One', 45000);
+      await openMenu('Manuscript');
+      const requiredMenuItems = ['New Book...', 'Book Doctor...', 'Welcome'];
+      const menuTexts = menuItems().map(el => el.textContent.trim());
+      const missingMenuItems = requiredMenuItems.filter(entry => !menuItem(entry));
+      if (missingMenuItems.length > 0) {
+        throw new Error('Manuscript menu is missing: ' + missingMenuItems.join(', ') + ' (visible: ' + menuTexts.join(' | ') + ')');
+      }
+      await closeMenus();
+
+      // Toolbar icons render inside the tab-bar toolbar attached to whichever
+      // widget is "current" for its tab bar (Theia's TabBarToolbar); query the
+      // whole document for the icon rather than assuming a fixed container path,
+      // and accept any of the class name variants Theia has used across versions.
+      const toolbarIcon = iconClass => [...document.querySelectorAll('.' + iconClass)]
+        .filter(visible)
+        .find(el => el.closest('.lm-TabBar-toolbar, .p-TabBar-toolbar, .theia-tabBar-toolbar'));
+      const findToolbarIcons = () => ({ rocket: toolbarIcon('codicon-rocket'), pulse: toolbarIcon('codicon-pulse') });
+      let icons = findToolbarIcons();
+      for (let attempt = 0; attempt < 5 && (!icons.rocket || !icons.pulse); attempt++) {
+        // The toolbar only renders items for the "current" widget of its tab
+        // bar; activate the manuscript view by clicking its own tab header
+        // (if the side panel renders one) and, as a resilient fallback, a
+        // known tree row inside it, in case activation happens via content
+        // focus rather than a tab click.
+        const tabLabel = [...document.querySelectorAll('.lm-TabBar-tabLabel, .p-TabBar-tabLabel')]
+          .filter(visible).find(el => el.textContent.trim() === 'Manuscript');
+        const tab = tabLabel && (tabLabel.closest('.lm-TabBar-tab, .p-TabBar-tab') || tabLabel);
+        if (tab) { mouse(tab, 'mousedown'); mouse(tab, 'mouseup'); }
+        const node = treeNode('Part One');
+        if (node) { mouse(node, 'mousedown'); mouse(node, 'mouseup'); }
+        await sleep(500);
+        icons = findToolbarIcons();
+      }
+      if (!icons.rocket) { throw new Error('codicon-rocket toolbar icon (Build Book...) not found/visible near the manuscript view'); }
+      if (!icons.pulse) { throw new Error('codicon-pulse toolbar icon (Book Doctor) not found/visible near the manuscript view'); }
     `)
   },
   scenarios: [
@@ -311,6 +356,16 @@ export default {
       action: 'assert_menu_bar_create_visibility',
       requiredText: [],
       screenshot: 'afe-08-menu-bar-create-visibility.png'
+    },
+    {
+      id: 'AFE-09-BOOK-MENU-AND-TOOLBAR',
+      flowIds: ['AFE-09'],
+      profile: 'default',
+      path: '/',
+      viewport: 'desktop',
+      action: 'assert_book_menu_and_toolbar',
+      requiredText: [],
+      screenshot: 'afe-09-book-menu-and-toolbar.png'
     }
   ]
 };
