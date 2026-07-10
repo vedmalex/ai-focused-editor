@@ -17,6 +17,10 @@ import {
   AiMode,
   AiModeRegistry
 } from '../common';
+import {
+  AI_FOCUSED_EDITOR_MENU_LABEL,
+  AiFocusedEditorMenus
+} from './ai-focused-editor-menu';
 
 export namespace AiModeCommands {
   export const SHOW_PROJECT_AI_MODES: Command = {
@@ -62,8 +66,7 @@ export class AiModeContribution implements CommandContribution, MenuContribution
   }
 
   registerMenus(menus: MenuModelRegistry): void {
-    const menuPath = ['ai-focused-editor', 'ai-modes'];
-    menus.registerSubmenu(menuPath, 'AI Modes');
+    const menuPath = AiFocusedEditorMenus.AI_MODES;
     menus.registerMenuAction(menuPath, {
       commandId: AiModeCommands.SHOW_PROJECT_AI_MODES.id
     });

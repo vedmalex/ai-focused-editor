@@ -6,6 +6,10 @@ import {
 import { injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { EntityCardsWidget } from './entity-cards-widget';
+import {
+  AI_FOCUSED_EDITOR_MENU_LABEL,
+  AiFocusedEditorMenus
+} from './ai-focused-editor-menu';
 
 export namespace EntityCardsCommands {
   export const OPEN: Command = {
@@ -45,8 +49,7 @@ export class EntityCardsViewContribution extends AbstractViewContribution<Entity
 
   override registerMenus(menus: MenuModelRegistry): void {
     super.registerMenus(menus);
-    const menuPath = ['ai-focused-editor', 'knowledge'];
-    menus.registerSubmenu(menuPath, 'Knowledge');
+    const menuPath = AiFocusedEditorMenus.KNOWLEDGE;
     menus.registerMenuAction(menuPath, {
       commandId: EntityCardsCommands.OPEN.id
     });

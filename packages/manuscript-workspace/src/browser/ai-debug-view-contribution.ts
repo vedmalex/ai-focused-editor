@@ -6,6 +6,10 @@ import {
 import { injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { AiDebugWidget } from './ai-debug-widget';
+import {
+  AI_FOCUSED_EDITOR_MENU_LABEL,
+  AiFocusedEditorMenus
+} from './ai-focused-editor-menu';
 
 export namespace AiDebugCommands {
   export const OPEN: Command = {
@@ -56,8 +60,7 @@ export class AiDebugViewContribution extends AbstractViewContribution<AiDebugWid
 
   override registerMenus(menus: MenuModelRegistry): void {
     super.registerMenus(menus);
-    const menuPath = ['ai-focused-editor', 'ai-debug'];
-    menus.registerSubmenu(menuPath, 'AI Debug');
+    const menuPath = AiFocusedEditorMenus.AI_DEBUG;
     menus.registerMenuAction(menuPath, {
       commandId: AiDebugCommands.OPEN.id
     });

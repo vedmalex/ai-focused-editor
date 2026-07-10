@@ -6,6 +6,10 @@ import {
 import { injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { SemanticMarkdownPreviewWidget } from './semantic-markdown-preview-widget';
+import {
+  AI_FOCUSED_EDITOR_MENU_LABEL,
+  AiFocusedEditorMenus
+} from './ai-focused-editor-menu';
 
 export namespace SemanticMarkdownPreviewCommands {
   export const OPEN: Command = {
@@ -45,8 +49,7 @@ export class SemanticMarkdownPreviewContribution extends AbstractViewContributio
 
   override registerMenus(menus: MenuModelRegistry): void {
     super.registerMenus(menus);
-    const menuPath = ['ai-focused-editor'];
-    menus.registerSubmenu(menuPath, 'AI Focused Editor');
+    const menuPath = AiFocusedEditorMenus.MAIN;
     menus.registerMenuAction(menuPath, {
       commandId: SemanticMarkdownPreviewCommands.OPEN.id
     });

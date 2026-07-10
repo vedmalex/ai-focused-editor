@@ -18,6 +18,10 @@ import {
   EditorContextMenu
 } from '@theia/editor/lib/browser/editor-menu';
 import { inject, injectable } from '@theia/core/shared/inversify';
+import {
+  AI_FOCUSED_EDITOR_MENU_LABEL,
+  AiFocusedEditorMenus
+} from './ai-focused-editor-menu';
 
 type SemanticQuickActionKind = 'char' | 'term' | 'artifact';
 
@@ -78,8 +82,7 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
   }
 
   registerMenus(menus: MenuModelRegistry): void {
-    const menuPath = ['ai-focused-editor', 'semantic-markdown'];
-    menus.registerSubmenu(menuPath, 'Semantic Markdown');
+    const menuPath = AiFocusedEditorMenus.SEMANTIC_MARKDOWN;
     for (const command of [
       SemanticMarkdownActionCommands.WRAP_SELECTION_AS_CHARACTER,
       SemanticMarkdownActionCommands.WRAP_SELECTION_AS_TERM,
