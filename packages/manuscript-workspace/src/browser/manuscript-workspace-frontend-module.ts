@@ -60,6 +60,7 @@ import { BrowserNarrativeEntityService } from './browser-narrative-entity-servic
 import { BrowserSourceLibraryService } from './browser-source-library-service';
 import { AiModeContribution } from './ai-mode-contribution';
 import { BookBuildContribution } from './book-build-contribution';
+import { FootnoteLinkContribution } from './footnote-link-contribution';
 import { EntityCardsViewContribution } from './entity-cards-view-contribution';
 import { EntityCardsWidget } from './entity-cards-widget';
 import { AiProfileStatusBarContribution } from './ai-profile-status-bar-contribution';
@@ -175,6 +176,7 @@ export default new ContainerModule(bind => {
   bind(FrontendApplicationContribution).to(SemanticMarkdownDecorationService).inSingletonScope();
   bind(FrontendApplicationContribution).to(SemanticMarkdownDocumentSymbolProvider).inSingletonScope();
   bind(FrontendApplicationContribution).to(SemanticMarkdownCompletionProvider).inSingletonScope();
+  bind(FrontendApplicationContribution).to(FootnoteLinkContribution).inSingletonScope();
   bind(AiModePromptFragmentContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(AiModePromptFragmentContribution);
   bind(ManuscriptChatAgentContribution).toSelf().inSingletonScope();

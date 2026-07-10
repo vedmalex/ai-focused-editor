@@ -1,6 +1,10 @@
 import URI from '@theia/core/lib/common/uri';
 import { MessageService } from '@theia/core/lib/common';
-import { Navigatable } from '@theia/core/lib/browser';
+import {
+  Navigatable,
+  open,
+  OpenerService
+} from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import {
@@ -9,8 +13,13 @@ import {
 } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
 import { Document, parseDocument } from 'yaml';
-import type { NarrativeEntityKind, WorkspaceDiagnostic } from '../common';
-import { DomainYamlSchemaKind, YamlSchemaValidator } from '../common';
+import type { EntityMention, NarrativeEntity, NarrativeEntityKind, WorkspaceDiagnostic } from '../common';
+import {
+  DomainYamlSchemaKind,
+  extractEntityMentions,
+  NarrativeEntityService,
+  YamlSchemaValidator
+} from '../common';
 
 interface EntityDraft {
   id: string;
@@ -79,7 +88,17 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
   @inject(MessageService)
   protected readonly messageService!: MessageService;
 
+  @inject(NarrativeEntityService)
+  protected readonly entityService!: NarrativeEntityService;
+
+  @inject(OpenerService)
+  protected readonly openerService!: OpenerService;
+
   protected readonly validator = new YamlSchemaValidator();
+
+  /** Cached entity lookup for resolving `[[...]]` mentions (5s TTL). */
+  protected mentionIndex = new Map<string, NarrativeEntity>();
+  protected mentionIndexExpiresAt = 0;
 
   protected uri!: URI;
   protected kind: NarrativeEntityKind = 'character';
@@ -104,6 +123,35 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
     this.title.closable = true;
     this.addClass('afe-entity-editor-widget');
     void this.load();
+    void this.loadMentionIndex();
+  }
+
+  /**
+   * Refresh the entity lookup used to resolve `[[...]]` mentions. Cached for 5s
+   * like the other manuscript widgets so typing does not spam the backend.
+   */
+  protected async loadMentionIndex(): Promise<void> {
+    const now = Date.now();
+    if (now < this.mentionIndexExpiresAt) {
+      return;
+    }
+    this.mentionIndexExpiresAt = now + 5000;
+    try {
+      const snapshot = await this.entityService.getSnapshot();
+      const index = new Map<string, NarrativeEntity>();
+      for (const entity of snapshot.entities) {
+        index.set(`${entity.kind}:${entity.id}`, entity);
+        index.set(`${entity.kind === 'character' ? 'char' : entity.kind}:${entity.id}`, entity);
+        const bareKey = `id:${entity.id}`;
+        if (!index.has(bareKey)) {
+          index.set(bareKey, entity);
+        }
+      }
+      this.mentionIndex = index;
+      this.update();
+    } catch {
+      // Keep the last known index when the knowledge base is unavailable.
+    }
   }
 
   getResourceUri(): URI | undefined {
@@ -360,7 +408,61 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
         placeholder,
         rows,
         onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => this.updateField(field, event.currentTarget.value)
-      })
+      }),
+      this.renderMentionsRow(this.draft[field])
     );
+  }
+
+  /**
+   * Below a multi-line field, surface any `[[...]]` mentions it contains as a
+   * "Mentions:" chip row so writers can jump to the referenced entity YAML.
+   */
+  protected renderMentionsRow(text: string): React.ReactNode {
+    const mentions = extractEntityMentions(text);
+    if (mentions.length === 0) {
+      return undefined;
+    }
+    return React.createElement(
+      'div',
+      { className: 'afe-entity-mentions-row' },
+      React.createElement('span', { className: 'afe-entity-mentions-label' }, 'Mentions:'),
+      ...mentions.map((mention, index) => this.renderMentionChip(mention, index))
+    );
+  }
+
+  protected renderMentionChip(mention: EntityMention, index: number): React.ReactNode {
+    const entity = this.resolveMention(mention);
+    const display = mention.label ?? entity?.label ?? mention.id;
+    if (!entity) {
+      return React.createElement('span', {
+        key: index,
+        className: 'afe-entity-mention-chip unknown',
+        title: `Unknown entity: ${mention.kind ? `${mention.kind}:` : ''}${mention.id}`
+      }, display);
+    }
+    return React.createElement('span', {
+      key: index,
+      className: 'afe-entity-mention-chip',
+      title: `Open ${entity.kind}: ${entity.label}`,
+      role: 'link',
+      tabIndex: 0,
+      onClick: () => this.openMention(entity),
+      onKeyDown: (event: React.KeyboardEvent) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          void this.openMention(entity);
+        }
+      }
+    }, display);
+  }
+
+  protected resolveMention(mention: EntityMention): NarrativeEntity | undefined {
+    return mention.kind
+      ? this.mentionIndex.get(`${mention.kind}:${mention.id}`)
+      : this.mentionIndex.get(`id:${mention.id}`);
+  }
+
+  protected async openMention(entity: NarrativeEntity): Promise<void> {
+    await open(this.openerService, new URI(entity.uri));
   }
 }

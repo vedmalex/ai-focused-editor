@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test';
 import {
+  nextFootnoteNumber,
   normalizeSemanticMarkdownTags,
+  parseFootnotes,
   parseSemanticMarkdown,
   renderSemanticMarkdownPreview,
   renderTaskListGlyphs,
@@ -81,4 +83,47 @@ test('validates malformed semantic tag candidates', () => {
 
 test('normalizes valid semantic tag label spacing', () => {
   expect(normalizeSemanticMarkdownTags('[[char:krishna|  Krishna   Govinda ]]')).toBe('[[char:krishna|Krishna Govinda]]');
+});
+
+test('parses footnote references and definitions with ranges', () => {
+  const document = parseFootnotes('A claim.[^1]\nMore.[^2]\n\n[^1]: First note.\n[^2]: Second note.');
+
+  expect(document.references.map(reference => reference.id)).toEqual(['1', '2']);
+  expect(document.definitions.map(definition => definition.id)).toEqual(['1', '2']);
+  expect(document.numbers.get('1')).toBe(1);
+  expect(document.numbers.get('2')).toBe(2);
+  // Reference marker range covers `[^1]` on line 0.
+  expect(document.references[0].range).toMatchObject({
+    start: { line: 0, character: 8 },
+    end: { line: 0, character: 12 }
+  });
+  // Definition marker range covers `[^1]` at the start of its line.
+  expect(document.definitions[0]).toMatchObject({
+    line: 3,
+    text: 'First note.',
+    range: { start: { line: 3, character: 0 }, end: { line: 3, character: 4 } }
+  });
+});
+
+test('does not treat definition markers as references', () => {
+  const document = parseFootnotes('[^1]: lonely definition');
+  expect(document.references).toHaveLength(0);
+  expect(document.definitions).toHaveLength(1);
+});
+
+test('computes the next free numeric footnote number', () => {
+  expect(nextFootnoteNumber('No footnotes here.')).toBe(1);
+  expect(nextFootnoteNumber('One.[^1]\n[^1]: a')).toBe(2);
+  // Gaps and label ids do not lower the next numeric id.
+  expect(nextFootnoteNumber('a[^3] b[^note]\n[^3]: c\n[^note]: d')).toBe(4);
+});
+
+test('renders footnote references as superscripts with an end Notes list', () => {
+  expect(renderSemanticMarkdownPreview('A claim.[^1] More.[^2]\n\n[^1]: First note.\n[^2]: Second note.'))
+    .toBe('A claim.¹ More.²\n\n#### Notes\n\n1. First note.\n2. Second note.');
+});
+
+test('keeps footnote Notes list working alongside semantic tags', () => {
+  expect(renderSemanticMarkdownPreview('Meet [[char:krishna|Krishna]].[^1]\n\n[^1]: On the field.'))
+    .toBe('Meet **Krishna** _(char:krishna)_.¹\n\n#### Notes\n\n1. On the field.');
 });

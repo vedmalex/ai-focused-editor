@@ -2,7 +2,11 @@ import { promises as fs } from 'fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import { injectable } from '@theia/core/shared/inversify';
-import { validateSemanticMarkdown } from '@ai-focused-editor/semantic-markdown';
+import {
+  parseFootnotes,
+  validateSemanticMarkdown
+} from '@ai-focused-editor/semantic-markdown';
+import type { FootnoteDocument } from '@ai-focused-editor/semantic-markdown';
 import {
   CHROME_NOT_FOUND_MESSAGE,
   EpubGenerator,
@@ -515,6 +519,11 @@ export class NodeBookBuildService implements BookBuildService {
       'ul.contains-task-list{list-style:none;padding-left:1.2em;}',
       'li.task-list-item{margin-left:-1.2em;}',
       'li.task-list-item .task-list-item-checkbox{margin-right:0.5em;}',
+      'sup.afe-footnote-ref{font-size:0.75em;line-height:0;}',
+      'sup.afe-footnote-ref a{text-decoration:none;}',
+      'section.afe-footnotes{margin-top:40px;border-top:1px solid #ddd;padding-top:12px;font-size:0.92rem;}',
+      'section.afe-footnotes h2{font-size:1.1rem;}',
+      'a.afe-footnote-backref{text-decoration:none;margin-left:4px;}',
       '</style>',
       '</head>',
       '<body>',
@@ -563,7 +572,7 @@ export class NodeBookBuildService implements BookBuildService {
         parts.push(
           `<section id="${slug}">`,
           `<p class="source">Source: ${this.escapeHtml(node.path)}</p>`,
-          this.markdownRenderer.render(this.renderSemanticLabels(markdown)),
+          this.renderChapterHtml(this.renderSemanticLabels(markdown), slugs.get(node) ?? ''),
           '</section>'
         );
       }
@@ -968,6 +977,65 @@ export class NodeBookBuildService implements BookBuildService {
 
   protected renderSemanticLabels(markdown: string): string {
     return markdown.replace(/\[\[[a-z][\w-]*:[^\]|\s]+?\|([^\]]+?)\]\]/gi, '$1');
+  }
+
+  /**
+   * Render one chapter's Markdown to HTML with minimal footnote support.
+   *
+   * `markdown-it` runs with `html:false`, so `<sup>` cannot be emitted from the
+   * Markdown source directly. Instead each `[^id]` reference is swapped for a
+   * private-use sentinel (which survives the Markdown pass unescaped), rendered,
+   * then replaced with a real superscript link; footnote definition lines are
+   * pulled out of the body and re-emitted as an end-of-chapter "Notes" list.
+   * Anchors are prefixed with the chapter slug so ids stay unique across the book.
+   */
+  protected renderChapterHtml(markdown: string, anchorPrefix: string): string {
+    const footnotes = parseFootnotes(markdown);
+    if (footnotes.definitions.length === 0 && footnotes.references.length === 0) {
+      return this.markdownRenderer.render(markdown);
+    }
+
+    const definitionLines = new Set(footnotes.definitions.map(definition => definition.line));
+    const body = markdown
+      .split('\n')
+      .filter((_, index) => !definitionLines.has(index))
+      .join('\n');
+
+    const withSentinels = body.replace(/\[\^([^\]\s]+)\]/g, (raw, id: string) => {
+      const number = footnotes.numbers.get(id);
+      return number ? `\uE000${number}\uE001` : raw;
+    });
+
+    const rendered = this.markdownRenderer.render(withSentinels).replace(
+      /\uE000(\d+)\uE001/g,
+      (_match, number: string) =>
+        `<sup class="afe-footnote-ref" id="${anchorPrefix}-fnref-${number}">`
+        + `<a href="#${anchorPrefix}-fn-${number}">[${number}]</a></sup>`
+    );
+
+    return rendered + this.renderFootnotesHtml(footnotes, anchorPrefix);
+  }
+
+  protected renderFootnotesHtml(footnotes: FootnoteDocument, anchorPrefix: string): string {
+    const referencedIds = new Set(footnotes.references.map(reference => reference.id));
+    const seen = new Set<string>();
+    const items: string[] = [];
+    for (const definition of footnotes.definitions) {
+      if (seen.has(definition.id)) {
+        continue;
+      }
+      seen.add(definition.id);
+      const number = footnotes.numbers.get(definition.id) ?? seen.size;
+      const inner = this.markdownRenderer.renderInline(definition.text);
+      const backref = referencedIds.has(definition.id)
+        ? ` <a class="afe-footnote-backref" href="#${anchorPrefix}-fnref-${number}">↩</a>`
+        : '';
+      items.push(`<li id="${anchorPrefix}-fn-${number}">${inner}${backref}</li>`);
+    }
+    if (items.length === 0) {
+      return '';
+    }
+    return `\n<section class="afe-footnotes">\n<h2>Notes</h2>\n<ol>\n${items.join('\n')}\n</ol>\n</section>`;
   }
 
   protected escapeHtml(value: string): string {

@@ -3,6 +3,7 @@ export * from './ai-connect-config';
 export * from './ai-failover';
 export * from './ai-mode-protocol';
 export * from './book-build-protocol';
+export * from './entity-mentions';
 export * from './git-status-protocol';
 export * from './book-build-task-protocol';
 export * from './manuscript-workspace-protocol';

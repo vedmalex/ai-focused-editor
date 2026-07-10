@@ -316,6 +316,60 @@ describe('GFM rendering (HTML export)', () => {
   });
 });
 
+describe('footnote rendering (HTML export)', () => {
+  test('renders references as superscript links and a per-chapter Notes list', async () => {
+    const rootPath = await createWorkspace('footnotes-html', {
+      'metadata.yaml': ['title: Footnote Book', 'language: en', ''].join('\n'),
+      'manifest.yaml': ['version: 1', 'content:', '  - path: content/chapter-01.md', '    title: Chapter One', ''].join('\n'),
+      'content/chapter-01.md': [
+        '# Chapter One',
+        '',
+        'Duty does not bend to grief.[^1] Action does not cling to fruit.[^2]',
+        '',
+        '[^1]: See the second chapter for the full teaching.',
+        '[^2]: A **key** distinction.',
+        ''
+      ].join('\n')
+    });
+
+    const result = await service.buildHtml({ rootUri: rootPath });
+    const html = await fs.readFile(result.outputPath, 'utf8');
+
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+    // References become superscript links to the note anchors.
+    expect(html).toContain('<sup class="afe-footnote-ref"');
+    expect(html).toContain('href="#chapter-one-fn-1">[1]</a>');
+    expect(html).toContain('href="#chapter-one-fn-2">[2]</a>');
+    // Definitions collapse into an end-of-chapter Notes list with back-links.
+    expect(html).toContain('<section class="afe-footnotes">');
+    expect(html).toContain('<h2>Notes</h2>');
+    expect(html).toContain('id="chapter-one-fn-1">See the second chapter for the full teaching.');
+    // Inline markdown inside a note is still rendered.
+    expect(html).toContain('A <strong>key</strong> distinction.');
+    expect(html).toContain('class="afe-footnote-backref" href="#chapter-one-fnref-1"');
+    // The raw footnote syntax must not leak into the output.
+    expect(html).not.toContain('[^1]:');
+    expect(html).not.toContain('grief.[^1]');
+  });
+
+  test('leaves chapters without footnotes untouched', async () => {
+    const rootPath = await createWorkspace('footnotes-none', {
+      'metadata.yaml': ['title: Plain Book', 'language: en', ''].join('\n'),
+      'manifest.yaml': ['version: 1', 'content:', '  - path: content/chapter-01.md', '    title: Chapter One', ''].join('\n'),
+      'content/chapter-01.md': '# Chapter One\n\nJust prose, no notes.\n'
+    });
+
+    const result = await service.buildHtml({ rootUri: rootPath });
+    const html = await fs.readFile(result.outputPath, 'utf8');
+
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+    expect(html).toContain('Just prose, no notes.');
+    // No Notes section or reference markup is emitted when a chapter has no footnotes.
+    expect(html).not.toContain('<section class="afe-footnotes">');
+    expect(html).not.toContain('<sup class="afe-footnote-ref"');
+  });
+});
+
 function unzipEntry(path: string, entry: string): string {
   return Bun.spawnSync(['unzip', '-p', path, entry]).stdout.toString();
 }

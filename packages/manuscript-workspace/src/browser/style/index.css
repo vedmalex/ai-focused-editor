@@ -1165,3 +1165,277 @@
   margin-right: 4px;
   vertical-align: -1px;
 }
+
+/* ---------- book-config form editors (metadata.yaml / manifest.yaml) ---------- */
+
+.afe-form-editor {
+  padding: 10px 14px;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.afe-form-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.afe-form-editor-header h3 {
+  margin: 0;
+}
+
+.afe-form-editor-count {
+  display: inline-block;
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-badge-foreground);
+  background: var(--theia-badge-background);
+  border-radius: 8px;
+  padding: 0 8px;
+}
+
+.afe-form-editor-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 620px;
+  margin-bottom: 16px;
+}
+
+.afe-form-editor-subhead {
+  margin: 0;
+}
+
+.afe-form-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.afe-form-editor-field > span {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-form-editor-required {
+  color: var(--theia-inputValidation-errorForeground, var(--theia-editorError-foreground));
+}
+
+.afe-form-editor-field input,
+.afe-form-editor-kv-row input,
+.afe-form-editor-tree input[type='text'],
+.afe-form-editor-tree-title {
+  background: var(--theia-input-background);
+  color: var(--theia-input-foreground);
+  border: 1px solid var(--theia-input-border, transparent);
+  border-radius: 2px;
+  padding: 4px 6px;
+  outline: none;
+  font-family: inherit;
+}
+
+.afe-form-editor-field input:focus,
+.afe-form-editor-kv-row input:focus,
+.afe-form-editor-tree-title:focus {
+  border-color: var(--theia-focusBorder);
+}
+
+.afe-form-editor-hint {
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-form-editor-hint.ok {
+  color: var(--theia-editorInfo-foreground, var(--theia-descriptionForeground));
+}
+
+.afe-form-editor-hint.warn {
+  color: var(--theia-inputValidation-warningForeground, var(--theia-editorWarning-foreground));
+}
+
+.afe-form-editor-rows {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 620px;
+}
+
+.afe-form-editor-kv-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.afe-form-editor-kv-key {
+  flex: 0 0 200px;
+}
+
+.afe-form-editor-kv-value {
+  flex: 1;
+}
+
+.afe-form-editor-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 720px;
+}
+
+.afe-form-editor-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 1px solid var(--theia-input-border, transparent);
+  border-radius: 4px;
+  background: var(--theia-editorWidget-background, transparent);
+}
+
+.afe-form-editor-tree-row.has-children {
+  font-weight: 600;
+}
+
+.afe-form-editor-include {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+.afe-form-editor-tree-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.afe-form-editor-tree-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: inherit;
+}
+
+.afe-form-editor-tree-path {
+  flex: 0 1 auto;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+  font-weight: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.afe-form-editor-delete {
+  flex: 0 0 auto;
+}
+
+.afe-form-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.afe-form-editor-problems {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.afe-form-editor-problem {
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-form-editor-problem.error {
+  color: var(--theia-inputValidation-errorForeground, var(--theia-editorError-foreground));
+}
+
+.afe-form-editor-problem.warning {
+  color: var(--theia-inputValidation-warningForeground, var(--theia-editorWarning-foreground));
+}
+
+.afe-form-editor-empty,
+.afe-form-editor-help {
+  max-width: 620px;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-form-editor-help {
+  margin: 6px 0;
+}
+
+/* ---------- entity mentions ([[kind:id|label]] / [[id]]) ---------- */
+
+.afe-entity-mention {
+  color: var(--theia-textLink-foreground);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.afe-entity-mention:hover {
+  text-decoration: underline;
+  color: var(--theia-textLink-activeForeground, var(--theia-textLink-foreground));
+}
+
+.afe-entity-mention:focus-visible {
+  outline: 1px solid var(--theia-focusBorder);
+  outline-offset: 1px;
+}
+
+.afe-entity-mention.unknown {
+  color: var(--theia-descriptionForeground);
+  cursor: help;
+  text-decoration: underline dotted;
+}
+
+.afe-entity-mentions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.afe-entity-mentions-label {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-entity-mention-chip {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-badge-foreground);
+  background: var(--theia-badge-background);
+  cursor: pointer;
+}
+
+.afe-entity-mention-chip:hover {
+  text-decoration: underline;
+}
+
+.afe-entity-mention-chip:focus-visible {
+  outline: 1px solid var(--theia-focusBorder);
+  outline-offset: 1px;
+}
+
+.afe-entity-mention-chip.unknown {
+  color: var(--theia-descriptionForeground);
+  background: var(--theia-editorWidget-background, transparent);
+  border: 1px dashed var(--theia-descriptionForeground);
+  cursor: help;
+}

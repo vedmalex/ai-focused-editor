@@ -1,5 +1,7 @@
 import {
+  nextFootnoteNumber,
   normalizeSemanticMarkdownTags,
+  parseFootnotes,
   parseSemanticMarkdown
 } from '@ai-focused-editor/semantic-markdown';
 import {
@@ -10,6 +12,7 @@ import {
   MenuModelRegistry,
   MessageService
 } from '@theia/core/lib/common';
+import URI from '@theia/core/lib/common/uri';
 import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import type { TextEditor } from '@theia/editor/lib/browser/editor';
@@ -50,6 +53,19 @@ export namespace SemanticMarkdownActionCommands {
     id: 'ai-focused-editor.semanticMarkdown.normalizeTags',
     label: 'AI Focused Editor: Normalize Semantic Markdown Tags'
   };
+
+  export const INSERT_FOOTNOTE: Command = {
+    id: 'ai-focused-editor.semanticMarkdown.insertFootnote',
+    label: 'AI Focused Editor: Insert Footnote'
+  };
+
+  /**
+   * Internal jump target used by the footnote link provider's `command:` links;
+   * intentionally kept out of menus and the command palette.
+   */
+  export const REVEAL_FOOTNOTE: Command = {
+    id: 'ai-focused-editor.semanticMarkdown.revealFootnote'
+  };
 }
 
 @injectable()
@@ -79,6 +95,12 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
     registry.registerCommand(SemanticMarkdownActionCommands.NORMALIZE_TAGS, {
       execute: () => this.normalizeTags()
     });
+    registry.registerCommand(SemanticMarkdownActionCommands.INSERT_FOOTNOTE, {
+      execute: () => this.insertFootnote()
+    });
+    registry.registerCommand(SemanticMarkdownActionCommands.REVEAL_FOOTNOTE, {
+      execute: (uri?: string, line?: number, character?: number) => this.revealFootnote(uri, line, character)
+    });
   }
 
   registerMenus(menus: MenuModelRegistry): void {
@@ -87,6 +109,7 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
       SemanticMarkdownActionCommands.WRAP_SELECTION_AS_CHARACTER,
       SemanticMarkdownActionCommands.WRAP_SELECTION_AS_TERM,
       SemanticMarkdownActionCommands.WRAP_SELECTION_AS_ARTIFACT,
+      SemanticMarkdownActionCommands.INSERT_FOOTNOTE,
       SemanticMarkdownActionCommands.COPY_TAG_SUMMARY,
       SemanticMarkdownActionCommands.NORMALIZE_TAGS
     ]) {
@@ -104,6 +127,9 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
     });
     menus.registerMenuAction(editorMenuPath, {
       commandId: SemanticMarkdownActionCommands.WRAP_SELECTION_AS_ARTIFACT.id
+    });
+    menus.registerMenuAction(editorMenuPath, {
+      commandId: SemanticMarkdownActionCommands.INSERT_FOOTNOTE.id
     });
     menus.registerMenuAction(editorMenuPath, {
       commandId: SemanticMarkdownActionCommands.NORMALIZE_TAGS.id
@@ -206,6 +232,93 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
     } else {
       await this.messages.warn('Theia editor did not apply semantic tag normalization.');
     }
+  }
+
+  /**
+   * Insert a `[^N]` reference at the caret (N = next free numeric footnote id),
+   * append a matching `[^N]:` definition after the last existing definition (or at
+   * the document end), and drop the caret into the definition so the writer can type.
+   */
+  protected async insertFootnote(): Promise<void> {
+    const editor = this.getMarkdownEditor();
+    if (!editor) {
+      await this.messages.warn('Open a Markdown editor before inserting a footnote.');
+      return;
+    }
+
+    const number = nextFootnoteNumber(editor.document.getText());
+    const definitionMarker = `[^${number}]: `;
+
+    // Reference first, at the collapsed caret; leaves any selection in place.
+    const caret = editor.cursor;
+    const referenceApplied = await editor.replaceText({
+      source: SemanticMarkdownActionCommands.INSERT_FOOTNOTE.id,
+      replaceOperations: [{
+        range: { start: caret, end: caret },
+        text: `[^${number}]`
+      }]
+    });
+    if (!referenceApplied) {
+      await this.messages.warn('Theia editor did not insert the footnote reference.');
+      return;
+    }
+
+    // Recompute against the post-insert text so the definition lands correctly.
+    const text = editor.document.getText();
+    const lines = text.split(/\n/);
+    const { definitions } = parseFootnotes(text);
+    let insertAt: TextEditor['selection']['start'];
+    let definitionText: string;
+    if (definitions.length > 0) {
+      const lastLine = Math.max(...definitions.map(definition => definition.line));
+      insertAt = { line: lastLine, character: lines[lastLine]?.length ?? 0 };
+      definitionText = `\n${definitionMarker}`;
+    } else {
+      const lastLine = Math.max(0, lines.length - 1);
+      insertAt = { line: lastLine, character: lines[lastLine]?.length ?? 0 };
+      definitionText = `${text.endsWith('\n') ? '\n' : '\n\n'}${definitionMarker}`;
+    }
+
+    const definitionApplied = await editor.replaceText({
+      source: SemanticMarkdownActionCommands.INSERT_FOOTNOTE.id,
+      replaceOperations: [{
+        range: { start: insertAt, end: insertAt },
+        text: definitionText
+      }]
+    });
+    if (!definitionApplied) {
+      await this.messages.warn('Theia editor did not insert the footnote definition.');
+      return;
+    }
+
+    this.moveCaretToDefinition(editor, definitionMarker);
+    await this.messages.info(`Inserted footnote [^${number}]; type the note after the marker.`);
+  }
+
+  protected moveCaretToDefinition(editor: TextEditor, definitionMarker: string): void {
+    const lines = editor.document.getText().split(/\n/);
+    for (let line = lines.length - 1; line >= 0; line--) {
+      const column = lines[line].indexOf(definitionMarker);
+      if (column >= 0) {
+        const position = { line, character: column + definitionMarker.length };
+        editor.cursor = position;
+        editor.revealPosition(position);
+        editor.focus();
+        return;
+      }
+    }
+  }
+
+  /** Jump target for footnote link `command:` URIs (reference <-> definition). */
+  protected async revealFootnote(uri?: string, line?: number, character?: number): Promise<void> {
+    if (typeof uri !== 'string' || typeof line !== 'number') {
+      return;
+    }
+    const position = { line, character: typeof character === 'number' ? character : 0 };
+    await this.editorManager.open(new URI(uri), {
+      mode: 'reveal',
+      selection: { start: position, end: position }
+    });
   }
 
   protected getMarkdownEditor(): TextEditor | undefined {

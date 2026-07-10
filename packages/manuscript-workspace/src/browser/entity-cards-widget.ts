@@ -11,10 +11,12 @@ import {
 } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
 import {
+  EntityMention,
   NarrativeEntity,
   NarrativeEntityKind,
   NarrativeEntityService,
-  NarrativeEntitySnapshot
+  NarrativeEntitySnapshot,
+  splitEntityMentions
 } from '../common';
 
 @injectable()
@@ -29,6 +31,8 @@ export class EntityCardsWidget extends ReactWidget {
   protected readonly openerService!: OpenerService;
 
   protected snapshot: NarrativeEntitySnapshot | undefined;
+  /** Lookup for resolving `[[kind:id|label]]` / `[[id]]` mentions to entities. */
+  protected mentionIndex = new Map<string, NarrativeEntity>();
 
   @postConstruct()
   protected init(): void {
@@ -52,6 +56,7 @@ export class EntityCardsWidget extends ReactWidget {
       return React.createElement('div', { className: 'afe-entity-cards' }, 'Loading knowledge cards...');
     }
 
+    this.mentionIndex = this.buildMentionIndex(snapshot);
     const characters = snapshot.entities.filter(entity => entity.kind === 'character');
     const terms = snapshot.entities.filter(entity => entity.kind === 'term');
     const artifacts = snapshot.entities.filter(entity => entity.kind === 'artifact');
@@ -142,14 +147,14 @@ export class EntityCardsWidget extends ReactWidget {
         ? React.createElement('div', { className: 'afe-entity-epithets' }, `Epithets: ${epithets.join(', ')}`)
         : undefined,
       entity.summary
-        ? React.createElement('p', { className: 'afe-entity-summary' }, entity.summary)
+        ? React.createElement('p', { className: 'afe-entity-summary' }, ...this.renderMentionText(entity.summary, `${entity.uri}-summary`))
         : undefined,
       entity.arc
         ? React.createElement(
           'div',
           { className: 'afe-entity-arc' },
           React.createElement('span', { className: 'afe-entity-field-label' }, 'Arc: '),
-          entity.arc
+          ...this.renderMentionText(entity.arc, `${entity.uri}-arc`)
         )
         : undefined,
       speechPatterns.length > 0
@@ -160,10 +165,10 @@ export class EntityCardsWidget extends ReactWidget {
         ))
         : undefined,
       entity.backstory
-        ? this.renderCollapsible('Backstory', React.createElement('p', { className: 'afe-entity-backstory' }, entity.backstory))
+        ? this.renderCollapsible('Backstory', React.createElement('p', { className: 'afe-entity-backstory' }, ...this.renderMentionText(entity.backstory, `${entity.uri}-backstory`)))
         : undefined,
       entity.notes
-        ? this.renderCollapsible('Notes', React.createElement('p', { className: 'afe-entity-notes' }, entity.notes))
+        ? this.renderCollapsible('Notes', React.createElement('p', { className: 'afe-entity-notes' }, ...this.renderMentionText(entity.notes, `${entity.uri}-notes`)))
         : undefined,
       React.createElement('code', { className: 'afe-entity-path' }, entity.path),
       React.createElement(
@@ -188,6 +193,70 @@ export class EntityCardsWidget extends ReactWidget {
       React.createElement('summary', undefined, label),
       body
     );
+  }
+
+  /**
+   * Index every entity under both its real `kind:id` and the `char` shorthand,
+   * plus a bare `id:` key so `[[id]]` fallbacks resolve to the first match.
+   */
+  protected buildMentionIndex(snapshot: NarrativeEntitySnapshot): Map<string, NarrativeEntity> {
+    const index = new Map<string, NarrativeEntity>();
+    for (const entity of snapshot.entities) {
+      index.set(`${entity.kind}:${entity.id}`, entity);
+      index.set(`${this.toTagKind(entity.kind)}:${entity.id}`, entity);
+      const bareKey = `id:${entity.id}`;
+      if (!index.has(bareKey)) {
+        index.set(bareKey, entity);
+      }
+    }
+    return index;
+  }
+
+  protected toTagKind(kind: NarrativeEntityKind): string {
+    return kind === 'character' ? 'char' : kind;
+  }
+
+  protected resolveMention(mention: EntityMention): NarrativeEntity | undefined {
+    return mention.kind
+      ? this.mentionIndex.get(`${mention.kind}:${mention.id}`)
+      : this.mentionIndex.get(`id:${mention.id}`);
+  }
+
+  /**
+   * Render a text field, turning `[[...]]` mentions into clickable spans that
+   * open the referenced entity's YAML; unknown ids stay plain text with a hint.
+   */
+  protected renderMentionText(text: string, keyPrefix: string): React.ReactNode[] {
+    return splitEntityMentions(text).map((segment, index) => {
+      if (segment.type === 'text') {
+        return segment.value;
+      }
+      const { mention } = segment;
+      const entity = this.resolveMention(mention);
+      const display = mention.label ?? entity?.label ?? mention.id;
+      const key = `${keyPrefix}-${index}`;
+      if (!entity) {
+        return React.createElement('span', {
+          key,
+          className: 'afe-entity-mention unknown',
+          title: `Unknown entity: ${mention.kind ? `${mention.kind}:` : ''}${mention.id}`
+        }, display);
+      }
+      return React.createElement('span', {
+        key,
+        className: 'afe-entity-mention',
+        title: `Open ${entity.kind}: ${entity.label}`,
+        role: 'link',
+        tabIndex: 0,
+        onClick: () => this.openEntity(entity),
+        onKeyDown: (event: React.KeyboardEvent) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            void this.openEntity(entity);
+          }
+        }
+      }, display);
+    });
   }
 
   protected async openEntity(entity: NarrativeEntity): Promise<void> {
