@@ -7,6 +7,7 @@ import type {
 import type { AuthorMaterialsSectionKind } from '../common/author-materials';
 import {
   AuthorMaterialFolderTreeNode,
+  AuthorMaterialsSectionGroupTreeNode,
   AuthorMaterialsSectionTreeNode,
   AuthorMaterialTreeNode,
   ManuscriptTreeNode
@@ -28,6 +29,12 @@ const SECTION_ICONS: Record<AuthorMaterialsSectionKind, string> = {
   knowledge: 'codicon codicon-lightbulb afe-ico-knowledge'
 };
 
+/**
+ * The entities group node: a globe (the story's "world") in a neutral tint so
+ * it reads as a structural container next to the colored child sections.
+ */
+const ENTITY_GROUP_ICON = 'codicon codicon-globe afe-ico-entities';
+
 const MATERIAL_ICONS: Record<AuthorMaterialsSectionKind, string> = {
   manuscript: 'codicon codicon-file afe-ico-manuscript',
   characters: 'codicon codicon-person afe-ico-characters',
@@ -48,6 +55,7 @@ export class ManuscriptTreeLabelProvider implements LabelProviderContribution {
 
   canHandle(element: object): number {
     return ManuscriptTreeNode.is(element)
+      || AuthorMaterialsSectionGroupTreeNode.is(element)
       || AuthorMaterialsSectionTreeNode.is(element)
       || AuthorMaterialTreeNode.is(element)
       || AuthorMaterialFolderTreeNode.is(element)
@@ -61,6 +69,9 @@ export class ManuscriptTreeLabelProvider implements LabelProviderContribution {
     }
     if (ManuscriptTreeNode.isFile(element)) {
       return 'codicon codicon-book afe-ico-manuscript';
+    }
+    if (AuthorMaterialsSectionGroupTreeNode.is(element)) {
+      return ENTITY_GROUP_ICON;
     }
     if (AuthorMaterialsSectionTreeNode.is(element)) {
       return SECTION_ICONS[element.sectionKind];
@@ -100,7 +111,8 @@ export class ManuscriptTreeLabelProvider implements LabelProviderContribution {
     if (ManuscriptTreeNode.is(element)) {
       return element.manuscript.name;
     }
-    if (AuthorMaterialsSectionTreeNode.is(element)
+    if (AuthorMaterialsSectionGroupTreeNode.is(element)
+      || AuthorMaterialsSectionTreeNode.is(element)
       || AuthorMaterialTreeNode.is(element)
       || AuthorMaterialFolderTreeNode.is(element)) {
       return element.name;
@@ -115,7 +127,9 @@ export class ManuscriptTreeLabelProvider implements LabelProviderContribution {
     if (AuthorMaterialTreeNode.is(element)) {
       return element.description ?? element.name;
     }
-    if (AuthorMaterialsSectionTreeNode.is(element) || AuthorMaterialFolderTreeNode.is(element)) {
+    if (AuthorMaterialsSectionGroupTreeNode.is(element)
+      || AuthorMaterialsSectionTreeNode.is(element)
+      || AuthorMaterialFolderTreeNode.is(element)) {
       return element.name;
     }
     return undefined;
@@ -133,6 +147,7 @@ export class ManuscriptTreeLabelProvider implements LabelProviderContribution {
 
   affects(element: object, event: DidChangeLabelEvent): boolean {
     return (ManuscriptTreeNode.is(element)
+      || AuthorMaterialsSectionGroupTreeNode.is(element)
       || AuthorMaterialsSectionTreeNode.is(element)
       || AuthorMaterialTreeNode.is(element)
       || AuthorMaterialFolderTreeNode.is(element))

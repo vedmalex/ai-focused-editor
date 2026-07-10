@@ -36,7 +36,9 @@ import {
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import {
   AFE_MANUSCRIPT_SECTION_CONTEXT_KEY,
+  AUTHOR_MATERIALS_ENTITY_GROUP_KIND,
   AuthorMaterialFolderTreeNode,
+  AuthorMaterialsSectionGroupTreeNode,
   AuthorMaterialsSectionTreeNode,
   AuthorMaterialTreeNode,
   ManuscriptTreeNode
@@ -105,6 +107,16 @@ const ENTITY_SECTION: Record<CreatableEntityKind, AuthorMaterialsSectionKind> = 
   artifact: 'artifacts',
   location: 'locations'
 };
+
+/**
+ * Sections nested under the entities group. Their create actions also fire when
+ * the group node itself is selected, so right-clicking the group offers New
+ * Character/Term/Artifact/Location; citations/knowledge/sources are NOT in the
+ * group and so never match its `entities` context value.
+ */
+const ENTITY_GROUP_SECTIONS: ReadonlySet<AuthorMaterialsSectionKind> = new Set(
+  Object.values(ENTITY_SECTION)
+);
 
 interface KnowledgeCategoryPick extends QuickPickItem {
   /** `undefined` files the note directly under `knowledge/`. */
@@ -198,6 +210,11 @@ export class AuthorMaterialsCreateContribution
     }
     if (ManuscriptTreeNode.is(node) || AuthorMaterialsSectionTreeNode.isManuscript(node)) {
       return 'manuscript';
+    }
+    // The entities group maps to its own value so right-clicking it offers all
+    // four entity create actions (see sectionWhenClause).
+    if (AuthorMaterialsSectionGroupTreeNode.is(node)) {
+      return AUTHOR_MATERIALS_ENTITY_GROUP_KIND;
     }
     if (AuthorMaterialsSectionTreeNode.is(node)
       || AuthorMaterialTreeNode.is(node)
@@ -642,9 +659,14 @@ export class AuthorMaterialsCreateContribution
 
 /**
  * `when` clause keeping a create action visible in the tree context menu only
- * when nothing is selected (`none`) or the matching section is selected.
+ * when nothing is selected (`none`), the matching section is selected, or — for
+ * the four entity sections — the entities group node is selected.
  */
 function sectionWhenClause(section: AuthorMaterialsSectionKind): string {
   const key = AFE_MANUSCRIPT_SECTION_CONTEXT_KEY;
-  return `${key} == 'none' || ${key} == '${section}'`;
+  const clauses = [`${key} == 'none'`, `${key} == '${section}'`];
+  if (ENTITY_GROUP_SECTIONS.has(section)) {
+    clauses.push(`${key} == '${AUTHOR_MATERIALS_ENTITY_GROUP_KIND}'`);
+  }
+  return clauses.join(' || ');
 }

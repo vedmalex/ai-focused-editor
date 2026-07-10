@@ -23,6 +23,7 @@ import type {
   ManuscriptWorkspaceSnapshot
 } from '../common';
 import {
+  AuthorMaterialsSectionGroupTreeNode,
   AuthorMaterialsSectionTreeNode,
   AuthorMaterialTreeNode,
   ManuscriptTreeNode
@@ -100,7 +101,7 @@ export class ManuscriptTreeWidget extends TreeWidget {
     if (ManuscriptTreeNode.is(node) && !node.manuscript.buildIncluded) {
       classNames.push('afe-manuscript-excluded');
     }
-    if (AuthorMaterialsSectionTreeNode.is(node)) {
+    if (AuthorMaterialsSectionTreeNode.is(node) || AuthorMaterialsSectionGroupTreeNode.is(node)) {
       classNames.push('afe-tree-section');
     }
     return classNames;
@@ -230,8 +231,10 @@ export class ManuscriptTreeWidget extends TreeWidget {
       };
     }
 
-    // Reject drops onto non-manuscript sections and material leaves.
+    // Reject drops onto the entities group, non-manuscript sections and material
+    // leaves — only the Manuscript section/tree accepts manuscript moves.
     if (AuthorMaterialTreeNode.is(node)
+      || AuthorMaterialsSectionGroupTreeNode.is(node)
       || (AuthorMaterialsSectionTreeNode.is(node) && !AuthorMaterialsSectionTreeNode.isManuscript(node))) {
       return undefined;
     }

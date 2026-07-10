@@ -1247,6 +1247,9 @@
 /* Per-kind accent colors via Theia chart variables (theme-aware). */
 
 .afe-ico-manuscript { color: var(--theia-charts-blue, #4e94ce); }
+/* Entities group: a neutral container tint so the group reads as a structural
+   parent rather than competing with its colored child sections. */
+.afe-ico-entities { color: var(--theia-icon-foreground); }
 .afe-ico-characters { color: var(--theia-charts-purple, #b180d7); }
 .afe-ico-terms { color: var(--theia-charts-green, #89d185); }
 .afe-ico-artifacts { color: var(--theia-charts-orange, #d18616); }

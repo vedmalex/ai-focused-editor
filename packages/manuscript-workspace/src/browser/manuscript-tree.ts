@@ -12,10 +12,34 @@ export const MANUSCRIPT_TREE_ROOT_ID = 'ai-focused-editor.manuscript-tree.root';
  */
 export const AFE_MANUSCRIPT_SECTION_CONTEXT_KEY = 'afeManuscriptSection';
 
+/**
+ * Context-key value and node discriminator for the collapsible group that nests
+ * the four entity sections (Characters, Terms, Artifacts, Locations) under a
+ * single node — mirroring the on-disk `entities/` folder. Selecting the group
+ * sets {@link AFE_MANUSCRIPT_SECTION_CONTEXT_KEY} to this value so the four
+ * entity create actions are all offered on the group's context menu.
+ */
+export const AUTHOR_MATERIALS_ENTITY_GROUP_KIND = 'entities' as const;
+
 export interface ManuscriptTreeRootNode extends CompositeTreeNode {
   readonly id: typeof MANUSCRIPT_TREE_ROOT_ID;
   readonly name: 'Manuscript';
+  children: (AuthorMaterialsSectionTreeNode | AuthorMaterialsSectionGroupTreeNode)[];
+}
+
+/**
+ * A collapsible group nesting the entity sections under one node. Like a
+ * section it is composite and carries no `manuscript` field, so the manuscript
+ * DnD guards treat it as neither a draggable source nor a drop target; unlike a
+ * section it carries a {@link groupKind} discriminator instead of a
+ * `sectionKind`, so it maps to its own `entities` context-key value.
+ */
+export interface AuthorMaterialsSectionGroupTreeNode extends CompositeTreeNode {
+  readonly nodeType: 'section-group';
+  readonly groupKind: typeof AUTHOR_MATERIALS_ENTITY_GROUP_KIND;
   children: AuthorMaterialsSectionTreeNode[];
+  expanded: boolean;
+  selected: boolean;
 }
 
 /**
@@ -92,6 +116,13 @@ export namespace AuthorMaterialsSectionTreeNode {
 
   export function isManuscript(node: unknown): node is AuthorMaterialsSectionTreeNode {
     return is(node) && node.sectionKind === 'manuscript';
+  }
+}
+
+export namespace AuthorMaterialsSectionGroupTreeNode {
+  export function is(node: unknown): node is AuthorMaterialsSectionGroupTreeNode {
+    return typeof node === 'object' && node !== null
+      && (node as { nodeType?: unknown }).nodeType === 'section-group';
   }
 }
 

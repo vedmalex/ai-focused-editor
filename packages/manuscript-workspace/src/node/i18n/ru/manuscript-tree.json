@@ -1,6 +1,15 @@
 {
   "ai-focused-editor": {
     "manuscript-tree": {
+      "section-manuscript": "Рукопись",
+      "section-entities": "Мир книги",
+      "section-characters": "Персонажи",
+      "section-terms": "Термины",
+      "section-artifacts": "Артефакты",
+      "section-locations": "Локации",
+      "section-citations": "Цитаты",
+      "section-sources": "Источники",
+      "section-knowledge": "Знания",
       "open": "Открыть обзор рукописи",
       "refresh": "Обновить обзор рукописи",
       "move-up": "Переместить главу вверх",
