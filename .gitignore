@@ -10,3 +10,5 @@ apps/*/gen-esbuild*.mjs
 apps/*/src-gen/
 *.tsbuildinfo
 .DS_Store
+output/
+.playwright-cli/
