@@ -810,13 +810,23 @@ export function convertMarkdownToTelegraphNodes(
 				}
 			}
 
-			// Add list item to current (top) stack level
+			// Add list item to current (top) stack level. GFM task-list markers
+			// (`[ ]` / `[x]`) become ballot-box glyphs so EPUB readers, which the
+			// serializer can only feed non-void tags, show checkbox state without a
+			// bare <input> element.
 			if (textContent && listStack.length > 0) {
 				const currentLevel = listStack[listStack.length - 1];
 				if (currentLevel) {
+					const taskMatch = /^\[([ xX])\]\s+/.exec(textContent);
+					const liChildren = taskMatch
+						? [
+								taskMatch[1] === " " ? "☐ " : "☑ ",
+								...processInlineMarkdown(textContent.slice(taskMatch[0].length)),
+							]
+						: processInlineMarkdown(textContent);
 					currentLevel.items.push({
 						tag: "li",
-						children: processInlineMarkdown(textContent),
+						children: liChildren,
 					});
 				}
 			}
@@ -944,6 +954,8 @@ function processInlineMarkdown(text: string): (string | TelegraphNode)[] {
 	const patterns = [
 		// Images: ![alt](src) – must go BEFORE link pattern to avoid overlap
 		{ regex: /!\[([^[\]]*)\]\(([^()]*)\)/g, tag: "img", isImage: true },
+		// GFM strikethrough: ~~text~~
+		{ regex: /~~(.*?)~~/g, tag: "del" },
 		{ regex: /\*\*(.*?)\*\*/g, tag: "strong" },
 		{ regex: /__(.*?)__/g, tag: "strong" },
 		{ regex: /\*(.*?)\*/g, tag: "em" },

@@ -60,13 +60,33 @@ export function parseSemanticMarkdown(text: string): SemanticMarkdownDocument {
   return { tags };
 }
 
+// GFM task-list marker at the start of a list item, e.g. `- [ ] todo` / `- [x] done`.
+const TASK_LIST_ITEM_PATTERN = /^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]\s+/gm;
+
+/**
+ * Render the portable preview Markdown shown in the Semantic Preview widget.
+ *
+ * Semantic `[[kind:id|label]]` tags collapse to bold label + muted meta, and GFM
+ * task-list markers become ballot-box glyphs (☐ / ☑) so checkbox lists read
+ * correctly through Theia's `html:false` Markdown renderer (which otherwise leaves
+ * `[ ]` / `[x]` as literal text). Tables and strikethrough already render via
+ * markdown-it's default preset, so they pass through untouched.
+ */
 export function renderSemanticMarkdownPreview(text: string): string {
+  const withTaskGlyphs = renderTaskListGlyphs(text);
   SEMANTIC_TAG_PATTERN.lastIndex = 0;
-  return text.replace(SEMANTIC_TAG_PATTERN, (_raw, kind: string, id: string, label: string) => {
+  return withTaskGlyphs.replace(SEMANTIC_TAG_PATTERN, (_raw, kind: string, id: string, label: string) => {
     const escapedLabel = escapeMarkdownText(label);
     const escapedMeta = escapeMarkdownText(`${kind}:${id}`);
     return `**${escapedLabel}** _(${escapedMeta})_`;
   });
+}
+
+export function renderTaskListGlyphs(text: string): string {
+  TASK_LIST_ITEM_PATTERN.lastIndex = 0;
+  return text.replace(TASK_LIST_ITEM_PATTERN, (_raw, prefix: string, mark: string) =>
+    `${prefix}${mark === ' ' ? '☐' : '☑'} `
+  );
 }
 
 export function validateSemanticMarkdown(text: string): SemanticMarkdownDiagnostic[] {

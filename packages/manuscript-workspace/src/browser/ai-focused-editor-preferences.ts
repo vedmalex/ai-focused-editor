@@ -14,6 +14,7 @@ export const AI_FOCUSED_EDITOR_AI_PROFILE_ID = 'aiFocusedEditor.ai.profileId';
 export const AI_FOCUSED_EDITOR_AI_PROFILES = 'aiFocusedEditor.ai.profiles';
 export const AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE = 'aiFocusedEditor.ai.activeProfile';
 export const AI_FOCUSED_EDITOR_AI_API_KEYS = 'aiFocusedEditor.ai.apiKeys';
+export const AI_FOCUSED_EDITOR_PREVIEW_SHOW_TAG_CHIPS = 'aiFocusedEditor.preview.showTagChips';
 
 export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
   title: 'AI Focused Editor',
@@ -91,6 +92,11 @@ export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
       default: {},
       additionalProperties: { type: 'string' },
       description: 'API keys per profile id. Keep this in User scope (the Model Config view does this automatically) so secrets stay out of workspace files.'
+    },
+    [AI_FOCUSED_EDITOR_PREVIEW_SHOW_TAG_CHIPS]: {
+      type: 'boolean',
+      default: true,
+      description: 'Show the semantic tag chips row at the top of the Semantic Preview. Turn this off for a plain-Markdown reading view.'
     }
   }
 };

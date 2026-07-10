@@ -72,6 +72,7 @@ import {
   ManuscriptListChaptersTool
 } from './manuscript-tools-contribution';
 import { AiHistoryService } from './ai-history-service';
+import { MarkdownLanguageContribution } from './markdown-language-contribution';
 import { AiModePromptFragmentContribution } from './ai-mode-prompt-fragment-contribution';
 import { ManuscriptTreeItemFactory } from './manuscript-tree-item-factory';
 import { ManuscriptTreeLabelProvider } from './manuscript-tree-label-provider';
@@ -164,6 +165,7 @@ export default new ContainerModule(bind => {
   bindViewContribution(bind, SemanticMarkdownPreviewContribution);
   bindViewContribution(bind, ModelConfigViewContribution);
   bindViewContribution(bind, AiDebugViewContribution);
+  bind(FrontendApplicationContribution).to(MarkdownLanguageContribution).inSingletonScope();
   bind(FrontendApplicationContribution).to(SemanticMarkdownDecorationService).inSingletonScope();
   bind(FrontendApplicationContribution).to(SemanticMarkdownDocumentSymbolProvider).inSingletonScope();
   bind(FrontendApplicationContribution).to(SemanticMarkdownCompletionProvider).inSingletonScope();

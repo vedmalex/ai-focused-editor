@@ -3,6 +3,7 @@ import {
   normalizeSemanticMarkdownTags,
   parseSemanticMarkdown,
   renderSemanticMarkdownPreview,
+  renderTaskListGlyphs,
   validateSemanticMarkdown
 } from './semantic-markdown';
 
@@ -41,6 +42,19 @@ test('keeps line and character ranges across lines', () => {
 
 test('renders semantic tags into portable preview markdown', () => {
   expect(renderSemanticMarkdownPreview('Hello [[char:krishna|Krishna]].')).toBe('Hello **Krishna** _(char:krishna)_.');
+});
+
+test('renders GFM task-list markers as ballot-box glyphs', () => {
+  expect(renderTaskListGlyphs('- [ ] todo\n- [x] done\n- plain')).toBe('- ☐ todo\n- ☑ done\n- plain');
+  // Indented + ordered task items keep their list prefix.
+  expect(renderTaskListGlyphs('  - [X] nested\n1. [ ] first')).toBe('  - ☑ nested\n1. ☐ first');
+  // Non-task list items and inline brackets are untouched.
+  expect(renderTaskListGlyphs('a [x] mid-line\n- normal item')).toBe('a [x] mid-line\n- normal item');
+});
+
+test('preview keeps task-list glyphs alongside semantic tags', () => {
+  expect(renderSemanticMarkdownPreview('- [x] meet [[char:krishna|Krishna]]'))
+    .toBe('- ☑ meet **Krishna** _(char:krishna)_');
 });
 
 test('validates malformed semantic tag candidates', () => {

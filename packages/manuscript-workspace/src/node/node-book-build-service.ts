@@ -58,6 +58,50 @@ type BuildNode = ChapterNode | FolderNode;
 const MAX_HEADING_LEVEL = 6;
 
 /**
+ * Minimal GFM task-list plugin for markdown-it, reimplemented compactly from
+ * `markdown-it-task-lists` (Revin Guillen, MIT). Renders `- [ ]` / `- [x]` list
+ * items as disabled checkbox inputs so book.html / book.pdf show real GFM
+ * checkboxes. Tables and strikethrough already come from markdown-it's default
+ * preset, so this is the only GFM piece we hand-roll here.
+ */
+export function markdownItTaskLists(md: MarkdownIt): void {
+  md.core.ruler.after('inline', 'afe-task-lists', state => {
+    const tokens = state.tokens;
+    for (let i = 2; i < tokens.length; i++) {
+      const inline = tokens[i];
+      if (inline.type !== 'inline'
+        || tokens[i - 1].type !== 'paragraph_open'
+        || tokens[i - 2].type !== 'list_item_open') {
+        continue;
+      }
+      const marker = /^\[([ xX])\]\s+/.exec(inline.content);
+      if (!marker) {
+        continue;
+      }
+      const checked = marker[1] !== ' ';
+      inline.content = inline.content.slice(marker[0].length);
+      const firstChild = inline.children?.[0];
+      if (firstChild && firstChild.type === 'text') {
+        firstChild.content = firstChild.content.replace(/^\[([ xX])\]\s+/, '');
+      }
+      const checkbox = new state.Token('html_inline', '', 0);
+      checkbox.content = `<input class="task-list-item-checkbox"${checked ? ' checked="checked"' : ''} disabled="disabled" type="checkbox"> `;
+      inline.children?.unshift(checkbox);
+      tokens[i - 2].attrJoin('class', 'task-list-item');
+      for (let j = i - 2; j >= 0; j--) {
+        if (tokens[j].type === 'bullet_list_open' || tokens[j].type === 'ordered_list_open') {
+          if (!(tokens[j].attrGet('class') || '').includes('contains-task-list')) {
+            tokens[j].attrJoin('class', 'contains-task-list');
+          }
+          break;
+        }
+      }
+    }
+    return false;
+  });
+}
+
+/**
  * Numeric-aware comparison so that `chapter-2` sorts before `chapter-10`.
  */
 export function naturalCompare(left: string, right: string): number {
@@ -86,11 +130,13 @@ const DEFAULT_PDF_OUTPUT_PATH = 'build/book.pdf';
 
 @injectable()
 export class NodeBookBuildService implements BookBuildService {
+  // Default preset already enables GFM tables + strikethrough; the task-list
+  // plugin adds GFM checkbox lists so book.html / book.pdf render all three.
   protected readonly markdownRenderer = new MarkdownIt({
     html: false,
     linkify: true,
     typographer: true
-  });
+  }).use(markdownItTaskLists);
 
   async buildMarkdown(request: BookBuildRequest = {}): Promise<BookBuildResult> {
     return this.build(request, 'markdown');
@@ -463,6 +509,12 @@ export class NodeBookBuildService implements BookBuildService {
       '.metadata{color:#5f6368;font-size:0.92rem;}',
       '.source{color:#70757a;font-size:0.85rem;margin-bottom:12px;}',
       'code{background:#f1f3f4;padding:0.1em 0.3em;border-radius:3px;}',
+      'table{border-collapse:collapse;margin:16px 0;}',
+      'th,td{border:1px solid #d0d0d0;padding:6px 12px;text-align:left;}',
+      'th{background:#f1f3f4;}',
+      'ul.contains-task-list{list-style:none;padding-left:1.2em;}',
+      'li.task-list-item{margin-left:-1.2em;}',
+      'li.task-list-item .task-list-item-checkbox{margin-right:0.5em;}',
       '</style>',
       '</head>',
       '<body>',

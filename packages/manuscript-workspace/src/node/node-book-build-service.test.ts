@@ -277,6 +277,45 @@ describe('unicode titles end-to-end', () => {
   });
 });
 
+describe('GFM rendering (HTML export)', () => {
+  test('renders GFM tables, strikethrough, and task lists in book.html', async () => {
+    const rootPath = await createWorkspace('gfm-html', {
+      'metadata.yaml': ['title: GFM Book', 'language: en', ''].join('\n'),
+      'manifest.yaml': ['version: 1', 'content:', '  - path: content/chapter-01.md', '    title: Chapter One', ''].join('\n'),
+      'content/chapter-01.md': [
+        '# Chapter One',
+        '',
+        '| Stance | Outcome |',
+        '| --- | --- |',
+        '| Attachment | Bondage |',
+        '| Karma-yoga | ~~Bondage~~ Freedom |',
+        '',
+        '- [x] done item',
+        '- [ ] open item',
+        ''
+      ].join('\n')
+    });
+
+    const result = await service.buildHtml({ rootUri: rootPath });
+    const html = await fs.readFile(result.outputPath, 'utf8');
+
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+    // GFM table renders to a real <table> (markdown-it default preset).
+    expect(html).toContain('<table>');
+    expect(html).toContain('<th>Stance</th>');
+    expect(html).toContain('<td>Attachment</td>');
+    // GFM strikethrough renders to <s> (markdown-it default preset).
+    expect(html).toContain('<s>Bondage</s>');
+    // GFM task lists render to disabled checkbox inputs (hand-rolled plugin).
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain('checked="checked"');
+    expect(html).toContain('class="task-list-item"');
+    // The literal marker text must not leak through.
+    expect(html).not.toContain('[x] done item');
+    expect(html).not.toContain('[ ] open item');
+  });
+});
+
 function unzipEntry(path: string, entry: string): string {
   return Bun.spawnSync(['unzip', '-p', path, entry]).stdout.toString();
 }

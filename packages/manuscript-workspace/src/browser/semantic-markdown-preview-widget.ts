@@ -4,6 +4,7 @@ import {
   SemanticTag
 } from '@ai-focused-editor/semantic-markdown';
 import { Disposable, DisposableCollection } from '@theia/core/lib/common';
+import { PreferenceService } from '@theia/core/lib/common/preferences';
 import { Markdown } from '@theia/core/lib/browser/markdown-rendering/markdown';
 import { MarkdownRenderer } from '@theia/core/lib/browser/markdown-rendering/markdown-renderer';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
@@ -16,6 +17,7 @@ import {
   postConstruct
 } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
+import { AI_FOCUSED_EDITOR_PREVIEW_SHOW_TAG_CHIPS } from './ai-focused-editor-preferences';
 
 @injectable()
 export class SemanticMarkdownPreviewWidget extends ReactWidget implements ExtractableWidget {
@@ -31,6 +33,9 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
 
   @inject(MarkdownRenderer)
   protected readonly markdownRenderer!: MarkdownRenderer;
+
+  @inject(PreferenceService)
+  protected readonly preferenceService!: PreferenceService;
 
   protected editorDisposables = new DisposableCollection();
   protected previewMarkdown = '';
@@ -48,7 +53,16 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
 
     this.toDispose.push(this.editorManager.onCurrentEditorChanged(() => this.refresh()));
     this.toDispose.push(Disposable.create(() => this.editorDisposables.dispose()));
+    this.toDispose.push(this.preferenceService.onPreferenceChanged(change => {
+      if (change.preferenceName === AI_FOCUSED_EDITOR_PREVIEW_SHOW_TAG_CHIPS) {
+        this.update();
+      }
+    }));
     this.refresh();
+  }
+
+  protected get showTagChips(): boolean {
+    return this.preferenceService.get<boolean>(AI_FOCUSED_EDITOR_PREVIEW_SHOW_TAG_CHIPS, true);
   }
 
   refresh(): void {
@@ -86,7 +100,7 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
       'div',
       { className: 'afe-semantic-markdown-preview' },
       React.createElement('div', { className: 'afe-semantic-markdown-preview-source' }, this.sourceLabel),
-      this.renderTagSummary(),
+      this.showTagChips ? this.renderTagSummary() : undefined,
       this.previewMarkdown
         ? React.createElement(Markdown, {
             markdown: this.previewMarkdown,
