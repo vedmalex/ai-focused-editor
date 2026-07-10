@@ -1,5 +1,4 @@
 import {
-  CommandService,
   Disposable,
   DisposableCollection,
   MessageService
@@ -18,17 +17,16 @@ import {
 import React from '@theia/core/shared/react';
 import type {
   AiAliasDescriptor,
-  AiConnectionProfile,
   AiEndpointDescriptor,
-  AiModelDiscoveryResult,
-  AiProfileDescriptor,
-  StoredAiAlias,
+  AliasCheckVerdict,
+  AliasLegVerdict,
+  EndpointCheckVerdict,
   StoredAiEndpoint,
-  StoredAiProfile,
   V1AliasesFile,
   V1EndpointsFile
 } from '../common';
 import { AiConnectionService, parseV1Import } from '../common';
+import { AiVerificationService } from './ai-verification-service';
 import {
   AiProviderCatalogEntry,
   getAiProviderCatalog,
@@ -40,18 +38,12 @@ import {
 } from './ai-profile-preference-service';
 import {
   AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS,
-  AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE,
   AI_FOCUSED_EDITOR_AI_ALIASES,
   AI_FOCUSED_EDITOR_AI_API_KEYS,
   AI_FOCUSED_EDITOR_AI_ENDPOINTS,
-  AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT,
-  AI_FOCUSED_EDITOR_AI_PROFILES
+  AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT
 } from './ai-focused-editor-preferences';
-import { AiFocusedEditorCommands } from './manuscript-workspace-contribution';
-
 const AI_PROFILE_PREFERENCE_KEYS = [
-  AI_FOCUSED_EDITOR_AI_PROFILES,
-  AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE,
   AI_FOCUSED_EDITOR_AI_API_KEYS,
   AI_FOCUSED_EDITOR_AI_ENDPOINTS,
   AI_FOCUSED_EDITOR_AI_ALIASES,
@@ -61,20 +53,6 @@ const AI_PROFILE_PREFERENCE_KEYS = [
 
 const CUSTOM_PROVIDER_OPTION = '__custom__';
 const GENERIC_TRANSPORT_KINDS = ['api', 'proxy', 'acp', 'cli', 'server'];
-
-interface AiProfileDraft {
-  id: string;
-  label: string;
-  provider: string;
-  model: string;
-  transportKind: string;
-  transportId: string;
-  profileId: string;
-  endpointUrl: string;
-  apiKey: string;
-  allowedModels: string;
-  enabled: boolean;
-}
 
 interface AiEndpointDraft {
   id: string;
@@ -86,6 +64,7 @@ interface AiEndpointDraft {
   transportId: string;
   endpointUrl: string;
   command: string;
+  allowedModels: string;
   timeWindows: string;
   apiKey: string;
   verifyModel: string;
@@ -108,11 +87,11 @@ export class ModelConfigWidget extends ReactWidget {
   @inject(AiConnectionService)
   protected readonly aiConnection!: AiConnectionService;
 
+  @inject(AiVerificationService)
+  protected readonly verification!: AiVerificationService;
+
   @inject(PreferenceService)
   protected readonly preferenceService!: PreferenceService;
-
-  @inject(CommandService)
-  protected readonly commandService!: CommandService;
 
   @inject(MessageService)
   protected readonly messages!: MessageService;
@@ -125,19 +104,20 @@ export class ModelConfigWidget extends ReactWidget {
 
   protected readonly providerCatalog: AiProviderCatalogEntry[] = getAiProviderCatalog();
   protected status: AiProfileStatus | undefined;
-  protected descriptors: AiProfileDescriptor[] = [];
-  protected selectedId: string | undefined;
-  protected draft: AiProfileDraft = this.createEmptyDraft();
-  protected discovering = false;
-  protected discovery: AiModelDiscoveryResult | undefined;
   // Endpoints + aliases (two-level connection model).
   protected endpoints: AiEndpointDescriptor[] = [];
   protected aliases: AiAliasDescriptor[] = [];
   protected endpointDraft: AiEndpointDraft = this.createEmptyEndpointDraft();
   protected selectedEndpointId: string | undefined;
   protected verifyingEndpoint = false;
+  // Stage 1: last per-endpoint connection check (reachability + discovered models).
+  protected checkingConnection = false;
+  protected endpointCheck: EndpointCheckVerdict | undefined;
   protected newAliasId = '';
   protected legDrafts: Record<string, AliasLegDraft> = {};
+  // Stage 2: last per-alias check result, keyed by alias id.
+  protected aliasChecks: Record<string, AliasCheckVerdict> = {};
+  protected checkingAliasId: string | undefined;
   protected readonly refreshDisposables = new DisposableCollection();
 
   @postConstruct()
@@ -161,15 +141,8 @@ export class ModelConfigWidget extends ReactWidget {
 
   async refresh(): Promise<void> {
     this.status = await this.aiProfilePreferences.getStatus();
-    this.descriptors = await this.aiProfilePreferences.listProfiles();
     this.endpoints = await this.aiProfilePreferences.listEndpoints();
     this.aliases = await this.aiProfilePreferences.listAliases();
-    const stored = this.aiProfilePreferences.getStoredProfileList();
-    const selected = stored.find(profile => profile.id === this.selectedId)
-      ?? stored.find(profile => this.descriptors.find(d => d.active)?.id === profile.id)
-      ?? stored[0];
-    this.selectedId = selected?.id;
-    this.draft = selected ? this.toDraft(selected) : this.createEmptyDraft();
 
     // Keep an in-progress "new endpoint" draft; only rebuild when a selected
     // endpoint still exists (or vanished from under us).
@@ -185,22 +158,6 @@ export class ModelConfigWidget extends ReactWidget {
     this.update();
   }
 
-  protected toDraft(profile: StoredAiProfile): AiProfileDraft {
-    return {
-      id: profile.id,
-      label: profile.label ?? '',
-      provider: profile.provider ?? '',
-      model: profile.model ?? '',
-      transportKind: profile.transportKind || 'api',
-      transportId: profile.transportId ?? '',
-      profileId: profile.profileId ?? '',
-      endpointUrl: profile.endpointUrl ?? '',
-      apiKey: '',
-      allowedModels: (profile.allowedModels ?? []).join(', '),
-      enabled: profile.enabled !== false
-    };
-  }
-
   protected render(): React.ReactNode {
     const status = this.status;
     if (!status) {
@@ -214,8 +171,7 @@ export class ModelConfigWidget extends ReactWidget {
       this.renderTopStatus(status),
       this.renderEndpointsSection(),
       this.renderAliasesSection(),
-      this.renderImportSection(),
-      this.renderProfilesSection(status)
+      this.renderImportSection()
     );
   }
 
@@ -223,612 +179,21 @@ export class ModelConfigWidget extends ReactWidget {
     const summary = status.summary;
     let message: string;
     if (status.notConfigured) {
-      message = nls.localize('ai-focused-editor/ai-config/status-not-configured', 'No AI connection configured yet — add a profile or alias below.');
+      message = nls.localize('ai-focused-editor/ai-config/status-not-configured', 'No AI connection configured yet — add an endpoint and an alias below.');
     } else if (!status.configured) {
       message = nls.localize('ai-focused-editor/ai-config/status-incomplete', 'Active connection incomplete: {0}', status.missing.join(', '));
-    } else if (summary.aliasMode) {
+    } else {
       const endpoint = summary.activeEndpointLabel || summary.activeEndpoint;
       const pin = summary.pinnedEndpoint
         ? nls.localize('ai-focused-editor/ai-config/status-pin-suffix', ', pinned: {0}', summary.pinnedEndpoint)
         : '';
       message = nls.localize('ai-focused-editor/ai-config/status-alias-ready', 'Alias "{0}" → {1} ready ({2} endpoint(s) available{3}).', summary.activeAliasLabel, endpoint, summary.chainLength, pin);
-    } else {
-      message = nls.localize('ai-focused-editor/ai-config/status-profile-ready', 'Active profile ready ({0} profile(s) in the failover chain).', summary.chainLength);
     }
     return React.createElement(
       'div',
       { className: status.configured ? 'afe-model-config-status ok' : 'afe-model-config-status missing' },
       message
     );
-  }
-
-  protected renderProfilesSection(status: AiProfileStatus): React.ReactNode {
-    const hasProfiles = this.descriptors.length > 0;
-    return React.createElement(
-      'div',
-      { className: 'afe-model-config-section' },
-      React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-config/profiles-heading', 'AI Profiles')),
-      React.createElement(
-        'p',
-        { className: 'afe-model-config-help' },
-        nls.localize('ai-focused-editor/ai-config/profiles-help', 'Profiles are single provider/model connections. Aliases (above) supersede them: whenever at least one alias exists, resolution runs through the active alias chain, and profiles serve as the fallback when no alias is defined.')
-      ),
-      hasProfiles
-        ? undefined
-        : React.createElement(
-            'p',
-            { className: 'afe-model-config-help afe-model-config-empty' },
-            nls.localize('ai-focused-editor/ai-config/profiles-empty', 'No AI profiles yet — add one below.')
-          ),
-      this.renderProfileList(),
-      React.createElement('h4', undefined, this.draft.id
-        ? nls.localize('ai-focused-editor/ai-config/edit-profile', 'Edit Profile: {0}', this.draft.label || this.draft.id)
-        : nls.localize('ai-focused-editor/ai-config/new-profile', 'New Profile')),
-      React.createElement(
-        'form',
-        {
-          className: 'afe-model-config-form',
-          onSubmit: (event: React.FormEvent<HTMLFormElement>) => {
-            event.preventDefault();
-            void this.saveDraft();
-          }
-        },
-        this.renderTextInput(nls.localize('ai-focused-editor/ai-config/field-profile-label', 'Profile Label'), 'label', nls.localize('ai-focused-editor/ai-config/field-profile-label-ph', 'display name, e.g. Local Proxy / Anthropic')),
-        this.renderProviderInput(),
-        this.renderModelInput(),
-        this.renderTransportInput(),
-        this.renderTextInput(nls.localize('ai-focused-editor/ai-config/field-account-id', 'Account ID'), 'profileId', nls.localize('ai-focused-editor/ai-config/field-account-id-ph', 'optional ai-connect account id')),
-        this.renderTextInput(nls.localize('ai-focused-editor/ai-config/field-endpoint', 'Endpoint'), 'endpointUrl', nls.localize('ai-focused-editor/ai-config/field-endpoint-ph', 'optional endpoint URL')),
-        this.renderTextInput(nls.localize('ai-focused-editor/ai-config/field-allowed-models', 'Allowed Models'), 'allowedModels', nls.localize('ai-focused-editor/ai-config/field-allowed-models-ph', 'optional comma-separated shortlist')),
-        this.renderSecretInput(),
-        React.createElement(
-          'div',
-          { className: 'afe-model-config-actions' },
-          React.createElement('button', { className: 'theia-button main', type: 'submit' }, nls.localize('ai-focused-editor/ai-config/save-profile', 'Save Profile')),
-          React.createElement(
-            'button',
-            {
-              className: 'theia-button',
-              type: 'button',
-              disabled: !status.configured,
-              onClick: () => this.commandService.executeCommand(AiFocusedEditorCommands.VERIFY_AI_PROFILE.id)
-            },
-            nls.localize('ai-focused-editor/ai-config/verify-active', 'Verify Active')
-          ),
-          React.createElement(
-            'button',
-            {
-              className: 'theia-button',
-              type: 'button',
-              title: nls.localize('ai-focused-editor/ai-config/use-local-proxy-title', 'Fill endpoint and model for a local ai-connect proxy on 127.0.0.1:8045'),
-              onClick: () => this.applyLocalProxyDefaults()
-            },
-            nls.localize('ai-focused-editor/ai-config/use-local-proxy', 'Use Local Proxy')
-          ),
-          React.createElement(
-            'button',
-            {
-              className: 'theia-button',
-              type: 'button',
-              disabled: this.discovering || !this.draft.provider.trim(),
-              title: nls.localize('ai-focused-editor/ai-config/discover-models-title', 'Query the configured endpoint for its available models'),
-              onClick: () => { void this.discoverModels(); }
-            },
-            this.discovering
-              ? nls.localize('ai-focused-editor/ai-config/discovering', 'Discovering...')
-              : nls.localize('ai-focused-editor/ai-config/discover-models', 'Discover Models')
-          )
-        )
-      ),
-      this.renderDiscoveryResults(),
-      React.createElement(
-        'p',
-        { className: 'afe-model-config-help' },
-        nls.localize('ai-focused-editor/ai-config/profiles-help-2', 'Profiles are saved in workspace settings; API keys are saved per profile in user settings and never echoed back. An API key is only required for the api transport (acp/cli/server authorize through the underlying agent). The failover chain tries the active profile first, then the remaining enabled profiles in list order.')
-      )
-    );
-  }
-
-  protected dragProfileId: string | undefined;
-
-  protected renderProfileList(): React.ReactNode {
-    if (this.descriptors.length === 0) {
-      return undefined;
-    }
-    return React.createElement(
-      'ul',
-      { className: 'afe-model-config-profiles' },
-      ...this.descriptors.map((descriptor, index) => React.createElement(
-        'li',
-        {
-          key: descriptor.id,
-          className: descriptor.id === this.selectedId ? 'selected' : undefined,
-          // FR-020: drag a profile row to a new position in the failover order.
-          draggable: true,
-          onDragStart: (event: React.DragEvent) => {
-            this.dragProfileId = descriptor.id;
-            event.dataTransfer.effectAllowed = 'move';
-            event.dataTransfer.setData('text/plain', descriptor.id);
-          },
-          onDragOver: (event: React.DragEvent) => {
-            if (this.dragProfileId && this.dragProfileId !== descriptor.id) {
-              event.preventDefault();
-              event.dataTransfer.dropEffect = 'move';
-            }
-          },
-          onDrop: (event: React.DragEvent) => {
-            event.preventDefault();
-            const sourceId = this.dragProfileId;
-            this.dragProfileId = undefined;
-            if (sourceId && sourceId !== descriptor.id) {
-              void this.aiProfilePreferences.reorderProfile(sourceId, index).then(() => this.refresh());
-            }
-          },
-          onDragEnd: () => { this.dragProfileId = undefined; }
-        },
-        React.createElement('input', {
-          type: 'radio',
-          name: 'afe-active-profile',
-          checked: descriptor.active,
-          title: nls.localize('ai-focused-editor/ai-config/set-active-profile-title', 'Set as active profile'),
-          onChange: () => { void this.setActive(descriptor.id); }
-        }),
-        React.createElement(
-          'button',
-          {
-            className: 'afe-model-config-profile-name',
-            type: 'button',
-            title: descriptor.configured
-              ? nls.localize('ai-focused-editor/ai-config/edit-this-profile-title', 'Edit this profile')
-              : nls.localize('ai-focused-editor/ai-config/incomplete-title', 'Incomplete: {0}', descriptor.missing.join(', ')),
-            onClick: () => this.selectProfile(descriptor.id)
-          },
-          `${descriptor.label} — ${descriptor.provider || '?'} / ${descriptor.model || '?'} (${descriptor.transportKind})${descriptor.configured ? '' : ' ⚠'}${descriptor.enabled ? '' : nls.localize('ai-focused-editor/ai-config/disabled-suffix', ' [disabled]')}`
-        ),
-        React.createElement('button', {
-          className: 'theia-button secondary',
-          type: 'button',
-          disabled: index === 0,
-          title: nls.localize('ai-focused-editor/ai-config/move-up-title', 'Move up in the failover order'),
-          onClick: () => { void this.moveProfile(descriptor.id, -1); }
-        }, '↑'),
-        React.createElement('button', {
-          className: 'theia-button secondary',
-          type: 'button',
-          disabled: index === this.descriptors.length - 1,
-          title: nls.localize('ai-focused-editor/ai-config/move-down-title', 'Move down in the failover order'),
-          onClick: () => { void this.moveProfile(descriptor.id, 1); }
-        }, '↓'),
-        React.createElement('button', {
-          className: 'theia-button secondary',
-          type: 'button',
-          title: nls.localize('ai-focused-editor/ai-config/clone-profile-title', 'Clone profile'),
-          onClick: () => this.cloneProfile(descriptor.id)
-        }, '⧉'),
-        React.createElement('button', {
-          className: 'theia-button secondary',
-          type: 'button',
-          title: nls.localize('ai-focused-editor/ai-config/delete-profile-title', 'Delete profile'),
-          onClick: () => { void this.deleteProfile(descriptor.id); }
-        }, '✕')
-      )),
-      React.createElement(
-        'li',
-        { key: '__new__' },
-        React.createElement('button', {
-          className: 'theia-button secondary',
-          type: 'button',
-          onClick: () => this.newProfile()
-        }, nls.localize('ai-focused-editor/ai-config/new-profile-button', '+ New Profile'))
-      )
-    );
-  }
-
-  protected selectProfile(id: string): void {
-    this.selectedId = id;
-    const stored = this.aiProfilePreferences.getStoredProfileList().find(profile => profile.id === id);
-    if (stored) {
-      this.draft = this.toDraft(stored);
-      this.discovery = undefined;
-    }
-    this.update();
-  }
-
-  protected newProfile(): void {
-    this.selectedId = undefined;
-    this.draft = this.createEmptyDraft();
-    this.discovery = undefined;
-    this.update();
-  }
-
-  protected cloneProfile(id: string): void {
-    const stored = this.aiProfilePreferences.getStoredProfileList().find(profile => profile.id === id);
-    if (!stored) {
-      return;
-    }
-    this.selectedId = undefined;
-    this.draft = {
-      ...this.toDraft(stored),
-      id: this.uniqueProfileId(`${stored.id}-copy`),
-      label: stored.label ? nls.localize('ai-focused-editor/ai-config/copy-label', '{0} (copy)', stored.label) : ''
-    };
-    this.discovery = undefined;
-    this.update();
-  }
-
-  protected async setActive(id: string): Promise<void> {
-    await this.aiProfilePreferences.setActiveProfile(id);
-    await this.refresh();
-  }
-
-  protected async moveProfile(id: string, delta: -1 | 1): Promise<void> {
-    await this.aiProfilePreferences.moveProfile(id, delta);
-    await this.refresh();
-  }
-
-  protected async deleteProfile(id: string): Promise<void> {
-    await this.aiProfilePreferences.deleteProfile(id);
-    if (this.selectedId === id) {
-      this.selectedId = undefined;
-    }
-    await this.refresh();
-    this.messages.info(nls.localize('ai-focused-editor/ai-config/profile-deleted', 'AI profile "{0}" deleted.', id));
-  }
-
-  protected async saveDraft(): Promise<void> {
-    const provider = this.draft.provider.trim();
-    const model = this.draft.model.trim();
-    if (!provider || !model) {
-      await this.messages.warn(nls.localize('ai-focused-editor/ai-config/provider-model-required', 'Provider and model are required to save an AI profile.'));
-      return;
-    }
-
-    const id = this.draft.id.trim() || this.uniqueProfileId(provider);
-    const profile: StoredAiProfile = {
-      id,
-      label: this.draft.label.trim() || undefined,
-      provider,
-      model,
-      transportKind: this.draft.transportKind.trim() || 'api',
-      transportId: this.draft.transportId.trim() || undefined,
-      profileId: this.draft.profileId.trim() || undefined,
-      endpointUrl: this.draft.endpointUrl.trim() || undefined,
-      allowedModels: this.parseAllowedModels(this.draft.allowedModels),
-      enabled: this.draft.enabled
-    };
-
-    await this.aiProfilePreferences.upsertProfile(profile);
-    const apiKey = this.draft.apiKey.trim();
-    if (apiKey) {
-      await this.aiProfilePreferences.setApiKey(id, apiKey);
-    }
-    this.selectedId = id;
-    await this.refresh();
-    await this.messages.info(nls.localize('ai-focused-editor/ai-config/profile-saved', 'AI profile "{0}" saved.', profile.label || id));
-  }
-
-  protected parseAllowedModels(value: string): string[] | undefined {
-    const models = value.split(',').map(model => model.trim()).filter(model => model.length > 0);
-    return models.length > 0 ? models : undefined;
-  }
-
-  protected uniqueProfileId(base: string): string {
-    const existing = new Set(this.descriptors.map(descriptor => descriptor.id));
-    const slug = base.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'profile';
-    if (!existing.has(slug)) {
-      return slug;
-    }
-    let counter = 2;
-    while (existing.has(`${slug}-${counter}`)) {
-      counter += 1;
-    }
-    return `${slug}-${counter}`;
-  }
-
-  protected renderProviderInput(): React.ReactNode {
-    const provider = this.draft.provider.trim();
-    const catalogEntry = this.providerCatalog.find(entry => entry.providerId === provider);
-    const isCustom = provider.length > 0 && !catalogEntry;
-    const selectValue = isCustom ? CUSTOM_PROVIDER_OPTION : provider;
-
-    const children: React.ReactNode[] = [
-      React.createElement('span', { key: 'label' }, nls.localize('ai-focused-editor/ai-config/field-provider', 'Provider')),
-      React.createElement(
-        'select',
-        {
-          key: 'select',
-          value: selectValue,
-          onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.onProviderSelected(event.currentTarget.value)
-        },
-        React.createElement('option', { key: '', value: '' }, nls.localize('ai-focused-editor/ai-config/select-provider-option', 'select provider')),
-        ...this.providerCatalog.map(entry =>
-          React.createElement('option', { key: entry.providerId, value: entry.providerId }, `${entry.label} (${entry.providerId})`)
-        ),
-        React.createElement('option', { key: CUSTOM_PROVIDER_OPTION, value: CUSTOM_PROVIDER_OPTION }, nls.localize('ai-focused-editor/ai-config/custom-provider-option', 'custom provider...'))
-      )
-    ];
-    if (isCustom || selectValue === CUSTOM_PROVIDER_OPTION) {
-      children.push(React.createElement('input', {
-        key: 'custom',
-        value: provider,
-        placeholder: nls.localize('ai-focused-editor/ai-config/custom-provider-ph', 'custom provider id, e.g. my-agent'),
-        onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateDraft('provider', event.currentTarget.value)
-      }));
-    }
-
-    return React.createElement('label', { className: 'afe-model-config-field' }, ...children);
-  }
-
-  protected renderModelInput(): React.ReactNode {
-    return React.createElement(
-      'label',
-      { className: 'afe-model-config-field' },
-      React.createElement('span', undefined, nls.localize('ai-focused-editor/ai-config/field-model', 'Model')),
-      React.createElement('input', {
-        value: this.draft.model,
-        placeholder: nls.localize('ai-focused-editor/ai-config/model-ph', 'provider model id'),
-        list: 'afe-model-config-model-options',
-        onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateDraft('model', event.currentTarget.value)
-      }),
-      React.createElement(
-        'datalist',
-        { id: 'afe-model-config-model-options' },
-        ...(this.discovery?.models ?? []).map(model =>
-          React.createElement('option', { key: model.modelId, value: model.modelId }, model.name)
-        )
-      )
-    );
-  }
-
-  protected renderTransportInput(): React.ReactNode {
-    const provider = this.draft.provider.trim();
-    const catalogEntry = this.providerCatalog.find(entry => entry.providerId === provider);
-    if (!catalogEntry) {
-      return this.renderSelectInput(nls.localize('ai-focused-editor/ai-config/field-transport', 'Transport'), 'transportKind', GENERIC_TRANSPORT_KINDS);
-    }
-
-    const selectedTransportId = this.draft.transportId.trim();
-    return React.createElement(
-      'label',
-      { className: 'afe-model-config-field' },
-      React.createElement('span', undefined, nls.localize('ai-focused-editor/ai-config/field-transport', 'Transport')),
-      React.createElement(
-        'select',
-        {
-          value: selectedTransportId,
-          onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.onTransportSelected(catalogEntry, event.currentTarget.value)
-        },
-        React.createElement('option', { key: '', value: '' }, nls.localize('ai-focused-editor/ai-config/transport-default-option', 'default ({0})', this.draft.transportKind || 'api')),
-        ...catalogEntry.transports.map(transport =>
-          React.createElement(
-            'option',
-            { key: transport.transportId, value: transport.transportId },
-            `${transport.transportLabel} — ${transport.transportKind}`
-          )
-        )
-      )
-    );
-  }
-
-  protected renderDiscoveryResults(): React.ReactNode {
-    const discovery = this.discovery;
-    if (!discovery) {
-      return undefined;
-    }
-
-    if (discovery.models.length === 0) {
-      return React.createElement(
-        'div',
-        { className: 'afe-model-config-discovery' },
-        React.createElement('h4', undefined, nls.localize('ai-focused-editor/ai-config/discovered-models', 'Discovered Models')),
-        React.createElement('p', undefined, discovery.detail || nls.localize('ai-focused-editor/ai-config/no-models-reported', 'No models reported by the endpoint.'))
-      );
-    }
-
-    return React.createElement(
-      'div',
-      { className: 'afe-model-config-discovery' },
-      React.createElement('h4', undefined, nls.localize('ai-focused-editor/ai-config/discovered-models-count', 'Discovered Models ({0})', discovery.models.length)),
-      discovery.detail
-        ? React.createElement('p', { className: 'afe-model-config-discovery-detail' }, discovery.detail)
-        : undefined,
-      React.createElement(
-        'ul',
-        { className: 'afe-model-config-discovery-list' },
-        ...discovery.models.map(model => React.createElement(
-          'li',
-          { key: model.modelId },
-          React.createElement(
-            'button',
-            {
-              className: 'theia-button secondary',
-              type: 'button',
-              title: model.description || nls.localize('ai-focused-editor/ai-config/use-model-title', 'Use {0}', model.modelId),
-              onClick: () => this.updateDraft('model', model.modelId)
-            },
-            model.contextLength
-              ? `${model.modelId} · ${Math.round(model.contextLength / 1024)}k ctx`
-              : model.modelId
-          ),
-          React.createElement(
-            'button',
-            {
-              className: 'theia-button secondary',
-              type: 'button',
-              title: nls.localize('ai-focused-editor/ai-config/add-to-allowed-title', 'Add to the allowed models shortlist'),
-              onClick: () => this.addAllowedModel(model.modelId)
-            },
-            nls.localize('ai-focused-editor/ai-config/add-allow', '+allow')
-          )
-        ))
-      )
-    );
-  }
-
-  protected addAllowedModel(modelId: string): void {
-    const current = this.parseAllowedModels(this.draft.allowedModels) ?? [];
-    if (!current.includes(modelId)) {
-      current.push(modelId);
-    }
-    this.updateDraft('allowedModels', current.join(', '));
-  }
-
-  protected onProviderSelected(value: string): void {
-    if (value === CUSTOM_PROVIDER_OPTION) {
-      this.draft = { ...this.draft, provider: '', transportId: '' };
-      this.update();
-      return;
-    }
-
-    const catalogEntry = this.providerCatalog.find(entry => entry.providerId === value);
-    const defaultTransport = catalogEntry?.transports.find(transport => transport.transportKind === 'api')
-      ?? catalogEntry?.transports[0];
-    this.draft = {
-      ...this.draft,
-      provider: value,
-      transportId: '',
-      transportKind: defaultTransport?.transportKind ?? this.draft.transportKind,
-      model: this.draft.model || defaultTransport?.defaultModel || ''
-    };
-    this.discovery = undefined;
-    this.update();
-  }
-
-  protected onTransportSelected(catalogEntry: AiProviderCatalogEntry, transportId: string): void {
-    const transport = catalogEntry.transports.find(entry => entry.transportId === transportId);
-    this.draft = {
-      ...this.draft,
-      transportId,
-      transportKind: transport?.transportKind ?? this.draft.transportKind,
-      model: this.draft.model || transport?.defaultModel || ''
-    };
-    this.update();
-  }
-
-  protected applyLocalProxyDefaults(): void {
-    const provider = this.draft.provider.trim() || 'openai';
-    const defaults = getLocalProxyEndpointDefaults(provider);
-    this.draft = {
-      ...this.draft,
-      provider,
-      transportKind: 'api',
-      transportId: '',
-      endpointUrl: defaults.url,
-      model: defaults.model
-    };
-    this.update();
-  }
-
-  protected async discoverModels(): Promise<void> {
-    const profile = await this.buildDiscoveryProfile();
-    this.discovering = true;
-    this.discovery = undefined;
-    this.update();
-    try {
-      this.discovery = await this.aiConnection.discoverModels(profile);
-      if (!this.discovery.ok && this.discovery.models.length === 0) {
-        await this.messages.warn(nls.localize('ai-focused-editor/ai-config/discovery-failed', 'Model discovery failed: {0}', this.discovery.detail || nls.localize('ai-focused-editor/ai-config/endpoint-no-models', 'endpoint did not report models')));
-      }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      this.discovery = { ok: false, models: [], detail };
-      await this.messages.error(nls.localize('ai-focused-editor/ai-config/discovery-failed', 'Model discovery failed: {0}', detail));
-    } finally {
-      this.discovering = false;
-      this.update();
-    }
-  }
-
-  protected async buildDiscoveryProfile(): Promise<AiConnectionProfile> {
-    const chain = await this.aiProfilePreferences.getFailoverChain();
-    const saved = chain.find(profile => profile.id === (this.draft.profileId.trim() || this.draft.id.trim()))
-      ?? chain[0];
-    const apiKey = this.draft.apiKey.trim() || saved?.secretValue || '';
-    return {
-      id: this.draft.profileId.trim() || this.draft.id.trim() || undefined,
-      provider: this.draft.provider.trim(),
-      model: this.draft.model.trim() || undefined,
-      transportKind: (this.draft.transportKind.trim() || 'api') as AiConnectionProfile['transportKind'],
-      transportId: this.draft.transportId.trim() || undefined,
-      endpointUrl: this.draft.endpointUrl.trim() || undefined,
-      secretValue: apiKey || undefined
-    };
-  }
-
-  protected renderTextInput(label: string, field: keyof AiProfileDraft, placeholder: string): React.ReactNode {
-    return React.createElement(
-      'label',
-      { className: 'afe-model-config-field' },
-      React.createElement('span', undefined, label),
-      React.createElement('input', {
-        value: String(this.draft[field] ?? ''),
-        placeholder,
-        onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateDraft(field, event.currentTarget.value)
-      })
-    );
-  }
-
-  protected renderSelectInput(label: string, field: keyof AiProfileDraft, options: string[]): React.ReactNode {
-    return React.createElement(
-      'label',
-      { className: 'afe-model-config-field' },
-      React.createElement('span', undefined, label),
-      React.createElement(
-        'select',
-        {
-          value: String(this.draft[field] ?? ''),
-          onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.updateDraft(field, event.currentTarget.value)
-        },
-        ...options.map(option => React.createElement('option', { key: option, value: option }, option))
-      )
-    );
-  }
-
-  protected renderSecretInput(): React.ReactNode {
-    const descriptor = this.descriptors.find(candidate => candidate.id === this.draft.id);
-    const hasApiKey = descriptor?.hasApiKey ?? false;
-    const apiTransport = (this.draft.transportKind || 'api') === 'api' || this.draft.transportKind === 'proxy';
-    return React.createElement(
-      'label',
-      { className: 'afe-model-config-field' },
-      React.createElement('span', undefined, hasApiKey
-        ? nls.localize('ai-focused-editor/ai-config/api-key-configured', 'API Key (configured)')
-        : nls.localize('ai-focused-editor/ai-config/api-key', 'API Key')),
-      React.createElement('input', {
-        type: 'password',
-        value: this.draft.apiKey,
-        placeholder: hasApiKey
-          ? nls.localize('ai-focused-editor/ai-config/api-key-keep-ph', 'leave blank to keep current key')
-          : apiTransport
-            ? nls.localize('ai-focused-editor/ai-config/api-key-required-ph', 'required for api transport')
-            : nls.localize('ai-focused-editor/ai-config/api-key-not-needed-ph', 'not needed for this transport'),
-        onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateDraft('apiKey', event.currentTarget.value)
-      })
-    );
-  }
-
-  protected updateDraft(field: keyof AiProfileDraft, value: string | boolean): void {
-    this.draft = {
-      ...this.draft,
-      [field]: value
-    };
-    this.update();
-  }
-
-  protected createEmptyDraft(): AiProfileDraft {
-    return {
-      id: '',
-      label: '',
-      provider: '',
-      model: '',
-      transportKind: 'api',
-      transportId: '',
-      profileId: '',
-      endpointUrl: '',
-      apiKey: '',
-      allowedModels: '',
-      enabled: true
-    };
   }
 
   // ===========================================================================
@@ -943,6 +308,7 @@ export class ModelConfigWidget extends ReactWidget {
       this.renderEndpointTransportInput(),
       this.renderEndpointTextInput(nls.localize('ai-focused-editor/ai-config/field-endpoint-url', 'Endpoint URL'), 'endpointUrl', nls.localize('ai-focused-editor/ai-config/field-endpoint-url-ph', 'optional endpoint URL')),
       this.renderEndpointTextInput(nls.localize('ai-focused-editor/ai-config/field-command', 'Command'), 'command', nls.localize('ai-focused-editor/ai-config/field-command-ph', 'optional command (acp/cli transports)')),
+      this.renderEndpointTextInput(nls.localize('ai-focused-editor/ai-config/field-allowed-models', 'Allowed Models'), 'allowedModels', nls.localize('ai-focused-editor/ai-config/field-allowed-models-ph', 'optional comma-separated shortlist')),
       this.renderEndpointTextInput(nls.localize('ai-focused-editor/ai-config/field-windows', 'Availability Windows'), 'timeWindows', nls.localize('ai-focused-editor/ai-config/field-windows-ph', 'e.g. 1-5 09:00-18:00, 6,7 10:00-14:00 (blank = always)')),
       this.renderEndpointSecretInput(),
       this.renderEndpointCheckbox(),
@@ -951,6 +317,19 @@ export class ModelConfigWidget extends ReactWidget {
         'div',
         { className: 'afe-model-config-actions' },
         React.createElement('button', { className: 'theia-button main', type: 'submit' }, nls.localize('ai-focused-editor/ai-config/save-endpoint', 'Save Endpoint')),
+        React.createElement(
+          'button',
+          {
+            className: 'theia-button',
+            type: 'button',
+            disabled: this.checkingConnection || !this.endpointDraft.provider.trim(),
+            title: nls.localize('ai-focused-editor/ai-config/check-endpoint-title', 'Stage 1: reach this endpoint and fetch its model list (connection check, without saving)'),
+            onClick: () => { void this.checkEndpointDraft(); }
+          },
+          this.checkingConnection
+            ? nls.localize('ai-focused-editor/ai-config/checking-connection', 'Checking connection...')
+            : nls.localize('ai-focused-editor/ai-config/check-connection', 'Check Connection')
+        ),
         React.createElement(
           'button',
           {
@@ -974,8 +353,46 @@ export class ModelConfigWidget extends ReactWidget {
           },
           nls.localize('ai-focused-editor/ai-config/use-local-proxy', 'Use Local Proxy')
         )
-      )
+      ),
+      this.renderEndpointCheckResult()
     );
+  }
+
+  /** Stage-1 result block: reachability + discovered models (click to add to the shortlist). */
+  protected renderEndpointCheckResult(): React.ReactNode {
+    const check = this.endpointCheck;
+    if (!check) {
+      return undefined;
+    }
+    const header = check.reachable
+      ? React.createElement('div', { className: 'afe-endpoint-check-line ok' },
+          nls.localize('ai-focused-editor/ai-config/endpoint-check-result-reachable', '✓ Connection established. Models discovered: {0}.', check.modelCount))
+      : React.createElement('div', { className: 'afe-endpoint-check-line fail' },
+          nls.localize('ai-focused-editor/ai-config/endpoint-check-result-unreachable', '✗ Connection failed: {0}',
+            check.detail || nls.localize('ai-focused-editor/ai-config/value-unknown-error', 'unknown error')));
+    const modelsNode = check.models.length > 0
+      ? React.createElement(
+          'div',
+          { className: 'afe-endpoint-check-models' },
+          React.createElement('span', { className: 'afe-model-config-help' },
+            nls.localize('ai-focused-editor/ai-config/endpoint-check-models-heading', 'Discovered models (click to add to the shortlist):')),
+          React.createElement(
+            'div',
+            { className: 'afe-endpoint-check-chips' },
+            ...check.models.map(model => React.createElement('button', {
+              key: model,
+              className: 'theia-button secondary afe-model-chip',
+              type: 'button',
+              title: nls.localize('ai-focused-editor/ai-config/endpoint-check-add-model-title', 'Add "{0}" to the allowed-model shortlist', model),
+              onClick: () => this.applyDiscoveredModel(model)
+            }, model))
+          )
+        )
+      : (check.reachable
+        ? React.createElement('div', { className: 'afe-model-config-help' },
+            nls.localize('ai-focused-editor/ai-config/endpoint-check-no-models', 'No models were reported by this endpoint.'))
+        : undefined);
+    return React.createElement('div', { className: 'afe-endpoint-check-result' }, header, modelsNode);
   }
 
   protected renderEndpointProviderInput(): React.ReactNode {
@@ -1152,6 +569,7 @@ export class ModelConfigWidget extends ReactWidget {
   protected newEndpoint(): void {
     this.selectedEndpointId = undefined;
     this.endpointDraft = this.createEmptyEndpointDraft();
+    this.endpointCheck = undefined;
     this.update();
   }
 
@@ -1162,6 +580,7 @@ export class ModelConfigWidget extends ReactWidget {
     }
     this.selectedEndpointId = id;
     this.endpointDraft = this.toEndpointDraft(stored);
+    this.endpointCheck = undefined;
     this.update();
   }
 
@@ -1204,6 +623,46 @@ export class ModelConfigWidget extends ReactWidget {
   protected async moveEndpoint(id: string, delta: -1 | 1): Promise<void> {
     await this.aiProfilePreferences.moveEndpoint(id, delta);
     await this.refresh();
+  }
+
+  /** Stage 1: reach the draft endpoint and fetch its model list (no save/activate). */
+  protected async checkEndpointDraft(): Promise<void> {
+    const provider = this.endpointDraft.provider.trim();
+    if (!provider) {
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-config/check-endpoint-required', 'A provider is required to check the connection.'));
+      return;
+    }
+    const endpoint = this.endpointDraftToStored(this.endpointDraft.id.trim() || provider);
+    const profile = this.aiProfilePreferences.buildEndpointProbeProfile(endpoint, this.endpointDraft.verifyModel.trim(), this.endpointDraft.apiKey.trim());
+    this.checkingConnection = true;
+    this.endpointCheck = undefined;
+    this.update();
+    const progress = await this.messages.showProgress({ text: nls.localize('ai-focused-editor/ai-config/checking-endpoint-progress', 'Checking connection to endpoint "{0}"...', endpoint.id) });
+    try {
+      const verdict = await this.verification.checkEndpoint(profile);
+      this.endpointCheck = verdict;
+      if (verdict.reachable) {
+        await this.messages.info(nls.localize('ai-focused-editor/ai-config/endpoint-check-ok', 'Endpoint "{0}" reachable: {1} model(s) discovered.', endpoint.id, verdict.modelCount));
+      } else {
+        await this.messages.error(nls.localize('ai-focused-editor/ai-config/endpoint-check-unreachable', 'Endpoint "{0}" unreachable: {1}', endpoint.id, verdict.detail || nls.localize('ai-focused-editor/ai-config/value-unknown-error', 'unknown error')));
+      }
+    } finally {
+      progress.cancel();
+      this.checkingConnection = false;
+      this.update();
+    }
+  }
+
+  /** Merge a discovered model into the draft's allowed-model shortlist (not saved). */
+  protected applyDiscoveredModel(model: string): void {
+    const current = this.parseAllowedModels(this.endpointDraft.allowedModels) ?? [];
+    const nextAllowed = current.includes(model) ? current : [...current, model];
+    this.endpointDraft = {
+      ...this.endpointDraft,
+      allowedModels: nextAllowed.join(', '),
+      verifyModel: this.endpointDraft.verifyModel.trim() || model
+    };
+    this.update();
   }
 
   protected async verifyEndpointDraft(): Promise<void> {
@@ -1258,9 +717,15 @@ export class ModelConfigWidget extends ReactWidget {
       transportId: this.endpointDraft.transportId.trim() || undefined,
       endpointUrl: this.endpointDraft.endpointUrl.trim() || undefined,
       command: this.endpointDraft.command.trim() || undefined,
+      allowedModels: this.parseAllowedModels(this.endpointDraft.allowedModels),
       timeWindows: timeWindows.length > 0 ? timeWindows : undefined,
       enabled: this.endpointDraft.enabled ? undefined : false
     };
+  }
+
+  protected parseAllowedModels(value: string): string[] | undefined {
+    const models = value.split(',').map(model => model.trim()).filter(model => model.length > 0);
+    return models.length > 0 ? models : undefined;
   }
 
   protected parseTimeWindowsInput(value: string): string[] {
@@ -1280,6 +745,7 @@ export class ModelConfigWidget extends ReactWidget {
       transportId: endpoint.transportId ?? '',
       endpointUrl: endpoint.endpointUrl ?? '',
       command: endpoint.command ?? '',
+      allowedModels: (endpoint.allowedModels ?? []).join(', '),
       timeWindows: (endpoint.timeWindows ?? []).join(', '),
       apiKey: '',
       verifyModel: this.endpointDraft.originalId === endpoint.id ? this.endpointDraft.verifyModel : '',
@@ -1310,6 +776,7 @@ export class ModelConfigWidget extends ReactWidget {
       transportId: '',
       endpointUrl: '',
       command: '',
+      allowedModels: '',
       timeWindows: '',
       apiKey: '',
       verifyModel: '',
@@ -1384,6 +851,15 @@ export class ModelConfigWidget extends ReactWidget {
           onClick: () => { void this.moveAlias(alias.id, 1); }
         }, '↓'),
         React.createElement('button', {
+          className: 'theia-button',
+          type: 'button',
+          disabled: Boolean(this.checkingAliasId) || alias.chain.length === 0,
+          title: nls.localize('ai-focused-editor/ai-config/check-alias-title', 'Check each leg of this alias: connection, model presence, and a test generation'),
+          onClick: () => { void this.checkAlias(alias.id); }
+        }, this.checkingAliasId === alias.id
+          ? nls.localize('ai-focused-editor/ai-config/checking-alias', 'Checking...')
+          : nls.localize('ai-focused-editor/ai-config/check-alias', 'Check Alias')),
+        React.createElement('button', {
           className: 'theia-button secondary',
           type: 'button',
           title: nls.localize('ai-focused-editor/ai-config/delete-alias-title', 'Delete alias'),
@@ -1419,12 +895,123 @@ export class ModelConfigWidget extends ReactWidget {
           }, '✕')
         )),
         this.renderAddLegControls(alias)
+      ),
+      this.renderAliasCheckResult(alias.id)
+    );
+  }
+
+  /** Stage-2 result block: per-leg verdict rows plus an overall verdict for the alias. */
+  protected renderAliasCheckResult(aliasId: string): React.ReactNode {
+    const verdict = this.aliasChecks[aliasId];
+    if (!verdict) {
+      return undefined;
+    }
+    const overall = this.aliasOverallMessage(verdict);
+    return React.createElement(
+      'div',
+      { className: 'afe-alias-check-result' },
+      React.createElement('div', { className: `afe-alias-check-overall ${verdict.overall === 'ok' ? 'ok' : 'fail'}` }, overall),
+      React.createElement(
+        'ul',
+        { className: 'afe-alias-check-legs' },
+        ...verdict.legs.map(leg => this.renderAliasCheckLeg(leg))
       )
     );
   }
 
+  protected aliasOverallMessage(verdict: AliasCheckVerdict): string {
+    switch (verdict.overall) {
+      case 'ok':
+        return nls.localize('ai-focused-editor/ai-config/alias-check-ok', '✓ Alias "{0}" works.', verdict.aliasLabel);
+      case 'failed':
+        return nls.localize('ai-focused-editor/ai-config/alias-check-failed', '✗ Alias "{0}": no leg passed verification.', verdict.aliasLabel);
+      case 'unavailable':
+        return nls.localize('ai-focused-editor/ai-config/alias-check-unavailable', 'Alias "{0}": no legs are available right now.', verdict.aliasLabel);
+      default:
+        return nls.localize('ai-focused-editor/ai-config/alias-check-empty', 'Alias "{0}": the chain is empty.', verdict.aliasLabel);
+    }
+  }
+
+  protected renderAliasCheckLeg(leg: AliasLegVerdict): React.ReactNode {
+    const title = `${leg.endpointId} → ${leg.model || nls.localize('ai-focused-editor/ai-config/no-model', '(no model)')}`;
+    const parts: React.ReactNode[] = [
+      React.createElement('span', { key: 'title', className: 'afe-alias-leg-text' }, title)
+    ];
+    if (leg.skipped) {
+      parts.push(React.createElement('span', { key: 'skip', className: 'afe-leg-badge skip' }, this.legSkipLabel(leg.skipped)));
+      return React.createElement('li', { key: leg.index, className: 'afe-alias-check-leg' }, ...parts);
+    }
+    parts.push(React.createElement('span', {
+      key: 'conn',
+      className: `afe-leg-badge ${leg.connection === 'ok' ? 'ok' : 'fail'}`
+    }, leg.connection === 'ok'
+      ? nls.localize('ai-focused-editor/ai-config/leg-connection-ok', '✓ connection')
+      : nls.localize('ai-focused-editor/ai-config/leg-connection-fail', '✗ connection')));
+    parts.push(React.createElement('span', {
+      key: 'model',
+      className: `afe-leg-badge ${leg.modelState === 'present' ? 'ok' : leg.modelState === 'absent' ? 'fail' : 'unknown'}`
+    }, leg.modelState === 'present'
+      ? nls.localize('ai-focused-editor/ai-config/leg-model-present', '✓ model')
+      : leg.modelState === 'absent'
+        ? nls.localize('ai-focused-editor/ai-config/leg-model-absent', '✗ model')
+        : nls.localize('ai-focused-editor/ai-config/leg-model-unknown', '? model')));
+    if (leg.generation) {
+      parts.push(React.createElement('span', {
+        key: 'gen',
+        className: `afe-leg-badge ${leg.generation === 'ok' ? 'ok' : 'fail'}`
+      }, leg.generation === 'ok'
+        ? nls.localize('ai-focused-editor/ai-config/leg-generation-ok', '✓ generation')
+        : nls.localize('ai-focused-editor/ai-config/leg-generation-fail', '✗ generation')));
+    }
+    const detail = leg.generationError || leg.connectionDetail;
+    const children: React.ReactNode[] = [
+      React.createElement('div', { key: 'row', className: 'afe-alias-check-leg-row' }, ...parts)
+    ];
+    if (detail) {
+      children.push(React.createElement('div', { key: 'detail', className: 'afe-alias-check-leg-detail' }, detail));
+    }
+    return React.createElement('li', { key: leg.index, className: 'afe-alias-check-leg' }, ...children);
+  }
+
+  protected legSkipLabel(reason: AliasLegVerdict['skipped']): string {
+    switch (reason) {
+      case 'missing-endpoint':
+        return nls.localize('ai-focused-editor/ai-config/leg-skipped-missing', 'skipped: endpoint not found');
+      case 'disabled':
+        return nls.localize('ai-focused-editor/ai-config/leg-skipped-disabled', 'skipped: endpoint disabled');
+      default:
+        return nls.localize('ai-focused-editor/ai-config/leg-skipped-window', 'skipped: outside availability window');
+    }
+  }
+
+  protected async checkAlias(aliasId: string): Promise<void> {
+    this.checkingAliasId = aliasId;
+    this.update();
+    const label = this.aliases.find(alias => alias.id === aliasId)?.label || aliasId;
+    const progress = await this.messages.showProgress({ text: nls.localize('ai-focused-editor/ai-config/checking-alias-progress', 'Checking alias "{0}"...', label) });
+    try {
+      const verdict = await this.verification.checkAlias(aliasId);
+      this.aliasChecks = { ...this.aliasChecks, [aliasId]: verdict };
+      if (verdict.overall === 'ok') {
+        await this.messages.info(this.aliasOverallMessage(verdict));
+      } else if (verdict.overall === 'failed') {
+        await this.messages.error(this.aliasOverallMessage(verdict));
+      } else {
+        await this.messages.warn(this.aliasOverallMessage(verdict));
+      }
+    } finally {
+      progress.cancel();
+      this.checkingAliasId = undefined;
+      this.update();
+    }
+  }
+
   protected renderAddLegControls(alias: AiAliasDescriptor): React.ReactNode {
     const draft = this.legDrafts[alias.id] ?? { endpointId: '', model: '' };
+    // Offer the selected endpoint's curated model shortlist as suggestions.
+    const selectedEndpoint = this.endpoints.find(endpoint => endpoint.id === draft.endpointId);
+    const modelSuggestions = selectedEndpoint?.allowedModels ?? [];
+    const modelListId = `afe-alias-leg-models-${alias.id}`;
     return React.createElement(
       'li',
       { key: '__add_leg__', className: 'afe-alias-add-leg' },
@@ -1442,8 +1029,16 @@ export class ModelConfigWidget extends ReactWidget {
       React.createElement('input', {
         value: draft.model,
         placeholder: nls.localize('ai-focused-editor/ai-config/leg-model-ph', 'model id'),
+        list: modelSuggestions.length > 0 ? modelListId : undefined,
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateLegDraft(alias.id, 'model', event.currentTarget.value)
       }),
+      modelSuggestions.length > 0
+        ? React.createElement(
+            'datalist',
+            { id: modelListId },
+            ...modelSuggestions.map(model => React.createElement('option', { key: model, value: model }))
+          )
+        : undefined,
       React.createElement('button', {
         className: 'theia-button secondary',
         type: 'button',

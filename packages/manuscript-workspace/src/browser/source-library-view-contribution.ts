@@ -357,7 +357,7 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
     if (!profile) {
       this.messageService.warn(nls.localize(
         'ai-focused-editor/sources/analyze-needs-profile',
-        'Configure the AI profile (Model Config view) before analyzing sources.'
+        'Configure an AI connection (add an endpoint and alias in the Model Config view) before analyzing sources.'
       ));
       return;
     }

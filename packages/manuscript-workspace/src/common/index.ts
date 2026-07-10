@@ -3,6 +3,7 @@ export * from './ai-connection-protocol';
 export * from './ai-connect-config';
 export * from './ai-failover';
 export * from './ai-time-windows';
+export * from './ai-verification';
 export * from './ai-mode-protocol';
 export * from './book-build-protocol';
 export * from './entity-mentions';

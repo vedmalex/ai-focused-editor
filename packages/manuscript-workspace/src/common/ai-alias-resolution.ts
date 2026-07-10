@@ -18,6 +18,8 @@ export interface StoredAiEndpoint {
   command?: string;
   authMethodId?: string;
   env?: Record<string, string>;
+  /** Curated model shortlist for this endpoint (offered as alias-leg suggestions). */
+  allowedModels?: string[];
   /** Compact availability windows (see ai-time-windows). Empty/absent = always on. */
   timeWindows?: string[];
   enabled?: boolean;

@@ -237,7 +237,7 @@ export class KnowledgeGenerationContribution implements CommandContribution, Men
     if (!profile) {
       await this.messages.warn(nls.localize(
         'ai-focused-editor/knowledge/configure-profile',
-        'Configure the AI profile (Model Config view) before generating knowledge.'
+        'Configure an AI connection (add an endpoint and alias in the Model Config view) before generating knowledge.'
       ));
       return;
     }

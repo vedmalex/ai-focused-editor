@@ -44,7 +44,6 @@ import {
   ManuscriptWorkspaceBackendService,
   ManuscriptWorkspaceBackendServicePath,
   ManuscriptWorkspaceService,
-  ModelProviderRegistry,
   NarrativeEntityBackendService,
   NarrativeEntityBackendServicePath,
   NarrativeEntityService,
@@ -83,6 +82,7 @@ import { ManuscriptTreeModel } from './manuscript-tree-model';
 import { ManuscriptTreeViewContribution } from './manuscript-tree-view-contribution';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
+import { AiVerificationService } from './ai-verification-service';
 import { ModelConfigViewContribution } from './model-config-view-contribution';
 import { ModelConfigWidget } from './model-config-widget';
 import { SemanticMarkdownActionsContribution } from './semantic-markdown-actions-contribution';
@@ -153,7 +153,7 @@ export default new ContainerModule(bind => {
   bind(ManuscriptContextVariableContribution).toSelf().inSingletonScope();
   bind(AIVariableContribution).toService(ManuscriptContextVariableContribution);
   bind(AiProfilePreferenceService).toSelf().inSingletonScope();
-  bind(ModelProviderRegistry).toService(AiProfilePreferenceService);
+  bind(AiVerificationService).toSelf().inSingletonScope();
   bind(AiProfileStatusBarContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(AiProfileStatusBarContribution);
   bind(GitActionsContribution).toSelf().inSingletonScope();

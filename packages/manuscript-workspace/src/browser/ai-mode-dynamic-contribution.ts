@@ -410,7 +410,7 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
     const documentUri = editor.uri.toString();
     const profile = await this.aiProfilePreferences.getConfiguredProfile(documentUri);
     if (!profile) {
-      await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/configure-profile-first', 'Configure the AI profile (Model Config view) before running this AI mode.'));
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/configure-profile-first', 'Configure an AI connection (add an endpoint and alias in the Model Config view) before running this AI mode.'));
       return;
     }
 

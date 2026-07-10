@@ -39,8 +39,9 @@ import {
   NarrativeEntityService,
   WorkspaceDiagnostic
 } from '../common';
-import type { NarrativeEntityService as NarrativeEntityServiceType } from '../common';
+import type { AliasCheckVerdict, AliasLegVerdict, NarrativeEntityService as NarrativeEntityServiceType } from '../common';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
+import { AiVerificationService } from './ai-verification-service';
 import {
   AiHistoryRecord,
   AiHistoryService
@@ -99,11 +100,13 @@ export namespace AiFocusedEditorCommands {
     CATEGORY_KEY
   );
 
+  // NOTE: command id kept as 'ai-focused-editor.ai.verifyProfile' so existing
+  // keybindings/menu wiring keep working; only the user-facing label changed.
   export const VERIFY_AI_PROFILE: Command = Command.toLocalizedCommand(
     {
       id: 'ai-focused-editor.ai.verifyProfile',
       category: 'AI Focused Editor',
-      label: 'Verify AI Profile'
+      label: 'Verify AI Connection...'
     },
     'ai-focused-editor/workspace/verify-profile',
     CATEGORY_KEY
@@ -156,6 +159,9 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
 
   @inject(AiProfilePreferenceService)
   protected readonly aiProfilePreferences!: AiProfilePreferenceService;
+
+  @inject(AiVerificationService)
+  protected readonly aiVerification!: AiVerificationService;
 
   @inject(ClipboardService)
   protected readonly clipboardService!: ClipboardService;
@@ -275,7 +281,7 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     if (!profile) {
       await this.messages.warn(nls.localize(
         'ai-focused-editor/workspace/coref-needs-profile',
-        'Configure the AI profile (Model Config view) before running coreference suggestions.'
+        'Configure an AI connection (add an endpoint and alias in the Model Config view) before running coreference suggestions.'
       ));
       return;
     }
@@ -722,7 +728,7 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     if (!profile) {
       await this.messages.warn(nls.localize(
         'ai-focused-editor/workspace/consistency-needs-profile',
-        'Configure the AI profile (Model Config view) before running the consistency check.'
+        'Configure an AI connection (add an endpoint and alias in the Model Config view) before running the consistency check.'
       ));
       return;
     }
@@ -875,77 +881,91 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     }
   }
 
+  /**
+   * Verifies the ACTIVE alias with the two-stage per-leg report: for each chain
+   * leg in order — connection reachability, model presence, and a minimal
+   * single-leg test generation — plus an overall verdict.
+   */
   protected async verifyAiProfile(): Promise<void> {
     const status = await this.aiProfilePreferences.getStatus();
-    if (!status.profile) {
+    if (status.notConfigured) {
       await this.messages.warn(nls.localize(
-        'ai-focused-editor/workspace/verify-incomplete',
-        'AI profile is incomplete. Missing: {0}.',
-        status.missing.join(', ')
+        'ai-focused-editor/workspace/verify-not-configured',
+        'No AI connection configured yet — add an endpoint and an alias in AI Model Config.'
       ));
       return;
     }
 
     const progress = await this.messages.showProgress({
-      text: nls.localize('ai-focused-editor/workspace/verify-progress', 'AI Focused Editor: verifying AI profile...')
+      text: nls.localize('ai-focused-editor/workspace/verify-progress', 'AI Focused Editor: verifying AI connection...')
     });
     try {
-      const result = await this.aiConnection.generate(status.profile, {
-        messages: [
-          {
-            role: 'system',
-            content: 'Reply with exactly: OK'
-          },
-          {
-            role: 'user',
-            content: 'Verify this AI connection.'
-          }
-        ],
-        parameters: {
-          maxTokens: 8,
-          temperature: 0
-        },
-        logContext: {
-          command: AiFocusedEditorCommands.VERIFY_AI_PROFILE.id
-        }
-      });
+      const verdict = await this.aiVerification.checkAlias();
       await this.tryAppendChatEvent({
         kind: 'ai-profile-verify',
         command: AiFocusedEditorCommands.VERIFY_AI_PROFILE.id,
         data: {
-          provider: status.profile.provider,
-          model: status.profile.model,
-          route: result.route,
-          responseText: result.text,
-          warnings: result.warnings,
-          usage: result.usage
+          alias: verdict.aliasId,
+          overall: verdict.overall,
+          legs: verdict.legs
         }
       });
-      await this.messages.info(nls.localize(
-        'ai-focused-editor/workspace/verify-ok',
-        'AI profile verified via {0}/{1}: {2}',
-        result.route?.provider ?? status.profile.provider,
-        result.route?.model ?? status.profile.model,
-        this.previewText(result.text)
-      ));
+      const report = this.formatAliasVerdictReport(verdict);
+      if (verdict.overall === 'ok') {
+        await this.messages.info(report);
+      } else if (verdict.overall === 'failed') {
+        await this.messages.error(report);
+      } else {
+        await this.messages.warn(report);
+      }
     } catch (error) {
       await this.tryAppendChatEvent({
         kind: 'ai-command-error',
         command: AiFocusedEditorCommands.VERIFY_AI_PROFILE.id,
         data: {
-          provider: status.profile.provider,
-          model: status.profile.model,
           error: error instanceof Error ? error.message : String(error)
         }
       });
       await this.messages.error(nls.localize(
         'ai-focused-editor/workspace/verify-failed',
-        'AI profile verification failed: {0}',
+        'AI connection verification failed: {0}',
         error instanceof Error ? error.message : String(error)
       ));
     } finally {
       progress.cancel();
     }
+  }
+
+  /** One-line-per-leg verdict report for the active-alias verification message. */
+  protected formatAliasVerdictReport(verdict: AliasCheckVerdict): string {
+    const overall = verdict.overall === 'ok'
+      ? nls.localize('ai-focused-editor/workspace/verify-alias-ok', 'AI alias "{0}" works.', verdict.aliasLabel)
+      : verdict.overall === 'failed'
+        ? nls.localize('ai-focused-editor/workspace/verify-alias-failed', 'AI alias "{0}": no leg passed verification.', verdict.aliasLabel)
+        : verdict.overall === 'unavailable'
+          ? nls.localize('ai-focused-editor/workspace/verify-alias-unavailable', 'AI alias "{0}": no legs are available right now.', verdict.aliasLabel)
+          : nls.localize('ai-focused-editor/workspace/verify-alias-empty', 'AI alias "{0}": the chain is empty.', verdict.aliasLabel);
+    const lines = verdict.legs.map(leg => this.formatLegLine(leg));
+    return lines.length > 0 ? `${overall}\n${lines.join('\n')}` : overall;
+  }
+
+  protected formatLegLine(leg: AliasLegVerdict): string {
+    const head = `${leg.endpointId} → ${leg.model || nls.localize('ai-focused-editor/workspace/verify-leg-no-model', '(no model)')}`;
+    if (leg.skipped) {
+      const reason = leg.skipped === 'missing-endpoint'
+        ? nls.localize('ai-focused-editor/workspace/verify-leg-skip-missing', 'endpoint not found')
+        : leg.skipped === 'disabled'
+          ? nls.localize('ai-focused-editor/workspace/verify-leg-skip-disabled', 'endpoint disabled')
+          : nls.localize('ai-focused-editor/workspace/verify-leg-skip-window', 'outside availability window');
+      return nls.localize('ai-focused-editor/workspace/verify-leg-skipped', '• {0} — skipped: {1}', head, reason);
+    }
+    const connection = leg.connection === 'ok' ? '✓' : '✗';
+    const model = leg.modelState === 'present' ? '✓' : leg.modelState === 'absent' ? '✗' : '?';
+    const generation = leg.generation === 'ok' ? '✓' : '✗';
+    const marks = nls.localize('ai-focused-editor/workspace/verify-leg-marks', '{0} connection, {1} model, {2} generation', connection, model, generation);
+    const detail = leg.generationError || leg.connectionDetail;
+    const base = nls.localize('ai-focused-editor/workspace/verify-leg-row', '• {0} — {1}', head, marks);
+    return detail ? `${base} (${detail})` : base;
   }
 
   protected async tryAppendChatEvent(record: AiHistoryRecord): Promise<void> {

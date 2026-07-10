@@ -202,7 +202,7 @@ export default {
     open_model_config: action(`
       await openMenu('Manuscript');
       await clickMenuItem('AI Model Config');
-      await waitForText('AI Profiles', 20000);
+      await waitForText('Endpoints', 20000);
     `),
     assert_build_menu_entries: action(`
       await openMenu('Manuscript');
@@ -371,7 +371,7 @@ export default {
       path: '/',
       viewport: 'desktop',
       action: 'open_model_config',
-      requiredText: ['AI Profiles', 'Provider'],
+      requiredText: ['Endpoints', 'Aliases', 'Provider'],
       screenshot: 'afe-05-model-config.png'
     },
     {

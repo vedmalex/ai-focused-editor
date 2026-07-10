@@ -8,38 +8,34 @@ import type {
   AiAliasDescriptor,
   AiConnectionProfile,
   AiEndpointDescriptor,
-  AiProfileDescriptor,
   AliasChainLeg,
-  ModelProviderRegistry,
   ResolvedAliasChain,
   StoredAiAlias,
-  StoredAiEndpoint,
-  StoredAiProfile
+  StoredAiEndpoint
 } from '../common';
 import { resolveChainFromConfig, resolveEndpointLeg } from '../common';
 import { getAiConnectTransportKind } from '../common/ai-connect-config';
 import { isWithinWindows, parseTimeWindows } from '../common/ai-time-windows';
 import {
   AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS,
-  AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE,
   AI_FOCUSED_EDITOR_AI_ALIASES,
   AI_FOCUSED_EDITOR_AI_API_KEYS,
   AI_FOCUSED_EDITOR_AI_ENDPOINTS,
-  AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT,
-  AI_FOCUSED_EDITOR_AI_PROFILES
+  AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT
 } from './ai-focused-editor-preferences';
 import { buildUnconfiguredAiProfileStatus, type AiProfileStatus } from './ai-profile-status';
 
 export type { AiProfileStatus } from './ai-profile-status';
 
 /**
- * FR-013 profile registry: named profiles ("aliases") persisted in workspace
- * preferences, API keys in a user-scope map, an active profile selection, and
- * an ordered failover chain. When no named profile (and no alias) exists the
+ * AI connection registry over the two-level ENDPOINT + ALIAS model. Endpoints
+ * (channels) and aliases (ordered endpoint+model failover chains) are persisted
+ * in workspace preferences; API keys live in a user-scope map keyed by endpoint
+ * id. The active alias is the user default. When no alias exists at all the
  * status is an explicit "not configured" state — there is no active connection.
  */
 @injectable()
-export class AiProfilePreferenceService implements ModelProviderRegistry {
+export class AiProfilePreferenceService {
   @inject(PreferenceService)
   protected readonly preferenceService!: PreferenceService;
 
@@ -53,43 +49,10 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
 
   async getStatus(resourceUri?: string): Promise<AiProfileStatus> {
     await this.preferenceService.ready;
-    if (this.isAliasMode(resourceUri)) {
-      return this.getAliasStatus(resourceUri);
-    }
-    const stored = this.readStoredProfiles(resourceUri);
-    if (stored.length === 0) {
+    if (!this.isAliasMode(resourceUri)) {
       return buildUnconfiguredAiProfileStatus();
     }
-    const activeId = this.getActiveProfileId(stored, resourceUri);
-    const active = stored.find(profile => profile.id === activeId) ?? stored[0];
-    const missing = this.getMissingFields(active, resourceUri);
-    const resolved = missing.length === 0 ? this.resolveProfile(active, resourceUri) : undefined;
-    const chain = await this.getFailoverChain(resourceUri);
-
-    return {
-      configured: Boolean(resolved),
-      notConfigured: false,
-      missing,
-      profile: resolved,
-      summary: {
-        provider: active.provider ?? '',
-        model: active.model ?? '',
-        transportKind: active.transportKind || 'api',
-        transportId: active.transportId ?? '',
-        profileId: active.profileId ?? '',
-        endpointUrl: active.endpointUrl ?? '',
-        hasApiKey: Boolean(this.getApiKeyFor(active.id, resourceUri)),
-        activeProfileLabel: active.label || active.id,
-        chainLength: chain.length,
-        aliasMode: false,
-        activeAlias: '',
-        activeAliasLabel: '',
-        activeEndpoint: '',
-        activeEndpointLabel: '',
-        pinnedEndpoint: '',
-        skipped: []
-      }
-    };
+    return this.getAliasStatus(resourceUri);
   }
 
   /** getStatus() for endpoints/aliases mode: resolve the active alias chain. */
@@ -155,111 +118,12 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
     return missing;
   }
 
-  async listProfiles(resourceUri?: string): Promise<AiProfileDescriptor[]> {
-    await this.preferenceService.ready;
-    const profiles = this.readStoredProfiles(resourceUri);
-    const activeId = this.getActiveProfileId(profiles, resourceUri);
-
-    return profiles.map(profile => {
-      const missing = this.getMissingFields(profile, resourceUri);
-      return {
-        id: profile.id,
-        label: profile.label || profile.id,
-        provider: profile.provider ?? '',
-        model: profile.model ?? '',
-        transportKind: profile.transportKind || 'api',
-        enabled: profile.enabled !== false,
-        active: profile.id === activeId,
-        configured: missing.length === 0,
-        missing,
-        hasApiKey: Boolean(this.getApiKeyFor(profile.id, resourceUri)),
-        endpointUrl: profile.endpointUrl || undefined,
-        allowedModels: profile.allowedModels
-      };
-    });
-  }
-
-  async getActiveProfile(resourceUri?: string): Promise<AiConnectionProfile | undefined> {
-    return this.getConfiguredProfile(resourceUri);
-  }
-
   async getFailoverChain(resourceUri?: string): Promise<AiConnectionProfile[]> {
     await this.preferenceService.ready;
-    if (this.isAliasMode(resourceUri)) {
-      return this.resolveAliasChainDetailed(undefined, new Date(), resourceUri).chain;
+    if (!this.isAliasMode(resourceUri)) {
+      return [];
     }
-    const profiles = this.readStoredProfiles(resourceUri);
-    const activeId = this.getActiveProfileId(profiles, resourceUri);
-
-    const ordered = [
-      ...profiles.filter(profile => profile.id === activeId),
-      ...profiles.filter(profile => profile.id !== activeId && profile.enabled !== false)
-    ];
-
-    return ordered
-      .filter(profile => this.getMissingFields(profile, resourceUri).length === 0)
-      .map(profile => this.resolveProfile(profile, resourceUri));
-  }
-
-  async setActiveProfile(id: string): Promise<void> {
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE, id);
-  }
-
-  async upsertProfile(profile: StoredAiProfile): Promise<void> {
-    const stored = this.readStoredProfiles();
-    const index = stored.findIndex(candidate => candidate.id === profile.id);
-    const next = [...stored];
-    if (index >= 0) {
-      next[index] = profile;
-    } else {
-      next.push(profile);
-    }
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_PROFILES, next);
-    if (next.length === 1) {
-      await this.setActiveProfile(profile.id);
-    }
-  }
-
-  async deleteProfile(id: string): Promise<void> {
-    const stored = this.readStoredProfiles();
-    const next = stored.filter(profile => profile.id !== id);
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_PROFILES, next);
-    if (this.getActiveProfileId(next) === id && next.length > 0) {
-      await this.setActiveProfile(next[0].id);
-    }
-    const keys = { ...this.readApiKeys() };
-    if (id in keys) {
-      delete keys[id];
-      await this.preferenceService.set(AI_FOCUSED_EDITOR_AI_API_KEYS, keys, PreferenceScope.User);
-    }
-  }
-
-  async moveProfile(id: string, delta: -1 | 1): Promise<void> {
-    const stored = this.readStoredProfiles();
-    const index = stored.findIndex(profile => profile.id === id);
-    const target = index + delta;
-    if (index < 0 || target < 0 || target >= stored.length) {
-      return;
-    }
-    const next = [...stored];
-    [next[index], next[target]] = [next[target], next[index]];
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_PROFILES, next);
-  }
-
-  async reorderProfile(id: string, targetIndex: number): Promise<void> {
-    const stored = this.readStoredProfiles();
-    const index = stored.findIndex(profile => profile.id === id);
-    if (index < 0) {
-      return;
-    }
-    const clamped = Math.max(0, Math.min(targetIndex, stored.length - 1));
-    if (clamped === index) {
-      return;
-    }
-    const next = [...stored];
-    const [moved] = next.splice(index, 1);
-    next.splice(clamped, 0, moved);
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_PROFILES, next);
+    return this.resolveAliasChainDetailed(undefined, new Date(), resourceUri).chain;
   }
 
   async setApiKey(id: string, apiKey: string): Promise<void> {
@@ -358,6 +222,7 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
         endpointUrl: endpoint.endpointUrl || undefined,
         enabled,
         hasApiKey: typeof keys[endpoint.id] === 'string' && keys[endpoint.id].trim().length > 0,
+        allowedModels: Array.isArray(endpoint.allowedModels) && endpoint.allowedModels.length > 0 ? endpoint.allowedModels : undefined,
         timeWindows: windows,
         availableNow: enabled && isWithinWindows(windows, now),
         windowWarning: parsed.hasWarning
@@ -530,73 +395,6 @@ export class AiProfilePreferenceService implements ModelProviderRegistry {
     const [moved] = next.splice(index, 1);
     next.splice(clamped, 0, moved);
     return next;
-  }
-
-  /** The editable stored profiles for the config UI (empty when none exist). */
-  getStoredProfileList(resourceUri?: string): StoredAiProfile[] {
-    return this.readStoredProfiles(resourceUri);
-  }
-
-  protected readStoredProfiles(resourceUri?: string): StoredAiProfile[] {
-    const raw = this.preferenceService.get<StoredAiProfile[]>(AI_FOCUSED_EDITOR_AI_PROFILES, [], resourceUri);
-    if (!Array.isArray(raw)) {
-      return [];
-    }
-    return raw.filter((profile): profile is StoredAiProfile =>
-      typeof profile === 'object' && profile !== null && typeof (profile as StoredAiProfile).id === 'string'
-    );
-  }
-
-  protected getActiveProfileId(profiles: StoredAiProfile[], resourceUri?: string): string {
-    const configured = this.getPreferenceText(AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE, resourceUri);
-    if (configured && profiles.some(profile => profile.id === configured)) {
-      return configured;
-    }
-    return profiles[0]?.id ?? '';
-  }
-
-  protected getMissingFields(profile: StoredAiProfile, resourceUri?: string): string[] {
-    const missing: string[] = [];
-    if (!profile.provider) {
-      missing.push('provider');
-    }
-    if (!profile.model) {
-      missing.push('model');
-    }
-    // API keys only gate the api transport; acp/cli/server authorize through
-    // the underlying agent (OAuth, CLI login), matching ai-editor v1 behavior.
-    if (profile.provider) {
-      const effectiveTransportKind = getAiConnectTransportKind({
-        provider: profile.provider,
-        transportKind: profile.transportKind as AiConnectionProfile['transportKind'],
-        transportId: profile.transportId
-      });
-      if (effectiveTransportKind === 'api' && !this.getApiKeyFor(profile.id, resourceUri)) {
-        missing.push('API key');
-      }
-    }
-    return missing;
-  }
-
-  protected resolveProfile(profile: StoredAiProfile, resourceUri?: string): AiConnectionProfile {
-    return {
-      id: profile.profileId || profile.id,
-      label: profile.label,
-      provider: profile.provider,
-      model: profile.model,
-      transportKind: (profile.transportKind || 'api') as AiConnectionProfile['transportKind'],
-      transportId: profile.transportId || undefined,
-      endpointUrl: profile.endpointUrl || undefined,
-      command: profile.command || undefined,
-      authMethodId: profile.authMethodId || undefined,
-      allowedModels: profile.allowedModels,
-      secretValue: this.getApiKeyFor(profile.id, resourceUri) || undefined
-    };
-  }
-
-  protected getApiKeyFor(profileId: string, _resourceUri?: string): string {
-    const keys = this.readApiKeys();
-    return typeof keys[profileId] === 'string' ? keys[profileId].trim() : '';
   }
 
   protected readApiKeys(): Record<string, string> {

@@ -5,8 +5,6 @@ import {
 } from '@theia/core/lib/common/preferences';
 import { nls } from '@theia/core/lib/common/nls';
 
-export const AI_FOCUSED_EDITOR_AI_PROFILES = 'aiFocusedEditor.ai.profiles';
-export const AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE = 'aiFocusedEditor.ai.activeProfile';
 export const AI_FOCUSED_EDITOR_AI_API_KEYS = 'aiFocusedEditor.ai.apiKeys';
 export const AI_FOCUSED_EDITOR_AI_ENDPOINTS = 'aiFocusedEditor.ai.endpoints';
 export const AI_FOCUSED_EDITOR_AI_ALIASES = 'aiFocusedEditor.ai.aliases';
@@ -19,47 +17,16 @@ export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
   title: 'AI Focused Editor',
   scope: PreferenceScope.Folder,
   properties: {
-    [AI_FOCUSED_EDITOR_AI_PROFILES]: {
-      type: 'array',
-      default: [],
-      description: nls.localize('ai-focused-editor/ai-config/pref-profiles-desc', 'Named AI profiles (aliases). Each entry: id, label, provider, model, transportKind/transportId, endpointUrl, allowedModels, enabled. Secrets are never stored here. When empty, no AI profile is configured (add one in the Model Config view).'),
-      items: {
-        type: 'object',
-        required: ['id', 'provider', 'model'],
-        properties: {
-          id: { type: 'string' },
-          label: { type: 'string' },
-          provider: { type: 'string' },
-          model: { type: 'string' },
-          transportKind: { type: 'string' },
-          transportId: { type: 'string' },
-          profileId: { type: 'string' },
-          endpointUrl: { type: 'string' },
-          command: { type: 'string' },
-          authMethodId: { type: 'string' },
-          allowedModels: {
-            type: 'array',
-            items: { type: 'string' }
-          },
-          enabled: { type: 'boolean' }
-        }
-      }
-    },
-    [AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE]: {
-      type: 'string',
-      default: '',
-      description: nls.localize('ai-focused-editor/ai-config/pref-active-profile-desc', 'Id of the active AI profile from aiFocusedEditor.ai.profiles. The failover chain is the active profile first, then the remaining enabled profiles in list order.')
-    },
     [AI_FOCUSED_EDITOR_AI_API_KEYS]: {
       type: 'object',
       default: {},
       additionalProperties: { type: 'string' },
-      description: nls.localize('ai-focused-editor/ai-config/pref-api-keys-desc', 'API keys per profile OR endpoint id. Keep this in User scope (the Model Config view does this automatically) so secrets stay out of workspace files.')
+      description: nls.localize('ai-focused-editor/ai-config/pref-api-keys-desc', 'API keys per endpoint id. Keep this in User scope (the Model Config view does this automatically) so secrets stay out of workspace files.')
     },
     [AI_FOCUSED_EDITOR_AI_ENDPOINTS]: {
       type: 'array',
       default: [],
-      description: nls.localize('ai-focused-editor/ai-config/pref-endpoints-desc', 'AI ENDPOINTS (channels): where/how to reach a provider. Each entry: id, label, provider, transportKind/transportId, endpointUrl, command, authMethodId, env, timeWindows, enabled. Secrets are never stored here — API keys go in aiFocusedEditor.ai.apiKeys keyed by endpoint id. Endpoints are combined into chains by aiFocusedEditor.ai.aliases.'),
+      description: nls.localize('ai-focused-editor/ai-config/pref-endpoints-desc', 'AI ENDPOINTS (channels): where/how to reach a provider. Each entry: id, label, provider, transportKind/transportId, endpointUrl, command, authMethodId, env, allowedModels, timeWindows, enabled. Secrets are never stored here — API keys go in aiFocusedEditor.ai.apiKeys keyed by endpoint id. Endpoints are combined into chains by aiFocusedEditor.ai.aliases.'),
       items: {
         type: 'object',
         required: ['id', 'provider'],
@@ -72,6 +39,11 @@ export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
           endpointUrl: { type: 'string' },
           command: { type: 'string' },
           authMethodId: { type: 'string' },
+          allowedModels: {
+            type: 'array',
+            items: { type: 'string' },
+            description: nls.localize('ai-focused-editor/ai-config/pref-endpoints-allowed-desc', 'Curated model shortlist for this endpoint. Offered as suggestions when picking the model for an alias leg. Empty/absent = no shortlist.')
+          },
           env: {
             type: 'object',
             additionalProperties: { type: 'string' }
@@ -88,7 +60,7 @@ export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
     [AI_FOCUSED_EDITOR_AI_ALIASES]: {
       type: 'array',
       default: [],
-      description: nls.localize('ai-focused-editor/ai-config/pref-aliases-desc', 'AI ALIASES (chains): ordered endpoint+model legs tried in failover order. Each entry: id, label, chain [{ endpointId, model }], enabled. When any alias exists, the active alias supersedes aiFocusedEditor.ai.profiles.'),
+      description: nls.localize('ai-focused-editor/ai-config/pref-aliases-desc', 'AI ALIASES (chains): ordered endpoint+model legs tried in failover order. Each entry: id, label, chain [{ endpointId, model }], enabled. The active alias (aiFocusedEditor.ai.activeAlias) is the user default; when no alias exists no AI connection is configured.'),
       items: {
         type: 'object',
         required: ['id', 'chain'],

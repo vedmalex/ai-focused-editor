@@ -235,6 +235,12 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 
 - Section headers localize at the display point (Рукопись, Персонажи, …); the four entity sections nest under one expanded «Мир книги»/Entities group (globe icon, summed count) mirroring `entities/` and cutting top-level noise; right-click on the group offers all four create commands. 533 tests, 10/10 flows.
 
+## Wave 21 — Two-concept AI model + real verification (shipped)
+
+- **Profiles layer removed** (owner: «перемудрили; алиас указывает соединение и модель — профиль зачем?»). Research confirmed v1 never had profiles (the word was an internal variable name) and our alias mode already won whenever ≥1 alias existed. Gone: `ai.profiles`/`activeProfile` preferences, ~180 lines of service CRUD, the widget's AI Profiles section (~330 lines), the status-bar profile branch, dead `ModelProviderRegistry`. The model is exactly ENDPOINT (соединение) + ALIAS (endpoint+model legs, failover); empty aliases → «не настроено». `allowedModels` moved onto the endpoint (v1 parity); alias-leg model inputs suggest the endpoint's models. UI vocabulary: «подключение»/«алиас».
+- **Two-stage verification** (better than v1, which only had a GET /models alert): per-endpoint `Check Connection` (reachability + model list; discovered models merge into the form as chips), per-alias check with PER-LEG verdicts — connection ✓/✗, model in catalog ✓/✗/?, 1–8-token test generation through that specific leg; time-window skips render as «пропущен», overall verdict follows failover semantics. Pure verdict assembly in `common/ai-verification.ts` (16 tests), RPC isolated in a browser service.
+- Tests: 549 across 30 files; `verify:full` green (both smokes in-pipeline, 10/10 UI flows incl. reworked AFE-05).
+
 ## Backlog (queued)
 
 0. **Electron smoke pipeline flake** (diagnosed, mitigated, not root-caused): only inside `verify:full` right after builds, the electron backend occasionally prints its yargs usage + an unhandled null rejection and the window dies; standalone and `bun run test:electron` always pass. Smoke has 3 launch retries with backoff and captures the main-process output tail for the next occurrence.
