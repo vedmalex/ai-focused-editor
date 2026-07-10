@@ -1,0 +1,467 @@
+---
+source_url: https://theia-ide.org/docs/preferences/
+fetched_at: 2026-07-10T00:00:00Z
+title: Preferences
+---
+
+# Preferences
+
+## Table of Contents
+- Overview
+- Preference Scopes
+- Preference Files
+- Contributing Preferences
+- Using Preferences
+- Advanced Features
+- Backend Preferences
+- Architecture Notes
+- Best Practices
+- Troubleshooting
+- Examples
+
+## Overview
+
+Theia offers "a comprehensive preferences system that allows extensions to contribute configuration options, manage default values, and respond to preference changes." The system encompasses preference schemas, services, proxies, and multiple configuration scopes supporting both frontend and backend environments.
+
+## Preference Scopes
+
+Preferences organize hierarchically from general to specific:
+
+1. **Default** - Built-in extension values
+2. **User** - Global user preferences
+3. **Workspace** - Workspace-specific settings
+4. **Folder** - Folder-specific preferences in multi-root workspaces
+
+Theia resolves values from most specific to most general scope, returning the first match found.
+
+## Preference Files
+
+Storage locations vary by system:
+
+- **User**: `$HOME/.theia/settings.json` (Linux/macOS) or `%USERPROFILE%/.theia/settings.json` (Windows)
+- **Workspace**: `<workspace-root>/.theia/settings.json`
+- **Folder**: `<folder>/.theia/settings.json`
+
+### Example settings.json
+
+```json
+{
+    "editor.lineNumbers": "on",
+    "editor.tabSize": 4,
+    "files.watcherExclude": {
+        "**/node_modules": true,
+        "**/.git": true
+    },
+    "[typescript]": {
+        "editor.formatOnSave": true
+    }
+}
+```
+
+## Contributing Preferences
+
+### 1. Define a Preference Schema
+
+Create JSON Schema-formatted preference definitions:
+
+```typescript
+import { PreferenceSchema, PreferenceScope } from '@theia/core/lib/common/preferences';
+
+export const myExtensionPreferenceSchema: PreferenceSchema = {
+    properties: {
+        'myExtension.enabled': {
+            type: 'boolean',
+            default: true,
+            description: 'Enable MyExtension functionality',
+            scope: PreferenceScope.User
+        },
+        'myExtension.timeout': {
+            type: 'number',
+            default: 5000,
+            description: 'Timeout in milliseconds',
+            minimum: 100,
+            scope: PreferenceScope.Workspace
+        },
+        'myExtension.logLevel': {
+            type: 'string',
+            enum: ['error', 'warn', 'info', 'debug'],
+            default: 'info',
+            description: 'Logging level',
+            enumDescriptions: [
+                'Show only errors',
+                'Show warnings and errors',
+                'Show info, warnings and errors',
+                'Show all messages'
+            ]
+        },
+        'myExtension.overridableOption': {
+            type: 'string',
+            default: 'defaultValue',
+            description: 'An option that can be overridden per language',
+            overridable: true
+        }
+    }
+};
+```
+
+### Understanding the `scope` Property
+
+The scope parameter specifies the most specific configuration level:
+
+- **PreferenceScope.User**: Default and User scopes only
+- **PreferenceScope.Workspace**: Default, User, and Workspace scopes
+- **PreferenceScope.Folder**: All scopes including Folder
+- **No scope**: Defaults to most permissive (Folder level)
+
+The scope controls configuration locations, not value resolution mechanics.
+
+### 2. Create a Configuration Interface
+
+Define a TypeScript interface matching your schema for type safety:
+
+```typescript
+export interface MyExtensionConfiguration {
+    'myExtension.enabled': boolean;
+    'myExtension.timeout': number;
+    'myExtension.logLevel': 'error' | 'warn' | 'info' | 'debug';
+    'myExtension.overridableOption': string;
+}
+```
+
+This interface is optional if using `PreferenceService` directly without preference proxies.
+
+### 3. Create a Preference Proxy
+
+Preference proxies provide type-safe preference access (optional step):
+
+```typescript
+import { createPreferenceProxy, PreferenceProxy, PreferenceService } from '@theia/core/lib/common/preferences';
+
+export const MyExtensionPreferences = Symbol('MyExtensionPreferences');
+export type MyExtensionPreferences = PreferenceProxy<MyExtensionConfiguration>;
+
+export function createMyExtensionPreferences(preferences: PreferenceService): MyExtensionPreferences {
+    return createPreferenceProxy(preferences, myExtensionPreferenceSchema);
+}
+```
+
+### 4. Register Your Preferences
+
+Register preferences in your extension's dependency injection module:
+
+```typescript
+import { interfaces } from '@theia/core/shared/inversify';
+import { PreferenceContribution, PreferenceService } from '@theia/core/lib/common/preferences';
+
+export const MyExtensionPreferenceContribution = Symbol('MyExtensionPreferenceContribution');
+
+export function bindMyExtensionPreferences(bind: interfaces.Bind): void {
+    bind(MyExtensionPreferenceContribution).toConstantValue({ schema: myExtensionPreferenceSchema });
+    bind(PreferenceContribution).toService(MyExtensionPreferenceContribution);
+    
+    bind(MyExtensionPreferences).toDynamicValue(ctx => {
+        const factory = ctx.container.get<PreferenceProxyFactory>(PreferenceProxyFactory);
+        return factory(myExtensionPreferenceSchema);
+    }).inSingletonScope();
+}
+```
+
+## Using Preferences
+
+### Minimal Approach: Direct Access via Preference Service
+
+Access preferences directly without proxy setup:
+
+```typescript
+import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
+import { PreferenceService } from '@theia/core/lib/common/preferences';
+import { DisposableCollection } from '@theia/core/lib/common/disposable';
+
+@injectable()
+export class MyService {
+    @inject(PreferenceService)
+    protected readonly preferenceService: PreferenceService;
+
+    private readonly toDispose = new DisposableCollection();
+
+    getTimeout(): number {
+        return this.preferenceService.get('myExtension.timeout', 5000);
+    }
+
+    async setTimeout(value: number): Promise<void> {
+        await this.preferenceService.set('myExtension.timeout', value);
+    }
+
+    @postConstruct()
+    protected init(): void {
+        this.toDispose.push(
+            this.preferenceService.onPreferenceChanged(event => {
+                if (event.preferenceName === 'myExtension.timeout') {
+                    const newValue = this.preferenceService.get('myExtension.timeout', 5000);
+                    console.log('Timeout changed to:', newValue);
+                }
+            })
+        );
+    }
+
+    dispose(): void {
+        this.toDispose.dispose();
+    }
+}
+```
+
+**Note:** Since Theia 1.68, "the `oldValue` and `newValue` fields have been removed from the `PreferenceChange` and `PreferenceChangeEvent` interfaces." Use `PreferenceService.get` or proxy indexing to retrieve current values.
+
+### Type-Safe Access via Preference Proxy
+
+```typescript
+import { postConstruct } from '@theia/core/shared/inversify';
+import { DisposableCollection } from '@theia/core/lib/common/disposable';
+
+@injectable()
+export class MyService {
+    @inject(MyExtensionPreferences)
+    protected readonly preferences: MyExtensionPreferences;
+
+    private readonly toDispose = new DisposableCollection();
+
+    getTimeout(): number {
+        return this.preferences['myExtension.timeout'];
+    }
+
+    @postConstruct()
+    protected init(): void {
+        this.toDispose.push(
+            this.preferences.onPreferenceChanged(event => {
+                if (event.preferenceName === 'myExtension.timeout') {
+                    const newValue = this.preferences['myExtension.timeout'];
+                    console.log('Timeout changed to:', newValue);
+                    this.updateTimeout(newValue);
+                }
+            })
+        );
+    }
+
+    dispose(): void {
+        this.toDispose.dispose();
+    }
+}
+```
+
+## Advanced Features
+
+### Language-Specific Preferences
+
+Enable language-specific overrides with `overridable: true`:
+
+```typescript
+'editor.tabSize': {
+    type: 'number',
+    default: 4,
+    overridable: true
+}
+```
+
+In settings.json:
+
+```json
+{
+    "editor.tabSize": 4,
+    "[typescript]": {
+        "editor.tabSize": 2
+    },
+    "[python]": {
+        "editor.tabSize": 4
+    }
+}
+```
+
+### Preference Inspection
+
+Use `inspect` to view values across all scopes:
+
+```typescript
+const inspection = this.preferenceService.inspect('myExtension.timeout');
+console.log('Default:', inspection.defaultValue);
+console.log('User:', inspection.globalValue);
+console.log('Workspace:', inspection.workspaceValue);
+console.log('Folder:', inspection.workspaceFolderValue);
+console.log('Effective:', inspection.value);
+```
+
+### Resource-Specific Preferences
+
+Access preferences for specific files or folders:
+
+```typescript
+const encoding = this.preferenceService.get('files.encoding', 'utf8', fileUri);
+
+await this.preferenceService.set('files.encoding', 'utf16', PreferenceScope.Folder, folderUri);
+```
+
+### Preference Overrides and Defaults
+
+Programmatically register default value overrides:
+
+```typescript
+import { PreferenceContribution, PreferenceSchemaService } from '@theia/core/lib/common/preferences';
+
+@injectable()
+export class MyPreferenceContribution implements PreferenceContribution {
+    readonly schema = myExtensionPreferenceSchema;
+
+    async initSchema(schemaService: PreferenceSchemaService): Promise<void> {
+        schemaService.registerOverride('myExtension.timeout', 'development', 10000);
+        schemaService.registerOverride('myExtension.logLevel', 'development', 'debug');
+        schemaService.registerOverride('editor.tabSize', 'typescript', 2);
+        schemaService.registerOverride('editor.tabSize', 'python', 4);
+    }
+}
+```
+
+Schema properties must precede override registration.
+
+## Backend Preferences
+
+Starting with Theia v1.65.0, backend preferences support exists with limitations:
+
+- Only **Default** and **User** scopes available
+- **Workspace** and **Folder** scopes inaccessible from backend
+- Same API as frontend
+
+### Key Points for Backend Usage
+
+**Schema Scope**: "If a preference is used in the backend, consider setting `scope: PreferenceScope.User` to match the backend's limitations." While `PreferenceScope.Workspace` works in backend code, it only reads Default and User scopes.
+
+```typescript
+'myExt.backendSetting': {
+    type: 'string',
+    scope: PreferenceScope.User,
+    description: 'Backend setting (user-level only)'
+}
+
+'myExt.sharedSetting': {
+    type: 'number',
+    scope: PreferenceScope.Workspace,
+    description: 'Shared setting (workspace-level in frontend, user-level in backend)'
+}
+```
+
+**Binding**: Register preference schemas in common modules imported by both frontend and backend:
+
+```typescript
+// common/my-preferences.ts
+export function bindMyPreferences(bind: interfaces.Bind): void {
+    bind(MyPreferenceContribution).toConstantValue({ schema: mySchema });
+    bind(PreferenceContribution).toService(MyPreferenceContribution);
+}
+
+// frontend-module.ts
+import { bindMyPreferences } from '../common/my-preferences';
+export default new ContainerModule(bind => {
+    bindMyPreferences(bind);
+});
+
+// backend-module.ts
+import { bindMyPreferences } from '../common/my-preferences';
+export default new ContainerModule(bind => {
+    bindMyPreferences(bind);
+});
+```
+
+Both frontend and backend access identical preference files with no separate values.
+
+### Backend Usage Example
+
+```typescript
+import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
+import { PreferenceService } from '@theia/core/lib/common/preferences';
+import { DisposableCollection } from '@theia/core/lib/common/disposable';
+
+@injectable()
+export class MyBackendService {
+    @inject(PreferenceService)
+    protected readonly preferenceService: PreferenceService;
+
+    private readonly toDispose = new DisposableCollection();
+
+    async getConfiguration(): Promise<any> {
+        const timeout = this.preferenceService.get('myExtension.timeout');
+        const enabled = this.preferenceService.get('myExtension.enabled');
+        
+        return { timeout, enabled };
+    }
+
+    @postConstruct()
+    protected init(): void {
+        this.toDispose.push(
+            this.preferenceService.onPreferenceChanged(event => {
+                console.log('Backend preference changed:', event.preferenceName);
+            })
+        );
+    }
+
+    dispose(): void {
+        this.toDispose.dispose();
+    }
+}
+```
+
+### Creating a Backend Preference Service
+
+This represents an advanced, specialized use case. Most backend services use `PreferenceService` directly. See `examples/api-samples/src/node/sample-backend-preferences-service.ts` for complete implementation examples.
+
+## Architecture Notes
+
+Important design considerations include:
+
+- **File Organization**: Preference files locate in common folders supporting frontend and backend usage
+- **Schema Service**: `PreferenceSchemaService` distinguishes between preference schemas and derived JSON schemas
+- **Type Safety**: `JSONValue` replaces `any` throughout the API
+- **Valid Scopes**: Backend implementations recognize only Default and User scopes
+- **Schema Conversion**: VS Code preference schemas require conversion to Theia format
+
+## Best Practices
+
+1. Use meaningful names following the pattern `extensionName.category.setting`
+2. Provide clear, helpful descriptions for all preferences
+3. Choose the most restrictive scope appropriate for your use case
+4. Provide enum values and descriptions for limited options
+5. Mark `overridable: true` for language-specific overrides
+6. Listen for preference changes and update extension behavior accordingly
+7. Ensure extensions work well with default values
+8. Include preference documentation in extension README files
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Preferences not appearing**: Verify PreferenceContribution proper binding and registration
+2. **Changes not taking effect**: Confirm listening for preference change events
+3. **Type errors**: Validate TypeScript interface matches JSON schema
+4. **Backend limitations**: Remember workspace and folder scopes unavailable in backend services
+
+### Debugging
+
+Enable preference debugging via log level:
+
+```json
+{
+    "logging.level": "debug"
+}
+```
+
+This displays detailed preference resolution and change information in the console.
+
+## Examples
+
+Complete preference usage examples:
+
+- Core preferences: `packages/core/src/common/core-preferences.ts`
+- Filesystem preferences: `packages/filesystem/src/common/filesystem-preferences.ts`
+- Workspace preferences: `packages/workspace/src/common/workspace-preferences.ts`
+- Backend preference service: `examples/api-samples/src/node/sample-backend-preferences-service.ts`
+
+---
+
+**Last updated:** March 6, 2026

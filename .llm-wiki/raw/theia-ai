@@ -1,0 +1,650 @@
+---
+source_url: https://theia-ide.org/docs/theia_ai/
+fetched_at: 2026-07-10T00:00:00Z
+title: Building Custom AI Assistants and AI Support with Theia AI
+---
+
+# Building Custom AI Assistants and AI Support with Theia AI
+
+## Overview
+
+Theia AI is a framework designed to help tool builders integrate tailored AI capabilities into their tools and IDEs. This documentation targets developers using Theia and Theia AI as a platform to build custom tools and IDEs.
+
+## Table of Contents
+
+- Creating Agents with Theia AI
+- Variables and Tool Functions
+- Custom Response Part Rendering
+- Managing the State of a Chat Response
+- Custom LLM Provider
+- GitHub Copilot Integration
+- Change Sets
+- Chat Suggestions
+
+## Creating Agents with Theia AI
+
+An **Agent** in Theia AI mediates between the user interface triggering it and the LLM. Agents typically collect relevant context, produce prompts, handle LLM communication, and invoke tool actions or return outputs to the UI.
+
+### Creating a Chat Agent
+
+A Chat Agent integrates into Theia AI's default chat UI and implements a specific interface for conversational interaction.
+
+#### Defining the Prompt Fragment
+
+```typescript
+import { BasePromptFragment } from '@theia/ai-core';
+
+export const commandPromptTemplate: BasePromptFragment = {
+   id: 'command-chat-agent-system-prompt-template',
+   template: `Always respond with: "I am the command agent"`
+}
+```
+
+#### Creating the Chat Agent
+
+```typescript
+import { AbstractStreamParsingChatAgent } from '@theia/ai-chat';
+import { LanguageModelRequirement } from '@theia/ai-core';
+
+export class CommandChatAgent extends AbstractStreamParsingChatAgent {
+   id: string = 'Command';
+   name: string = 'Command';
+   description: string = `Helps users find and execute commands in the IDE`;
+   languageModelRequirements: LanguageModelRequirement[] = [{
+       purpose: 'chat',
+       identifier: 'default/universal',
+   }];
+   protected defaultLanguageModelPurpose: string = 'chat';
+
+   override prompts = [{ id: commandPromptTemplate.id, defaultVariant: commandPromptTemplate }];
+   protected override systemPromptId: string = commandPromptTemplate.id;
+}
+```
+
+#### Registering the Agent
+
+```typescript
+bind(Agent).toService(CommandChatAgent);
+bind(ChatAgent).toService(CommandChatAgent);
+```
+
+#### Refining Agent Behavior
+
+Getting such agent implementations right typically requires a bit of prompt evaluation with a set of expected user queries. A huge help in Theia AI is that you can modify the prompt fragments at runtime to test different scenarios and tweak the prompt until you are satisfied, instead of changing the prompt fragments in the code and need to rebuild after every change.
+
+### Agent Modes
+
+Chat agents can define multiple operational modes allowing users to control how the agent responds.
+
+#### Defining Modes
+
+```typescript
+export class MyChatAgent extends AbstractStreamParsingChatAgent {
+    readonly id = 'MyAgent';
+    readonly name = 'MyAgent';
+
+    modes = [
+        { id: 'concise', name: 'Concise' },
+        { id: 'detailed', name: 'Detailed' }
+    ];
+}
+```
+
+#### Using Modes in Agent Implementation
+
+```typescript
+override async invoke(request: MutableChatRequestModel): Promise<void> {
+    const modeId = request.request.modeId || 'concise';
+
+    if (modeId === 'concise') {
+        // Provide brief response
+    } else {
+        // Provide detailed response
+    }
+}
+```
+
+### Agent Capabilities
+
+Capabilities provide toggleable behaviors to users through compact chips in the chat input.
+
+#### Defining Capabilities in a Prompt Template
+
+Use the syntax: `{{capability:fragment-id [default on|off]}}`
+
+Example:
+```
+{{capability:my-shell-feature default off}}
+{{capability:my-reporting-feature default off}}
+```
+
+#### Adding Name and Description via Frontmatter
+
+```yaml
+---
+name: Shell Execution
+description: Allows the agent to run shell commands on the host system.
+---
+Your prompt fragment content here...
+```
+
+## Variables and Tool Functions
+
+Agents interact with tools by fetching dynamic data through Variables and Tool Functions.
+
+### Variables
+
+Two types exist: **Global Variables** (available to all agents) and **Agent-specific Variables** (only for specific agents). Variables are referenced inside prompt templates using the double-brace syntax: `{{variableName}}`.
+
+#### Agent-specific Variables
+
+```typescript
+// Retrieve all available commands
+const knownCommands: string[] = [];
+for (const command of this.commandRegistry.getAllCommands()) {
+   knownCommands.push(`${command.id}: ${command.label}`);
+}
+
+// Resolve the variable
+const systemPrompt = await this.promptService.getPrompt('command-chat-agent-system-prompt-template', {
+   'command-ids': knownCommands.join('\n')
+});
+```
+
+Declare agent-specific variables:
+
+```typescript
+this.agentSpecificVariables = [{
+   name: 'command-ids',
+   description: 'The list of available commands in Theia.',
+   usedInPrompt: true
+}];
+```
+
+#### Global Variables
+
+```typescript
+export const TODAY_VARIABLE: AIVariable = {
+   id: 'today-provider',
+   description: 'Does something for today',
+   name: 'today',
+   args: [
+       { name: TodayVariableArgs.IN_ISO_8601, description: 'Returns the current date in ISO 8601 format' },
+       { name: TodayVariableArgs.IN_UNIX_SECONDS, description: 'Returns the current date in unix seconds format' }
+   ]
+};
+
+export class TodayVariableContribution implements AIVariableContribution, AIVariableResolver {
+   registerVariables(service: AIVariableService): void {
+       service.registerResolver(TODAY_VARIABLE, this);
+   }
+
+   async resolve(request: AIVariableResolutionRequest, context: AIVariableContext): Promise<ResolvedAIVariable | undefined> {
+       if (request.variable.name === TODAY_VARIABLE.name) {
+           return this.resolveTodayVariable(request);
+       }
+       return undefined;
+   }
+
+   private resolveTodayVariable(request: AIVariableResolutionRequest): ResolvedTodayVariable {
+       const date = new Date();
+       if (request.arg === TodayVariableArgs.IN_ISO_8601) {
+           return { variable: request.variable, value: date.toISOString(), date };
+       }
+       if (request.arg === TodayVariableArgs.IN_UNIX_SECONDS) {
+           return { variable: request.variable, value: Math.round(date.getTime() / 1000).toString(), date };
+       }
+       return { variable: request.variable, value: date.toDateString(), date };
+   }
+}
+
+bind(AIVariableContribution).to(TodayVariableContribution).inSingletonScope();
+```
+
+#### Product Name Variable
+
+Theia AI includes a global `productName` variable that resolves to the configured `applicationName`.
+
+### Chat Context Variables
+
+Context variables provide both a `value` (inserted into the prompt) and a `contextValue` (added to `ChatRequestModel.context`).
+
+To disable context features:
+
+```typescript
+rebind(AIChatInputConfiguration).toConstantValue({
+    showContext: false,
+    showPinnedAgent: true
+});
+```
+
+#### File Variable Provider Example
+
+```typescript
+export const FILE_VARIABLE: AIVariable = {
+    id: 'file-provider',
+    description: 'Resolves the path and the contents of a file',
+    name: 'file',
+    label: 'File',
+    iconClasses: codiconArray('file'),
+    isContextVariable: true,
+    args: [{ name: 'uri', description: 'The URI of the requested file.' }]
+};
+
+@injectable()
+export class FileVariableContribution implements AIVariableContribution, AIVariableResolver {
+    @inject(FileService)
+    protected readonly fileService: FileService;
+
+    @inject(WorkspaceService)
+    protected readonly wsService: WorkspaceService;
+
+    registerVariables(service: AIVariableService): void {
+        service.registerResolver(FILE_VARIABLE, this);
+    }
+
+    async canResolve(request: AIVariableResolutionRequest, _: AIVariableContext): Promise<number> {
+        return request.variable.name === FILE_VARIABLE.name ? 1 : 0;
+    }
+
+    async resolve(request: AIVariableResolutionRequest, _: AIVariableContext): Promise<ResolvedAIContextVariable | undefined> {
+        try {
+            const content = await this.fileService.readFile(path);
+            return {
+                variable: request.variable,
+                value: await this.wsService.getWorkspaceRelativePath(path),
+                contextValue: content.value.toString(),
+            };
+        } catch (error) {
+            return undefined;
+        }
+    }
+}
+```
+
+#### Reasoning Support
+
+Models can declare reasoning capabilities via the `reasoningSupport` property listing supported levels: `off`, `minimal`, `low`, `medium`, `high`, `auto`.
+
+```typescript
+// Configure defaults via preference
+ai-features.reasoning.defaults
+```
+
+### Tool Functions
+
+Tool functions allow LLMs to retrieve information or trigger actions. Tool Functions can be used in requests, similarly to variables, as shown in the following prompt example:
+
+```
+Use the following functions to access the workspace:
+- ~{getWorkspaceFileList}
+- ~{getFileContent}
+```
+
+```typescript
+@injectable()
+export class FileContentFunction implements ToolProvider {
+   static ID = FILE_CONTENT_FUNCTION_ID;
+
+   getTool(): ToolRequest {
+       return {
+           id: FileContentFunction.ID,
+           name: FileContentFunction.ID,
+           description: 'Get the content of the file',
+           parameters: {
+               type: 'object',
+               properties: {
+                   file: {
+                       type: 'string',
+                       description: 'The path of the file to retrieve content for',
+                   }
+               }
+           },
+           handler: (arg_string: string) => {
+               const file = this.parseArg(arg_string);
+               return this.getFileContent(file);
+           }
+       };
+   }
+}
+
+bind(ToolProvider).to(FileContentFunction);
+```
+
+### Slash Commands
+
+Slash commands enable users to invoke prompt templates using `/commandname arguments` syntax.
+
+#### Command Metadata Interface
+
+```typescript
+interface CommandPromptFragmentMetadata {
+    isCommand: true;
+    commandName: string;
+    commandDescription: string;
+    commandArgumentHint?: string;
+    commandAgents?: string[];
+}
+```
+
+#### Programmatic Registration Example
+
+```typescript
+import { PromptService } from '@theia/ai-core';
+import { inject, injectable } from '@theia/core/shared/inversify';
+
+const MY_AGENT_ID = 'MyAgent';
+
+interface StaticSlashCommand {
+    name: string;
+    description: string;
+    template?: string;
+}
+
+@injectable()
+export class MySlashCommandsContribution {
+    @inject(PromptService)
+    protected readonly promptService: PromptService;
+
+    protected staticCommands: StaticSlashCommand[] = [
+        { name: 'clear', description: 'Clear the current session' },
+        { name: 'config', description: 'Open configuration' },
+        { name: 'help', description: 'Show help information', template: 'Provide help on: $ARGUMENTS' }
+    ];
+
+    onStart(): void {
+        this.registerStaticCommands();
+    }
+
+    protected registerStaticCommands(): void {
+        for (const command of this.staticCommands) {
+            this.promptService.addBuiltInPromptFragment({
+                id: `my-agent-slash-${command.name}`,
+                template: command.template || `/${command.name}`,
+                isCommand: true,
+                commandName: command.name,
+                commandDescription: command.description,
+                commandAgents: [MY_AGENT_ID]
+            });
+        }
+    }
+}
+```
+
+#### Argument Substitution
+
+- `$ARGUMENTS`: All arguments as a single string
+- `$1`, `$2`, `$3`, ...: Individual positional arguments
+
+Example:
+
+```typescript
+this.promptService.addBuiltInPromptFragment({
+    id: 'compare-command',
+    template: 'Compare and contrast $1 and $2 in detail.',
+    isCommand: true,
+    commandName: 'compare',
+    commandDescription: 'Compare two technologies',
+    commandArgumentHint: 'technology1 technology2',
+    commandAgents: [MY_AGENT_ID]
+});
+```
+
+## Custom Response Part Rendering
+
+Convert LLM responses into custom UI controls within the chat interface.
+
+### Develop a Reliable Prompt
+
+Example prompt for returning executable commands:
+
+````
+You are a service that helps users find commands to execute in an IDE.
+You reply with stringified JSON Objects that tell the user which command to execute and its arguments, if any.
+
+Example:
+
+```json
+{
+   "type": "theia-command",
+   "commandId": "workbench.action.selectIconTheme"
+}
+```
+
+Here are the known Theia commands:
+
+Begin List:
+{{command-ids}}
+End List
+````
+
+### Parse the Response and Transform into Response Content
+
+```typescript
+const parsedCommand = JSON.parse(jsonString) as ParsedCommand;
+const theiaCommand = this.commandRegistry.getCommand(parsedCommand.commandId);
+return new CommandChatResponseContentImpl(theiaCommand);
+```
+
+### Parse Parts of the Response into Different Response Contents
+
+```typescript
+@postConstruct()
+addContentMatchers(): void {
+    this.contentMatchers.push({
+        start: /^<question>.*$/m,
+        end: /^<\/question>$/m,
+        contentFactory: (content: string, request: ChatRequestModelImpl) => {
+            const question = content.replace(/^<question>\n|<\/question>$/g, '');
+            const parsedQuestion = JSON.parse(question);
+            return new QuestionResponseContentImpl(parsedQuestion.question, parsedQuestion.options, request, selectedOption => {
+                this.handleAnswer(selectedOption, request);
+            });
+        }
+    });
+}
+```
+
+### Create and Register a Response Part Renderer
+
+```typescript
+canHandle(response: ChatResponseContent): number {
+    if (isCommandChatResponseContent(response)) {
+        return 10;
+    }
+    return -1;
+}
+
+render(response: CommandChatResponseContent): ReactNode {
+    const isCommandEnabled = this.commandRegistry.isEnabled(response.command.id);
+    return (
+        isCommandEnabled ? (
+            <button className='theia-button main' onClick={this.onCommand.bind(this)}>{response.command.label}</button>
+        ) : (
+            <div>The command has the id "{response.command.id}" but it is not executable globally from the Chat window.</div>
+        )
+    );
+}
+
+private onCommand(arg: AIChatCommandArguments): void {
+    this.commandService.executeCommand(arg.command.id);
+}
+```
+
+Register the renderer:
+
+```typescript
+bind(ChatResponsePartRenderer).to(CommandPartRenderer).inSingletonScope();
+```
+
+## Managing the State of a Chat Response
+
+Chat responses have these states:
+
+- `isComplete: boolean`
+- `isWaitingForInput: boolean`
+- `isError: boolean`
+
+### Progress Messages
+
+```typescript
+const progressMessage = request.response.addProgressMessage({ content: 'Analyzing your request...', show: 'whileIncomplete' });
+// do your work
+request.response.updateProgressMessage({ ...progressMessage, show: 'whileIncomplete', status: 'completed' });
+```
+
+### Waiting for Input
+
+```typescript
+protected override async onResponseComplete(request: ChatRequestModelImpl): Promise<void> {
+    const unansweredQs = unansweredQuestions(request);
+    if (unansweredQs.length < 1) {
+        return super.onResponseComplete(request);
+    }
+    request.response.addProgressMessage({ content: 'Waiting for input...', show: 'whileIncomplete' });
+    request.response.waitForInput();
+}
+```
+
+## Custom LLM Provider
+
+Theia AI supports OpenAI-compatible services, Hugging Face, Ollama, and Llamafile out of the box.
+
+To implement a custom LLM provider:
+
+```typescript
+this.languageModelRegistry.addLanguageModels([new OllamaModel()]);
+```
+
+Implement the `LanguageModel` interface and register at `LanguageModelRegistry`.
+
+## GitHub Copilot Integration
+
+The `@theia/ai-copilot` package provides GitHub Copilot integration.
+
+### Default OAuth App Configuration
+
+The default configuration is intended for the Theia IDE only. Downstream products should register their own GitHub OAuth App.
+
+### Custom Authentication Setup
+
+```typescript
+rebind(CopilotOAuthConfig).toConstantValue({
+    clientId: 'your-github-oauth-app-client-id',
+    // optional: override OAuth endpoints
+});
+```
+
+Customize sign-in dialog messages:
+
+```typescript
+rebind(CopilotAuthDialogMessages).toConstantValue({
+    // custom messages
+});
+```
+
+### GitHub Enterprise Configuration
+
+Configure via preference:
+
+```
+ai-features.copilot.enterpriseUrl
+```
+
+### Disabling the Copilot Integration
+
+```
+ai-features.copilot.enabled: false
+```
+
+## Change Sets
+
+Change sets enable AI agents to propose changes for user review, acceptance, refinement, or decline.
+
+### Example Usage of Change Sets
+
+```typescript
+override async invoke(request: ChatRequestModelImpl): Promise<void> {
+    const fileToAdd = root.resource.resolve('hello/new-file.txt');
+    const fileToChange = // some file to change
+    const fileToDelete = // Some file to delete
+
+    const chatSessionId = request.session.id;
+    const changeSet = new ChangeSetImpl('My Test Change Set');
+    changeSet.addElement(
+        this.fileChangeFactory({
+            uri: fileToAdd,
+            type: 'add',
+            state: 'pending',
+            targetState: 'Hello World!',
+            changeSet,
+            chatSessionId
+        })
+    );
+
+    if (fileToChange && fileToChange.resource) {
+        changeSet.addElement(
+            this.fileChangeFactory({
+                uri: fileToChange.resource,
+                type: 'modify',
+                state: 'pending',
+                targetState: await this.computeTargetState(fileToChange.resource),
+                changeSet,
+                chatSessionId
+            })
+        );
+    }
+    if (fileToDelete && fileToDelete.resource) {
+        changeSet.addElement(
+            this.fileChangeFactory({
+                uri: fileToDelete.resource,
+                type: 'delete',
+                state: 'pending',
+                changeSet,
+                chatSessionId
+            })
+        );
+    }
+    request.session.setChangeSet(changeSet);
+    request.response.complete();
+}
+```
+
+### Custom Change Set Elements
+
+Implement the `ChangeSetElement` interface to manage domain-specific changes while leveraging existing review workflows.
+
+## Chat Suggestions
+
+Display contextual suggestions to guide users in the chat interface.
+
+### Callback-based Suggestions
+
+```typescript
+model.setSuggestions([
+    {
+        kind: 'callback',
+        callback: () => this.chatService.sendRequest(session.id, { text: '@Coder please look at src/docs/theia_ai.md and fix any problems.' }),
+        content: '[Fix problems](_callback) in the current file.'
+    },
+]);
+```
+
+### Command-based Suggestions
+
+```typescript
+model.setSuggestions([
+    new MarkdownStringImpl(`Keep chats short and focused. [Start a new chat](command:${AI_CHAT_NEW_CHAT_WINDOW_COMMAND.id}) for a new task`
+        + ` or [start a new chat with a summary of this one](command:${ChatCommands.AI_CHAT_NEW_WITH_TASK_CONTEXT.id}).`)
+]);
+```
+
+## Learn More
+
+- Introducing Theia AI: The Open Framework for Building AI-native Custom Tools and IDEs
+- Introducing the AI-powered Theia IDE: AI-driven coding with full Control
+- Watch the video: AI-Native Tools with Full Control: Theia AI & The AI-Powered Theia IDE In Action
+
+---
+
+**Last updated: May 18, 2026**

@@ -1,0 +1,120 @@
+---
+source_url: https://theia-ide.org/docs/extensions/
+fetched_at: 2026-07-10T00:00:00Z
+title: Extensions and Plugins - Eclipse Theia
+---
+
+# Extensions and Plugins - Complete Page Content
+
+## Overview
+
+Eclipse Theia supports four complementary extension mechanisms suited to different use cases:
+
+- **VS Code extensions**: Runtime-installable, compatible with VS Code, limited to VS Code API
+- **Theia extensions**: Compile-time installation, full API access, built for custom products
+- **Theia plugins**: Runtime-installable with frontend access, Theia-specific APIs
+- **Headless plugins**: Backend-only, runtime-installable, no frontend scope
+
+---
+
+## VS Code Extensions
+
+VS Code extensions represent the standard mechanism for extending functionality with new language support and features. These extensions access a defined, restricted API and can be pre-installed or installed at runtime.
+
+### Key Characteristics
+
+"VS Code extensions are simple to develop and they have access to a defined and restricted API."
+
+The Theia project maintains a coverage report documenting which VS Code APIs are supported. The default marketplace is the Open VSX registry.
+
+### Customizing the Extension Marketplace
+
+By default, Theia uses Open VSX for extension discovery. However, you can customize this behavior:
+
+```
+VSX_REGISTRY_URL environment variable
+```
+
+This allows pointing to custom registries, proxies, or caches to:
+- Limit external network traffic
+- Improve reliability for users
+- Support multiple registries via OVSX router
+
+**Related Documentation:**
+- VSX Registry package documentation
+- OVSX Client documentation
+- OVSX Router config example
+
+---
+
+## Theia Extensions
+
+Theia extensions are modules that reside within a Theia application and communicate directly with other modules through dependency injection.
+
+### Core Characteristics
+
+"A Theia extension is a module that resides inside a Theia application and directly communicates with other modules (Theia extensions)."
+
+The Theia project itself is composed entirely of Theia extensions. To create an application, you:
+
+1. Select core extensions from the Theia project
+2. Add custom Theia extensions
+3. Compile and run the result
+
+### Technical Details
+
+Extensions are npm packages that expose DI modules (`ContainerModule`) contributing to container creation. They're consumed as dependencies in `package.json` and installed at compile time.
+
+---
+
+## Theia Plugins
+
+Theia plugins extend VS Code extensions with Theia-specific functionality while maintaining similar architecture.
+
+### Key Differences from VS Code Extensions
+
+"Theia plugins can also directly contribute to the frontend while VS Code extensions are restricted to the backend."
+
+This enables direct UI manipulation without webview abstraction. However, Theia plugin support is currently under discussion, and the documentation recommends using VS Code extensions or Theia extensions instead.
+
+---
+
+## Headless Plugins
+
+Headless plugins run exclusively in the Node backend outside any frontend connection scope.
+
+### Use Cases
+
+These plugins suit extensibility scenarios involving:
+- CLI interactions without browser frontend
+- Extension of application-specific backend services
+- Custom backend service publishing
+
+"They are not provided with a default API for access to the backend Theia services but have access only to custom APIs published explicitly to them."
+
+---
+
+## Architecture Diagram
+
+The extension types operate at different levels:
+- VS Code extensions and Theia plugins run per frontend connection
+- Headless plugins run in a single backend process
+- Theia extensions integrate directly into the core application
+
+---
+
+## Navigation
+
+[← Getting Started](https://theia-ide.org/docs/user_getting_started/) | [Using AI Features →](https://theia-ide.org/docs/user_ai/)
+
+---
+
+## Community
+
+- [GitHub](https://github.com/eclipse-theia/theia)
+- [X/Twitter](https://x.com/theia_ide)
+- [About](https://projects.eclipse.org/projects/ecd.theia/)
+- [Privacy Policy](http://www.eclipse.org/legal/privacy.php)
+- [Terms of Use](http://www.eclipse.org/legal/termsofuse.php)
+
+© 2026 Eclipse Foundation

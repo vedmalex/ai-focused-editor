@@ -1,0 +1,184 @@
+---
+source_url: https://theia-ide.org/docs/composing_applications/
+fetched_at: 2026-07-10T00:00:00Z
+title: Build Your Own IDE/Tool - Complete Documentation
+---
+
+# Build Your Own IDE/Tool - Complete Documentation
+
+## Overview
+
+Theia provides a framework for creating custom IDE applications and tools. The platform supports two primary entry points for application development.
+
+## Entry Points
+
+**Theia Yeoman Generator**: Creates Theia-based applications with example extensions. Recommended for developers new to Theia.
+
+**Theia IDE**: A production-ready tool serving as a template for installable desktop applications with features like automatic updates and custom branding.
+
+## Requirements
+
+Prerequisites are documented in the main Theia repository, including Node.js version 18+ and yarn 1.7.0 or higher.
+
+## Architecture Overview
+
+Theia applications consist of modular npm packages called extensions. The platform is "independently developed with a modular architecture and is NOT a fork of VS Code." Key architectural points:
+
+- Reuse existing Theia extensions for common functionality
+- Integrate arbitrary VS Code extensions
+- Implement custom features through Theia or VS Code extensions
+
+## Project Structure
+
+The Yeoman generator creates a monorepo with this layout:
+
+```
+my-theia-app/
+├── browser-app/
+├── electron-app/
+├── hello-world/
+├── package.json
+└── lerna configuration
+```
+
+### Root Package.json Example
+
+The root configuration defines workspaces and build scripts:
+
+```json
+{
+  "private": true,
+  "engines": {
+    "yarn": ">=1.7.0 <2",
+    "node": ">=18"
+  },
+  "scripts": {
+    "build:browser": "yarn --cwd browser-app bundle",
+    "build:electron": "yarn --cwd electron-app bundle",
+    "start:browser": "yarn --cwd browser-app start",
+    "start:electron": "yarn --cwd electron-app start",
+    "watch:browser": "lerna run --parallel watch --ignore electron-app",
+    "watch:electron": "lerna run --parallel watch --ignore browser-app"
+  },
+  "devDependencies": {
+    "lerna": "2.4.0"
+  },
+  "workspaces": [
+    "hello-world", "browser-app", "electron-app"
+  ]
+}
+```
+
+## Browser Application Setup
+
+To create a browser-based Theia app:
+
+```bash
+npm install -g yo generator-theia-extension
+mkdir my-theia-app
+cd my-theia-app
+yo theia-extension
+```
+
+The browser-app package.json includes core Theia extensions:
+
+```json
+{
+  "private": true,
+  "name": "browser-app",
+  "version": "0.0.0",
+  "dependencies": {
+    "@theia/core": "latest",
+    "@theia/editor": "latest",
+    "@theia/filesystem": "latest",
+    "@theia/markers": "latest",
+    "@theia/messages": "latest",
+    "@theia/monaco": "latest",
+    "@theia/navigator": "latest",
+    "@theia/preferences": "latest",
+    "@theia/process": "latest",
+    "@theia/terminal": "latest",
+    "@theia/workspace": "latest",
+    "hello-world": "0.0.0"
+  },
+  "scripts": {
+    "bundle": "yarn rebuild && theia build --mode development",
+    "start": "theia start",
+    "watch": "yarn rebuild && theia build --watch --mode development"
+  },
+  "theia": {
+    "target": "browser"
+  }
+}
+```
+
+### Running the Browser Application
+
+```bash
+yarn build:browser
+yarn start:browser
+```
+
+Access the application at `http://localhost:3000`. The generated hello-world extension provides a test command accessible via F1 (Quick Access).
+
+## Electron Application
+
+The electron-app configuration mirrors the browser setup with different target specification:
+
+```json
+{
+  "name": "electron-app",
+  "theia": {
+    "target": "electron"
+  }
+}
+```
+
+### Running Electron
+
+```bash
+yarn build:electron
+yarn start:electron
+```
+
+## Bundler Selection: Webpack vs esbuild
+
+The CLI supports two bundlers:
+
+- **Webpack**: Default bundler (being deprecated)
+- **esbuild**: Approximately ten times faster; recommended for new projects
+
+To migrate to esbuild, delete the `webpack.config.js` file. The build system will automatically generate an `esbuild.mjs` configuration on the next build.
+
+For full migration instructions, see the ESBuild section in the Theia Migration Guide.
+
+## Next Steps
+
+After initial setup, typical development activities include:
+
+1. Extending applications with additional Theia extensions
+2. Integrating VS Code extensions
+3. Creating deployable products for desktop or browser deployment
+
+## Troubleshooting
+
+### Native Dependencies Behind Proxy
+
+When building native dependencies (like oniguruma) behind a proxy fails with node-gyp errors:
+
+```bash
+npm_config_tarball=/path/to/node-headers.tar.gz yarn install
+```
+
+Download the appropriate node-headers file from the URL provided in the error message and pass it to yarn via the environment variable above.
+
+## Additional Resources
+
+- [Theia Extension Authoring Documentation](/docs/authoring_extensions/)
+- [VS Code Extension Integration Guide](/docs/authoring_vscode_extensions/)
+- [Extension Mechanisms Reference](/docs/extensions/)
+- [Theia API Documentation](/docs/theia_api_documentation/)
+
+---
+
+**Last Updated**: June 12, 2026

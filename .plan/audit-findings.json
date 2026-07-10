@@ -1,0 +1,571 @@
+{
+  "confirmed": [
+    {
+      "area": "Manuscript workspace, tree, manifest (spec §4, §5.",
+      "title": "Manuscript tree is read-only: FR-004 drag/drop moves + manifest-order editing are entirely unimplemented",
+      "kind": "gap",
+      "severity": "high",
+      "file": "packages/manuscript-workspace/src/common/manuscript-workspace-protocol.ts",
+      "detail": "FR-004 is MVP-Core and explicitly demands 'drag/drop moves' and 'manifest-backed ordering' persisted through a 'controlled drag/drop controller' (spec §6 FR-004, §5.1 'manifest sync, conflict-safe moves', §7 'Files, folders and manifest order are edited through services', Appendix A 'state-consistent drag/drop'). The implementation delivers only the read path: ManuscriptWorkspaceService/ManuscriptWorkspaceBackendService expose just getSnapshot()/refresh() (manuscript-workspace-protocol.ts:42-50); ManuscriptTreeWidget (manuscript-tree-widget.ts:22-60) is a plain TreeWidget with no drag/drop, and there is no move/reorder/create/delete/include-toggle command (manuscript-workspace-contribution.ts:50-133 registers only validate/improve/consistency/copy-context/verify). A repo-wide grep for drag|drop|move|reorder|writeManifest finds no manifest mutation anywhere. The single most-visible 'writing cockpit' interaction the MVP promises does not exist.",
+      "suggestion": "Add a backend mutation surface to ManuscriptWorkspaceBackendService (e.g. moveNode(rootUri, sourcePath, targetPath, position) / setBuildInclusion / createNode / deleteNode) that re-serializes manifest.yaml deterministically. On the frontend, implement DnD by overriding the TreeWidget drag-handler methods (handleDragStartEvent/handleDragEnterEvent/handleDragOverEvent/handleDropEvent/getDropTargetDirNode), mirroring @theia/filesystem's FileTreeWidget, rather than a nonexistent 'TreeDragAndDropController' class — Theia core has no such interface. Have the drop handler call the backend mutation, use @theia/filesystem FileService.move for the physical file move (conflict-safe), then re-fetch the snapshot via ManuscriptTreeModel.refreshWorkspace() so ordering derives from the manifest, never DOM order (per §7 line 337). Register corresponding move/reorder/toggle-inclusion commands + context menu."
+    },
+    {
+      "area": "Manuscript workspace, tree, manifest (spec §4, §5.",
+      "title": "Duplicate manifest paths produce colliding tree-node ids with no diagnostic",
+      "kind": "bug",
+      "severity": "low",
+      "file": "packages/manuscript-workspace/src/node/node-manuscript-workspace-service.ts",
+      "detail": "FR-004 requires the tree be free of 'duplicate file entries'. manifestEntryToNode (node-manuscript-workspace-service.ts:147-213) emits a node with id=path for every entry and never checks whether a path already appeared. The tree item factory then derives the Theia node id as `manuscript:${manuscript.path}` (manuscript-tree-item-factory.ts:33,50). If manifest.yaml lists the same path twice (a common hand-edit or bad merge), two nodes share one id — Theia's TreeImpl keys its node map by id, so one silently overwrites the other and selection/refresh misbehave. The manifest schema (yaml-schema-validator.ts:21-48) also has no uniqueItems/duplicate constraint.",
+      "suggestion": "Track seen paths during scan and push a 'warning' WorkspaceDiagnostic for duplicates (skip the second occurrence), and/or add a uniqueItems-by-path check in the manifest schema so the problem surfaces in Theia Problems before it corrupts the tree."
+    },
+    {
+      "area": "Manuscript workspace, tree, manifest (spec §4, §5.",
+      "title": "Nested manuscript folders are not reconciled with disk; orphan files invisible and no auto-expand of on-disk dirs",
+      "kind": "gap",
+      "severity": "low",
+      "file": "packages/manuscript-workspace/src/node/node-manuscript-workspace-service.ts",
+      "detail": "Spec §4.1 shows nested content (content/part-01/chapter-02.md) and FR-004 requires 'nested structure ... without phantom' entries. A manifest folder entry only renders its explicitly-declared children (node-manuscript-workspace-service.ts:197-199); if a manifest entry points to a real directory but omits `children`, the folder shows empty, and files that exist on disk but are missing from the manifest are neither shown nor reported as orphans. Only the whole-manifest-empty fallback (lines 89-91) scans the directory. There is no reconciliation between manifest declarations and actual filesystem content, so users get a silently incomplete tree.",
+      "suggestion": "Keep it scoped as a robustness/UX enhancement, not a correctness fix: when a manifest entry resolves to a directory, scan it and emit an info/warning WorkspaceDiagnostic listing on-disk .md files not declared in the manifest (and optionally flag a manifest folder entry that has no `children` and a non-empty backing directory). Do NOT auto-merge orphans as visible tree nodes by default, since that contradicts the §4.2 manifest-as-source-of-truth model; if surfaced at all, gate it behind an explicit opt-in. The existing missing-file error path (lines 187-195) already covers the reverse direction, so this only adds the orphan-detection half."
+    },
+    {
+      "area": "Semantic Markdown editing, decorations, hover, pre",
+      "title": "Semantic parsing runs synchronously on the UI thread on every keystroke (three independent full-document re-parses), violating §9/§3.4 offload rule",
+      "kind": "bug",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/semantic-markdown-decoration-service.ts",
+      "detail": "The decoration service parses the whole document on every content change: `onDocumentContentChanged(() => this.updateDecorations(editor))` (line 44) calls `parseSemanticMarkdown(editor.document.getText())` (lines 61-62) with no debounce. The preview widget does the same independently (semantic-markdown-preview-widget.ts:64 -> updatePreview -> parseSemanticMarkdown at line 70 AND renderSemanticMarkdownPreview at 71), and the DocumentSymbolProvider re-parses the full model on each outline request (semantic-markdown-document-symbol-provider.ts:26). So a single keystroke triggers up to three separate full-document scans on the frontend UI thread. Spec §9 is explicit: 'Парсинг больших файлов, валидация YAML и семантического Markdown не должны выполняться синхронно во Frontend-модуле'; §3.4 mandates an LSP for exactly this. The target users are long-form manuscript writers, so large single files are the expected case.",
+      "suggestion": "Near-term: add a 150-250ms debounce on onDocumentContentChanged and compute a single parse per document version, cached and shared by decorations, preview, and the DocumentSymbolProvider (keyed by editor/model version) to eliminate the redundant scans. Spec-aligned target (§9/§3.4): move semantic-Markdown parsing/validation to the already-wired backend RPC or a dedicated LSP server so the UI thread is not blocked, keeping the DocumentSymbolProvider as the outline surface but sourcing its symbols from the offloaded parse."
+    },
+    {
+      "area": "Semantic Markdown editing, decorations, hover, pre",
+      "title": "No semantic-tag autocompletion, contradicting the explicit §3.4 requirement",
+      "kind": "gap",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-workspace-frontend-module.ts",
+      "detail": "Spec §3.4 explicitly requires 'автодополнение семантических тегов ([[char:...]])'. No CompletionItemProvider is registered anywhere (grep for registerCompletionItemProvider / CompletionItemProvider across packages returns nothing). Only a DocumentSymbolProvider is wired (frontend-module.ts:126). Typing `[[char:` offers no id suggestions from the existing entity set, so authors must remember/copy ids by hand — the exact friction the spec's semantic layer is meant to remove.",
+      "suggestion": "Register a completion provider for `[[kind:id|label]]` semantic tags reading ids/labels from NarrativeEntityService, mirroring the existing SemanticMarkdownDocumentSymbolProvider (monaco.languages.registerDocumentSymbolProvider at semantic-markdown-document-symbol-provider.ts:12) — i.e. a monaco.languages.registerCompletionItemProvider on markdown triggered by '[', ':', '|', bound as a FrontendApplicationContribution in manuscript-workspace-frontend-module.ts alongside line 126. Note: spec §3.4 nominally wants this on a dedicated LSP server ('для разгрузки UI-потока'); the frontend-monaco approach matches how the sibling DocumentSymbolProvider was already implemented, so it is acceptable as an interim, but a follow-up may be warranted if/when the §3.4 LSP server (linting + YAML validation) is built, to keep all three capabilities co-located off the UI thread."
+    },
+    {
+      "area": "Theia AI integration (spec §3.5, §5.3, FR-008/009/",
+      "title": "Chat LanguageModel is non-streaming; whole response appears at once",
+      "kind": "gap",
+      "severity": "low",
+      "file": "packages/manuscript-workspace/src/browser/ai-connect-theia-language-model.ts",
+      "detail": "request() always returns a LanguageModelTextResponse ({text,usage}) via aiConnection.generate() (lines 44-68). The Theia response union supports LanguageModelStreamResponse, and @vedmalex/ai-connect exposes a streaming API (dist/types/types.d.ts:1509 `stream(request): AsyncIterable<GenerateStreamEvent>`), but neither AiConnectionService (common/ai-connection-protocol.ts:55-58, generate-only) nor this model uses it. For a long-form writing assistant the chat message pops in only after the full generation completes — the single most visible AI-UX regression versus the reference theia-ide, which streams tokens.",
+      "suggestion": "Track as a UX enhancement, not a defect: streaming is not required by spec.md and returning a LanguageModelTextResponse is a valid implementation of Theia's LanguageModel interface. If prioritized for long-form writing UX, add a generateStream path to AiConnectionService backed by ai-connect's stream() (types.d.ts:1509), adapting GenerateStreamEvent -> LanguageModelStreamResponsePart and returning { stream } from request(); account for streaming across the Theia RPC boundary (LocalAiConnectionServicePath) and fall back to the existing text path when the transport can't stream."
+    },
+    {
+      "area": "Theia AI integration (spec §3.5, §5.3, FR-008/009/",
+      "title": "Improve Selected: Accept/Reject is a transient notification, not the native Change Set review panel",
+      "kind": "bug",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-workspace-contribution.ts",
+      "detail": "createImproveSelectionChangeSetElement (lines 290-311) builds a ChangeSetFileElement with a hard-coded chatSessionId 'ai-focused-editor-improve-selection' that corresponds to no real ChatSession, and the element is never added to a session.changeSet. Accept/Reject is surfaced only through a MessageService.info popup with three buttons (lines 245-259). If the notification auto-dismisses or the user clicks away, the proposed change is unrecoverable and there is no persistent per-element Accept/Reject/Accept-all surface — which is exactly the native Change Set UX FR-009 and §9 (\"Change Sets over Clipboard\") demand. The diff preview and apply() are native, but the review lifecycle is not.",
+      "suggestion": "Route Improve Selected through @theia/ai-chat's ChatService: obtain or create a ChatSession, then call session.model.changeSet.addElements(changeSetElement) so the standard Change Set widget renders the element with native Accept/Reject/Accept-all controls and a persistent review surface. Replace the hard-coded chatSessionId with the real session id. Keep openChange()/apply() (already native) but drop the MessageService.info three-button workaround as the primary review surface (a notification may still be used as a non-authoritative pointer to the Change Set panel)."
+    },
+    {
+      "area": "Theia AI integration (spec §3.5, §5.3, FR-008/009/",
+      "title": "AI commands (incl. Improve Selected) are absent from the editor context menu and live in an orphaned submenu",
+      "kind": "bug",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-workspace-contribution.ts",
+      "detail": "ManuscriptWorkspaceMenuContribution registers a submenu at path ['ai-focused-editor'] (lines 496-497) that is never attached to a rendered root (MAIN_MENU_BAR, EDITOR_CONTEXT_MENU, etc.), so Validate/Improve Selected/Check Consistency/Copy Context/Verify Profile are reachable only via the command palette. FR-009 explicitly names \"Editor context-menu contribution\" for Improve Selected. The correct pattern already exists in the repo: semantic-markdown-actions-contribution.ts:95 uses [...EDITOR_CONTEXT_MENU, ...EditorContextMenu.MODIFICATION].",
+      "suggestion": "Register IMPROVE_SELECTION (and, per FR-009 context-menu intent, COPY_MANUSCRIPT_CONTEXT) under [...EDITOR_CONTEXT_MENU, ...EditorContextMenu.MODIFICATION], mirroring semantic-markdown-actions-contribution.ts:95. Additionally, attach the shared 'AI Focused Editor' submenu under a real rendered root (e.g. under MAIN_MENU_BAR via CommonMenus) so Validate/Check Consistency/Verify Profile become discoverable rather than living on an orphan registry root reachable only through the command palette."
+    },
+    {
+      "area": "Theia AI integration (spec §3.5, §5.3, FR-008/009/",
+      "title": "\"Append-only\" history is a non-atomic read-modify-write with a data-loss race",
+      "kind": "bug",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/ai-history-service.ts",
+      "detail": "appendJsonl (lines 46-52) reads the entire day file, concatenates one line, and writes the whole file back via fileService.write. This is not an atomic append: two concurrent appends (e.g. a chat call firing while Improve Selected logs a context snapshot, or streaming multiple sub-requests) read the same baseline and the second write clobbers the first record. It also rewrites O(n) bytes per event, so a long session's file grows quadratically in I/O. This undermines the append-only provenance guarantee of §5.3/§9.",
+      "suggestion": "Move history persistence to a node backend service exposed over JSON-RPC that uses fs.appendFile (or an O_APPEND stream) so writes are true appends — O(1) and not subject to read-modify-write clobbering — which also satisfies the spec §9 \"offload to backend\" rule. If a backend service is out of scope short-term, at minimum serialize appends behind a per-file in-flight promise chain in AiHistoryService so concurrent appendJsonl calls to the same day file cannot both read the same baseline. Note the claim's context-snapshot-vs-chat example does not actually collide (different files); the real collision case is concurrent appendChatEvent calls to the same ai/chat/<date>.jsonl."
+    },
+    {
+      "area": "Theia AI integration (spec §3.5, §5.3, FR-008/009/",
+      "title": "LanguageModel ignores tools, response_format, reasoning and cancellationToken",
+      "kind": "gap",
+      "severity": "low",
+      "file": "packages/manuscript-workspace/src/browser/ai-connect-theia-language-model.ts",
+      "detail": "request() (lines 44-68) forwards only messages+settings; request.tools (ToolRequest[]), response_format, reasoning, and request.cancellationToken are dropped. Consequently the Manuscript agent cannot invoke tools/function calls (spec §3.5 marks ToolProvider as future, so acceptable), but the dropped cancellationToken also means an in-flight chat request cannot be cancelled from the chat UI — a real UX gap for long generations. tool_use/tool_result inbound messages are string-serialized into assistant/tool text (lines 90-114), which will not round-trip a real tool loop.",
+      "suggestion": "Keep the cancellation point but scope it correctly: to support Stop-in-chat you must (1) add an optional cancellation/abort parameter to AiConnectionService.generate and its LocalAiConnectionService RPC implementation, then (2) thread request.cancellationToken (and the request()'s own second cancellationToken arg) through to it. Drop the tools/response_format/reasoning parts from the finding: tools/response_format are spec-future (§3.5) and reasoning is correctly ignored because the model declares no reasoningSupport. Defer tool-call mapping to when ToolProvider is prioritized."
+    },
+    {
+      "area": "Provider/model configuration + ai-connect service ",
+      "title": "API keys stored as plaintext Folder-scope preferences instead of the secure-secret adapter FR-013 requires",
+      "kind": "gap",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/ai-focused-editor-preferences.ts",
+      "detail": "AI_FOCUSED_EDITOR_AI_API_KEY is a plain 'string' preference (ai-focused-editor-preferences.ts:29-33) in a Folder-scope schema (line 17), and model-config-widget.ts saves it via PreferenceScope.Folder (saveDraft line 258, setPreference line 271). Folder-scope preferences persist to the workspace's .theia/settings.json in cleartext. FR-013 explicitly names a 'secure-secret adapter', and Theia ships one: @theia/core/lib/browser/credentials-service (CredentialsService, keytar/key-store backed, verified present in node_modules). The current design leaks the key to disk (and in a cloud/browser deployment, to server-side settings). .gitignore covers the sample repo's .theia/ but an arbitrary opened book folder has no such protection.",
+      "suggestion": "Keep the finding. Downgrade to medium: the exposure is the user's own provider key on their own machine, the code self-documents the MVP interim decision, and this repo's .theia/ is gitignored. The concrete real risk is that an arbitrary opened book folder's .theia/settings.json is not covered by any gitignore (accidental commit into the manuscript repo) and, in cloud/browser deployment, the key lands in server-side settings. Fix by storing the secret through @theia/core CredentialsService (setPassword/getPassword under a service key like 'ai-focused-editor.ai' with profileId as account) and keeping only a non-secret hasApiKey marker in Folder-scope preferences; AiProfilePreferenceService.getStatus/getConfiguredProfile should fetch the secret from CredentialsService at request time."
+    },
+    {
+      "area": "Provider/model configuration + ai-connect service ",
+      "title": "ModelProviderRegistry (spec §3.3 core service, FR-013 alias/failover) is declared but never implemented — multi-profile support absent",
+      "kind": "gap",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/common/model-provider-protocol.ts",
+      "detail": "model-provider-protocol.ts declares ModelProviderRegistry with listAliases()/getActiveAlias(), and it is exported via common/index.ts:7, but a repo-wide search finds zero bindings and zero consumers — it is dead code. The whole config surface is a single flat profile in preferences (aiFocusedEditor.ai.*, ai-focused-editor-preferences.ts:7-13). FR-013 (MVP-Core) explicitly requires 'aliases, failover chains, allowed model lists' and v1 supported multiple named profiles; none of that exists in v3. This is both a spec-service gap (§3.3 names ModelProviderRegistry as a core service) and an FR-013 scope gap.",
+      "suggestion": "Track as two separable items. (1) Code-hygiene (low): either remove the unused ModelProviderRegistry interface/export or annotate it as a Phase-3 stub so it isn't shipped as dead exported surface. (2) Scope (medium, post-MVP unless needed as a proof): when implementing full FR-013, back named profiles with a PreferenceContribution array (per-alias enabled flag + ordered failover chain), implement ModelProviderRegistry over it, and have AiConnectionService resolve the active alias and walk the failover chain. Do not treat full alias/failover as an MVP blocker — the MVP explicitly requires only minimal provider config through a service boundary, which AiConnectionService already provides."
+    },
+    {
+      "area": "Book build/export + Task integration (spec §5.5, F",
+      "title": "Nested parts are silently flattened — part titles dropped, TOC has no hierarchy",
+      "kind": "gap",
+      "severity": "low",
+      "file": "packages/manuscript-workspace/src/node/node-book-build-service.ts",
+      "detail": "manifestEntryToSources treats a directory entry with children by recursing over children (310-317) but never emits the part itself: the entry's `title` (e.g. \"Part One\") is discarded and no part heading is produced. Both compiled outputs and the TOC are strictly flat (renderMarkdown:137-139, renderHtml:182-187 iterate a flat includedSources list). Spec §4.2 requires the manifest to represent 'hierarchical content order' and §5.5 requires TOC generation; the manuscript-workspace protocol itself models nesting (manuscript-workspace-protocol.ts:15 children?: ManuscriptNode[]). A book authored as Parts→Chapters loses all part structure on export with no diagnostic.",
+      "suggestion": "At minimum, emit a warning diagnostic when a manifest part entry's title is dropped on export so the loss is not silent. Optionally (Post-MVP polish), carry manifest hierarchy into a node tree and render part headings plus a nested TOC. Note that spec §4.2/§5.5 do not actually require nested export rendering, so this is an enhancement to a deliberately first-pass Markdown export rather than a spec-conformance fix."
+    },
+    {
+      "area": "Book build/export + Task integration (spec §5.5, F",
+      "title": "Anchor/slug generation collapses all non-Latin/non-Cyrillic titles to 'section' — broken TOC + duplicate ids for the translator audience",
+      "kind": "bug",
+      "severity": "high",
+      "file": "packages/manuscript-workspace/src/node/node-book-build-service.ts",
+      "detail": "slugify (481-487) whitelists only `[a-z0-9а-яё]`; every other script is stripped. A Devanagari/Sanskrit/Chinese/Arabic/Greek title (this is a Bhagavad-Gita-themed sample, and the product is explicitly for translators) reduces to '' → the fallback 'section'. Two such chapters both get id=\"section\" (HTML section id at :195, duplicate `id` attributes) and both TOC links point to `#section` (:185, :138). For a translated manuscript with N non-Latin chapter titles, the TOC is entirely non-functional and HTML has N duplicate ids.",
+      "suggestion": "Replace the ASCII/Cyrillic-only whitelist with Unicode-aware slugging and add collision-free deduplication. Concretely: slug = title.toLowerCase().normalize('NFKC').replace(/[^\\p{L}\\p{N}\\s-]/gu, '').trim().replace(/\\s+/g, '-') (u flag + \\p{L}\\p{N} keeps all scripts). Then dedupe by threading a Set (or Map<string,count>) through renderHtml/renderMarkdown: when a slug repeats, append -2, -3, …; fall back to 'section' only when the slug is genuinely empty, and dedupe that fallback too (section, section-2). Compute the slug once per chapter and reuse the identical value for both the anchor id (line 195) and the TOC href (lines 185 and 138) so they always match. Optionally transliterate to ASCII for broader anchor portability, but Unicode ids are valid in HTML5 and sufficient.</parameter>\n</invoke>\n"
+    },
+    {
+      "area": "Book build/export + Task integration (spec §5.5, F",
+      "title": "Diagnostics-before-export gate ignores the product's own semantic-Markdown content diagnostics",
+      "kind": "gap",
+      "severity": "low",
+      "file": "packages/manuscript-workspace/src/node/node-book-build-service.ts",
+      "detail": "The build service imports only fs/path/markdown-it/yaml (lines 1-6) and its gate (79-81, 99-101) fires only on structural problems (missing/invalid manifest, missing chapter files). The workspace already produces semantic-Markdown diagnostics (malformed/unclosed [[kind:id|label]] tags — PROGRESS.md:83-84) but the build never runs them, so a manuscript full of broken semantic tags exports as a clean success. Spec §5.5 'Build diagnostics before export' reads as a content pre-flight, not just a file-existence check.",
+      "suggestion": "Treat this as a low-priority consistency improvement rather than an export-integrity bug. If pursued, reuse the existing validateSemanticMarkdown over each included chapter's text inside build() and fold results into the diagnostics array. Preserve the parser's native 'error' severity for malformed/unclosed tags (do not silently downgrade to warnings) OR gate blocking behavior behind an explicit strict/preference toggle so the build task's pass/fail matches the 'Validate Manuscript Workspace' command. Note that the diagnostics already surface via that command and the Problems panel, so the primary benefit is making the build task self-consistent, not exposing otherwise-hidden problems."
+    },
+    {
+      "area": "Narrative knowledge + sources/citations (spec §5.2",
+      "title": "Entity card knowledge never reaches editor hovers (data exists but is ignored)",
+      "kind": "gap",
+      "severity": "low",
+      "file": "packages/manuscript-workspace/src/browser/semantic-markdown-decoration-service.ts",
+      "detail": "The core value proposition of §5.2 (\"Terms/glossary with tooltip rendering\") and FR-006 (\"editor hover providers\") is unrealized. deltaDecorations hoverMessage at semantic-markdown-decoration-service.ts:63-69 is built purely from the parsed tag: `Character: krishna -> Кришна`. It never looks up the matching NarrativeEntity, so the writer sees none of the card's summary, aliases, or (future) backstory when hovering `[[char:krishna|Он]]` in the manuscript. NarrativeEntityService (browser-narrative-entity-service.ts) already loads exactly this data but is consumed only by the side-panel EntityCardsWidget (entity-cards-widget.ts:25). The whole point of semantic tags — transparent entity knowledge inline in the text — is missing.",
+      "suggestion": "Track as a deferred FR-006 (MVP-Thin) enhancement, not a defect. When implemented, register a proper Monaco hover provider (mirroring the existing semantic-markdown-document-symbol-provider.ts pattern: monaco.languages.registerHoverProvider('markdown', ...)) rather than inflating the decoration tooltip, so it resolves on-demand and can render rich Markdown (label, aliases, summary) by injecting the already-bound NarrativeEntityService and indexing entities by kind+id. Note the current tag-derived decoration hover already satisfies the MVP-Core FR-005 'visible semantic markup' requirement, so this is additive, not corrective."
+    },
+    {
+      "area": "Architectural rules compliance (spec §3.2, §3.3, §",
+      "title": "Backend migration is half-done: entity/source/ai-mode/context services parse YAML on the frontend UI thread",
+      "kind": "bug",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-ai-context-assembler.ts",
+      "detail": "Spec §3.2 assigns metadata/manifest parsing and indexing to the backend, and §9 forbids synchronous YAML/semantic parsing in the frontend module. Workspace *validation* was moved to the backend (node-manuscript-workspace-service.ts:94-95 validates entities/characters + entities/terms), but four frontend services still open files via @theia/filesystem FileService and run yaml.parse on the UI thread: browser-narrative-entity-service.ts:5,160; browser-ai-mode-registry.ts:4,186; browser-source-library-service.ts:4,178; manuscript-ai-context-assembler.ts:5,117-123. Entity YAML is therefore parsed in three places (backend validation + frontend entity cards + frontend context assembler) with no shared backend read service. This both duplicates domain logic and violates the offload rule; large entity/source sets will block the renderer.",
+      "suggestion": "Introduce backend RPC read services (NodeNarrativeEntityService / NodeSourceLibraryService / NodeAiModeRegistry) or fold entity/source/ai-mode reads into the existing ManuscriptWorkspaceBackendService snapshot, then make the four browser services thin RPC proxies mirroring BrowserManuscriptWorkspaceService's existing delegation. Have ManuscriptAiContextAssembler consume the backend snapshot instead of independently re-reading entities/characters and entities/terms, eliminating the third parse site. Note in the finding that current renderer-blocking risk is bounded by the 30/20 file caps, so this is primarily an architecture-conformance (§9/§3.2) and duplication fix rather than an urgent perf bug."
+    },
+    {
+      "area": "Architectural rules compliance (spec §3.2, §3.3, §",
+      "title": "Append-only AI history runs in the frontend with a non-atomic read-modify-write per append",
+      "kind": "bug",
+      "severity": "low",
+      "file": "packages/manuscript-workspace/src/browser/ai-history-service.ts",
+      "detail": "§3.2 lists 'append-only history' as a backend responsibility, but AiHistoryService lives in browser/ and, worse, is not actually append-only at the storage layer: appendJsonl reads the entire day's JSONL file, concatenates one line, and rewrites the whole file (lines 46-51: `await this.fileService.write(fileUri, `${existing}${line}`)`). Two overlapping appends (e.g. an Improve-Selected and a context-snapshot fired together) race on read → last write wins → lost history events; and cost is O(file size) per append. This is exactly the provenance log the spec calls 'inspectable/append-only'.",
+      "suggestion": "Keep this as a valid architecture-boundary cleanup, not a data-loss bug. Move history writing to a backend RPC service (mirror node-book-build-service.ts) that opens the daily JSONL in fs append mode, satisfying spec §3.2 (backend append-only history) and line 404 (offload via RPC); this also removes the O(file size)-per-append rewrite. Correct the finding's race example: chat and context-snapshot go to separate files and cannot collide — the only real race is two same-kind events on the same day, and it is best-effort provenance logging wrapped in try/catch, so no user content is lost. If a full backend move is deferred, serialize appends through a per-file promise queue in AiHistoryService as an interim guard."
+    }
+  ],
+  "refuted": [
+    {
+      "area": "Semantic Markdown editing, decorations, hover, pre",
+      "title": "Hover shows only static tag text, not the entity card (§4.3/FR-005/FR-006) although entity data is already available",
+      "why": "The code facts are all accurate (static decoration hoverMessage on line 67, zero HoverProvider registrations, NarrativeEntityService already exposes summary/aliases), but the claim overstates the spec requirement and mischaracterizes PROGRESS.md, so it is not an actionable defect against current scope.\n\n1) Spec scope: Surfacing character/term ENTITY CARDS via \"editor hover providers\" is FR-006 (\"Character and glossary knowledge base\"), which the spec explicitly places OUT of the first MVP. spec.md line 286 marks FR-006 MVP-Thin, line 346 states \"Explicitly out of first MVP unless needed as a technical proof: FR-006...\", and line 232 lists tooltips/cards under the \"Narrative knowledge system\" (§5.2), not the editor MVP. The claim leans on FR-006 to manufacture an unmet requirement for a feature the spec deliberately defers.\n\n2) FR-005 (MVP-Core, §4.3) lists \"hovers\"/\"hover providers\" as an available editor SURFACE, not a mandate that hovers must render full entity cards. A Monaco decoration `hoverMessage` DOES produce a hover tooltip on mouseover — so FR-005's \"hovers\" surface is genuinely present. The distinction the claim draws (\"no registerHoverProvider\") is an implementation-mechanism nitpick; the user-visible \"hover shows tag info\" requirement of FR-005 is satisfied. §4.3 lists decorations, hover providers, preview widgets and quick actions as parallel available mechanisms, not a checklist each of which must carry the entity card.\n\n3) The \"PROGRESS.md overstates it\" charge is itself inaccurate. Line 40 reads precisely \"Semantic tag hover text through Theia editor decoration hover messages\" — it explicitly scopes itself to *decoration hover messages* and never claims entity cards. It is an honest, narrow description, not an overstatement.\n\n4) The suggested fix (registerHoverProvider resolving entities via getSnapshot with char->character mapping and a MarkdownString card) is technically sound in Theia/Monaco and would be a fine post-MVP enhancement for FR-006 — but it implements a deferred feature, not a bug fix. There is no correctness defect: nothing is broken, mislabeled, or spec-violating for the current MVP cut.\n\nNet: real code observation, but exaggerated into an unmet-requirement/documentation-honesty finding for a feature (FR-006 entity cards) the spec explicitly excludes from the MVP. Not actionable as stated."
+    },
+    {
+      "area": "Semantic Markdown editing, decorations, hover, pre",
+      "title": "Semantic validation is a manual command only (no live diagnostics) and never checks referential integrity of tag ids",
+      "why": "The finding's two factual observations are accurate: (1) validateSemanticMarkdown (semantic-markdown.ts:72-112) only checks syntactic well-formedness (unclosed `]]` and non-matching `[[kind:id|label]]`), and (2) it is invoked only from the backend scanRoot path (node-manuscript-workspace-service.ts:316, via validateMarkdownNodes:302) which the browser side triggers only through the explicit VALIDATE_WORKSPACE command (manuscript-workspace-contribution.ts:115-116, results pushed via ProblemManager.setMarkers:468). There is no onDidChangeContent/onDidSave/debounce wiring, so no on-type diagnostics. However, the claim's core assertion — that this is a defect / an unmet spec requirement — is refuted on the spec:\n\n1. FR-018 requires \"YAML validation and Markdown linting with semantic syntax support WITHOUT BLOCKING THE EDITOR UI THREAD\" — it does NOT require live/on-type diagnostics. The current design offloads validation to a backend Node service over RPC, which satisfies \"without blocking the UI thread.\" Spec §design-principle line 404 EXPLICITLY permits this: \"валидация ... не должны выполняться синхронно во Frontend-модуле. Используйте Language Servers ИЛИ RPC.\" So \"FR-018 is met only as a batch command, not as live LSP\" mischaracterizes the requirement — RPC is an accepted, spec-blessed alternative to LSP, and \"live feedback\" is nowhere mandated. FR-018 is MVP-Thin (\"allowed only as a minimal slice\").\n\n2. Referential integrity of entity references (flagging `[[char:unknown|X]]` against known ids) is the substance of FR-010 \"AI consistency and coreference analysis ... identify pronoun/entity references\", which the spec explicitly tags **Post-MVP** (\"validated product feature, not part of the first Theia MVP\"). So the \"highest-value check is missing\" is not a current-scope gap — it is deliberately out of the MVP slice.\n\n3. Both gaps are honestly documented: PROGRESS.md:124 logs the LSP/incremental-validation decision as a [Review] item, and FR-010 is scheduled Post-MVP. The auditor even acknowledges the PROGRESS.md note.\n\nThus the claim describes deliberately-deferred future scope, not a defect or spec violation. NarrativeEntityService does exist and can enumerate ids (getSnapshot(): NarrativeEntitySnapshot with entities[]), so the suggested fix is technically feasible in Theia (marker plumbing via ProblemManager already exists), but implementing it now builds Post-MVP (FR-010) scope ahead of schedule rather than fixing a bug."
+    },
+    {
+      "area": "Theia AI integration (spec §3.5, §5.3, FR-008/009/",
+      "title": "Chat AI-call provenance logs only metadata, not prompt/context/response",
+      "why": "The narrow code observation is accurate: tryAppendChatEvent (ai-connect-theia-language-model.ts:147-165) writes only metadata (session/request/agent ids, route, warnings, usage) to ai/chat/, omitting prompt/context/response text. However, the finding's load-bearing conclusion — that the primary FR-008 chat surface fails to expose prompt/context/response and violates spec §9 — is refuted. AiConnectTheiaLanguageModel.request is the LanguageModel.request implementation that Theia invokes via LanguageModelServiceImpl.sendRequest (node_modules @theia/ai-core language-model-service.d.ts), which automatically records the exchange into a LanguageModelSession (id corresponds to chat session id). Per language-model-interaction-model.d.ts, each LanguageModelExchangeRequest captures the full request (messages array = system prompt + user messages + assembled #manuscript context) AND the response text. That session recording is precisely what the built-in AI configuration / AI Debug view inspect. Spec §9 line 399 requires AI actions to 'expose' prompt/context/etc. (an inspectability requirement satisfied by live session recording), and §5.3 line 236 requires 'appending history under ai/chat/ for provenance' (which the code does). §5.3 line 235 explicitly designates the built-in AI configuration + custom AI Debug view as the inspection surface for assembled manuscript context. The spec nowhere mandates that the ai/chat/ jsonl persist full prompt+response text — that requirement is the auditor's invention. 'Resulting diff' in §9 is a Change Set concept (Improve Selected, which does record selectedText/improvedText); a chat turn has no diff. PROGRESS.md:90 ('best-effort append-only chat history') is honest. The suggested fix is a reasonable optional durability enhancement but duplicates content Theia already records and adds a secret-redaction burden; it is not spec-required. The requirement claimed unmet is handled elsewhere in the platform, so the finding is not a real defect."
+    },
+    {
+      "area": "Theia AI integration (spec §3.5, §5.3, FR-008/009/",
+      "title": "Duplicate @theia/ai-core and @theia/ai-chat instances risk DI symbol-identity breakage",
+      "why": "The claim's premise — that the app bundle and the extension could resolve different copies of @theia/ai-core/@theia/ai-chat — is refuted by the actual node_modules resolution. apps/browser, apps/electron, and packages/manuscript-workspace all symlink @theia/ai-core and @theia/ai-chat to the identical +fcdbd4e9864916ee build. The fcdbd4e9 family is fully self-contained (no nested link leaks into the other variant). The +a03eec0a7e28b187 variant is an orphan: it appears 0 times in bun.lock and is not reachable from any app-reachable dependency edge — it is a leftover peer-dep materialization bun placed in .bun/, not a resolved copy that gets bundled. Thus DI symbol identity is preserved; there is no split. The finding also cites elements not present in the file (CustomAgentFactory, ChangeSetFileElementFactory) and wrong line numbers (LanguageModelProvider is line 103 not 100; AIVariableContribution is line 113 not 108). spec.md (line 152) only references LanguageModelRegistry as the generic registration mechanism and imposes no dedupe requirement being violated. The suggested resolutions/overrides fix targets a condition that is already satisfied. This is a false positive derived from the mere on-disk presence of two .bun directories without verifying that resolution is already unified."
+    },
+    {
+      "area": "Provider/model configuration + ai-connect service ",
+      "title": "Non-api transports (acp/cli/server/proxy) are advertised but structurally unusable via the profile",
+      "why": "The finding's load-bearing mechanism is factually wrong against current code. It claims getStatus() unconditionally adds AI_API_KEY to `missing` when secretValue is empty (citing lines 53-55). The actual code at ai-profile-preference-service.ts:64-66 gates it on `effectiveTransportKind === 'api'`, where effectiveTransportKind is resolved via getAiConnectTransportKind (lines 50-56). So acp/cli/server profiles do NOT get apiKey flagged as missing, the profile IS returned by getConfiguredProfile, and the LanguageModel at line 46 does NOT refuse — the entire failure chain is refuted. The suggested fix (\"make apiKey requirement conditional on resolved transport kind; only api/proxy need a credential\") is ALREADY implemented, both in the service (proxy normalizes to api) and the widget (model-config-widget.ts:477, plus explicit help text at line 232). The cited ai-connect-config.ts lines 224/236 don't use profile.command at all (they are catalog-map and route-selector); actual command usage at 244/305/316 is optional (`...(command ? {command} : {})`), and catalog acp/cli transports supply command/auth defaults from the ai-connect catalog, selectable via the widget's transportId dropdown (lines 310-315). The spec FR-013 asks for \"transport-aware\" API-key UX — matching current behavior — and does not mandate dedicated command/env preference fields. The line references throughout the finding are stale, indicating it was written against an earlier version. Only a narrow residual gap exists (fully custom non-catalog acp/cli binaries can't be specified via the widget), which is not the reported \"structurally unusable / every command refuses to run\" defect."
+    },
+    {
+      "area": "Provider/model configuration + ai-connect service ",
+      "title": "No model discovery/probe — model is free-text only (v1 getAiConnectEndpointModelProbeUrl dropped)",
+      "why": "All core assertions of the claim are factually false against current code. (1) \"v1 getAiConnectEndpointModelProbeUrl dropped, no v3 equivalent\" is wrong: the function exists at ai-connect-config.ts:191 and has unit tests (ai-connect-config.test.ts:31-48). (2) \"Model field is a bare text input with no way to enumerate models\" is wrong: renderModelInput (model-config-widget.ts:271) uses an input bound to a datalist populated from this.discovery.models; the cited line 160 is a read-only status table row, not the model input. (3) The suggested fix is already implemented as the \"Discover Models\" button (line 222-224) → discoverModels() (line 413) → aiConnection.discoverModels() → node/browser services calling client.discoverModels(), with renderDiscoveryResults() showing the list. PROVIDER_CATALOG defaults are also surfaced through provider/transport selects and getAiProviderCatalog(). FR-013 \"model loading/discovery\" is thus already satisfied. The auditor apparently did not read past the status table or grep for \"discover\"."
+    },
+    {
+      "area": "Provider/model configuration + ai-connect service ",
+      "title": "'proxy' transport option is a silent no-op — local proxy defaults (127.0.0.1:8045) from v1 are gone",
+      "why": "The claim's core factual assertion — \"v3 has no equivalent\" to v1's getLocalProxyEndpointDefaults, and \"nothing injects the local proxy base URL or per-provider default model\" — is false. The current code contains all of it:\n\n1. getLocalProxyEndpointDefaults EXISTS in ai-connect-config.ts (lines 162-190), returning exactly the v1 values the claim says are \"gone\": http://127.0.0.1:8045/v1 (openai/anthropic), http://127.0.0.1:8045/v1beta/models (gemini), plus per-provider default models (gpt-oss-120b-medium, claude-sonnet-4-6, gemini-3.1-pro-low) and model shortlists. This IS the port the suggested fix asks for — it is already done.\n\n2. It IS wired into the widget. model-config-widget.ts imports it (line 27), and applyLocalProxyDefaults() (lines 400-411) sets endpointUrl=defaults.url, model=defaults.model, transportKind='api'. A dedicated \"Use Local Proxy\" button (lines ~205-213, title \"Fill endpoint and model for a local ai-connect proxy on 127.0.0.1:8045\") invokes it. So the local-proxy base URL and default model ARE injected.\n\n3. It is unit-tested (ai-connect-config.test.ts:12-29) asserting the 127.0.0.1:8045 URLs and per-provider default models.\n\n4. The spec.md contains zero references to \"proxy\" — there is no spec requirement being violated.\n\nThe design treats 'proxy' as an api transport aimed at a local base URL (normalizeTransportKind maps proxy->api because a proxy is functionally an HTTP api call to a different baseUrl). The proxy URL/model are supplied via the explicit \"Use Local Proxy\" button or endpoint field, not by the transport-kind label alone. The only residual: selecting 'proxy' in the dropdown WITHOUT clicking the button/setting an endpoint yields an api call with no baseUrl. But that is by design and not a \"silent no-op with the proxy defaults gone\" — the defaults exist, are injectable, are injected via the intended UI affordance, and require the user's local proxy address anyway. The finding misrepresents the code as missing functionality that is plainly present."
+    },
+    {
+      "area": "Narrative knowledge + sources/citations (spec §5.2",
+      "title": "Entity model is far thinner than §5.2/FR-006 require (no epithets, backstory, arc, speech patterns)",
+      "why": "The code facts are accurate: NarrativeEntity carries only kind/id/label/path/uri/summary/aliases; characterSchema requires id/name and validates aliases/summary (additionalProperties:true, so extra fields are tolerated but unmodeled); the widget renders label/id/aliases/summary/path. So (1) the code description is correct.\n\nBut (2) the spec does NOT require what the claim assumes for the current deliverable, and this is where the finding fails. The claim leans on §5.2 and FR-006 as if they mandate epithets/backstory/arc/speech patterns now. The spec explicitly scopes this away:\n- §5.2 (\"Narrative knowledge system\") is the full PRODUCT VISION, not an MVP requirement checklist. It also lists artifact cards with ownership/transfer history, relationship graphs, and timeline views — content split across FR-006 and FR-007 (Post-MVP). It is not a per-field acceptance list for the current slice.\n- FR-006 is marked **MVP-Thin**, whose legend states verbatim: \"allowed only as a minimal slice; deeper UX/data model work moves to post-MVP.\"\n- §7 \"MVP feature request scope\" lists FR-006 under \"Explicitly out of first MVP unless needed as a technical proof,\" and the \"Recommended Theia MVP cut\" table does not place FR-006 in any shipping lane.\n\nSo a minimal character card (id/name/aliases/summary) plus widget, hover, YAML validation, and sample data is exactly the \"minimal slice\" MVP-Thin sanctions; the absence of epithets/backstory/arc/speech patterns is the deferral the spec explicitly authorizes, not a broken deliverable. Calling it \"the named MVP-Thin deliverable and it is a stub\" inverts the legend's meaning — MVP-Thin *is* intentionally thin. The YAML schema's additionalProperties:true also means the file format already accommodates future fields without a format break.\n\n(3) The suggested fix (add optional epithets[]/backstory/arc/speechPatterns[] to interface + schema, render in widget, enrich hover, extend sample YAML) is technically sound in the Theia context — purely additive optional fields with no @theia API obstacle — but it addresses a POST-MVP scope expansion, not a missing required deliverable. Implementing it now would arguably contradict the spec's explicit \"deeper data model work moves to post-MVP\" instruction.\n\nBecause the finding's core premise (spec requires this depth in the current deliverable) is contradicted by the spec's own MVP-Thin legend and §7 out-of-first-MVP scoping, the finding is not a real actionable defect. At most it is a valid post-MVP backlog note, so severity is low, not a shortfall against requirements."
+    },
+    {
+      "area": "Narrative knowledge + sources/citations (spec §5.2",
+      "title": "Citations have no link target; excerpts.jsonl parsed by nobody",
+      "why": "The factual observations are all accurate: CitationEntry (source-library-protocol.ts:12-17) is a flat id/title/source?/note? record with no anchor/entity/excerpt linkage; excerpts.jsonl exists (examples/sample-book/sources/) but no .ts references or parses \"excerpts\" (grep confirms zero hits) — it only appears as a raw file row via readSourceItems, which filters just citations.yaml; and spec §5.4 (spec.md:239-243) does call for source excerpts and linking fragments to paragraphs/entity facts. However, the finding's actionable premise is wrong. (1) The linking/excerpt behavior belongs to FR-015, which the spec explicitly marks Post-MVP (line 295) and lists as out of the first MVP (line 346). So excerpts.jsonl being unparsed is the intended state of a deferred feature, not a defect. (2) The core assertion — that the flat shape \"blocks the linking requirement\" — is false. CitationEntry is an internal TS interface; adding optional targetUri/paragraphId/relatedEntityIds[] later is a fully backward-compatible, non-breaking change with no migration and no consumer breakage. Nothing is baked in that forecloses the §5.4 link-provider work. The persisted format (citations.yaml) is likewise additively extensible. (3) The suggested fix (add anchor fields now, parse excerpts now) amounts to implementing a Post-MVP feature early — YAGNI/scope creep, not a fix for a real risk. PROGRESS honestly calls the slice thin, and the finding itself concedes FR-015 is Post-MVP. This is a premature forward-compatibility suggestion dressed as an architectural risk, not an actionable defect."
+    },
+    {
+      "area": "Architectural rules compliance (spec §3.2, §3.3, §",
+      "title": "manuscript-workspace package has zero tests — breaks §9 deterministic-seams rule for the build/scan domain logic",
+      "why": "The finding is refuted on both factual and spec-interpretation grounds.\n\nFACTUAL ERRORS in the claim:\n- \"manuscript-workspace package has zero tests\" is false: packages/manuscript-workspace/src/common/ai-connect-config.test.ts exists (156 lines).\n- The claim's supporting evidence \"find packages/manuscript-workspace/src -name '*.test.ts' returns nothing\" is wrong — it returns that test file.\n- \"only packages/semantic-markdown is tested\" and \"verify only runs the semantic-markdown test\" are false: verify runs `bun test packages`, which discovers and runs ALL package tests (verified: 22 tests across 2 files — ai-connect-config + semantic-markdown), plus the two bundle builds.\n\nSPEC MISREAD: §9 \"Deterministic seams\" requires \"a pure command/service path and testable fixtures\" — i.e. testable SEAMS/design, not the existence of unit tests. The build/scan code satisfies this: NodeBookBuildService and NodeManuscriptWorkspaceService are @injectable services parameterized by a root path, use FileUri path seams, and (importantly) accumulate and RETURN WorkspaceDiagnostic[]/BookBuildResult rather than throwing — a pure, fixture-friendly service path. So §9 is arguably satisfied; the finding recasts a test-coverage gap as an architecture-rule violation, which it is not.\n\nWHAT IS REAL (but not what was claimed): the deterministic build/scan/TOC/ordering/YAML-validation logic genuinely lacks dedicated unit tests despite being the most fixture-friendly logic in the repo (examples/sample-book exists). That is a legitimate but low-severity, MVP-stage coverage gap — the project was just initialized on Theia (recent commits) and the spec Appendix explicitly defers advanced verification post-MVP. The suggested fix (fixture tests over sample-book, wired into verify) is technically sound, but the finding materially overstates the problem and mislabels it a §9 breach."
+    },
+    {
+      "area": "Architectural rules compliance (spec §3.2, §3.3, §",
+      "title": "FR-004 (MVP-Core) manifest write-back / ordered moves is entirely absent — the ordering source-of-truth is read-only",
+      "why": "The factual core is accurate: the manuscript tree is read-only. The ManuscriptWorkspaceService protocol exposes only getSnapshot()/refresh(); ManuscriptTreeModel just rebuilds root from snapshot.content; grep for drag|drop|move|reorder in manuscript-tree*.ts is empty; and the sole browser FileService.write is ai-history-service.ts:50 with no manifest write-back anywhere. FR-004 is indeed MVP-Core (spec line 284, in-scope line 345) and §4.2 requires manifest-backed ordering with a controlled drag/drop controller. HOWEVER this is not an architecture-rules finding: the auditor itself concedes the §9 'DOM never owns order' rule is NOT violated. What remains is 'an MVP-Core feature is not yet implemented' — a completeness/roadmap gap, not a defect or rule violation. It is also not a hidden or misrepresented gap: the project's own PROGRESS.md:34 claims only that manifest order is 'mapped into a service-level snapshot' (read-path only) and never asserts moves/write-back are done. So nothing is broken, mis-claimed, or anomalous; the read-only state is expected early-scaffold state. The suggested fix (backend move/reorder service + Theia command + tree drag/drop routed through it) is technically sound in the Theia context but describes building the planned feature, not remediating an architecture defect. Filed under 'architecture-rules' the finding is mischaracterized; if reclassified as a roadmap/coverage gap it is low severity."
+    }
+  ],
+  "improvements": [
+    {
+      "area": "Manuscript workspace, tree, manifest (spec §4, §5.",
+      "title": "Tree never auto-refreshes on file, manifest, or workspace-root changes",
+      "severity": "medium",
+      "suggestion": "Subscribe the model to FileService onDidFilesChange (debounced) scoped to the workspace root and to WorkspaceService.onWorkspaceChanged, calling refreshWorkspace() so the tree tracks manifest/content edits live.",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-tree-model.ts"
+    },
+    {
+      "area": "Manuscript workspace, tree, manifest (spec §4, §5.",
+      "title": "Sample workspace never exercises folder nesting the spec calls out",
+      "severity": "low",
+      "suggestion": "Extend sample-book with a part-01/ folder and a nested chapter, and add a manifest entry with children, so the nesting code path is actually exercised by bun run test:ui and visible to users evaluating the editor.",
+      "file": "examples/sample-book/manifest.yaml"
+    },
+    {
+      "area": "Semantic Markdown editing, decorations, hover, pre",
+      "title": "Outline emits a flat, duplicate-heavy symbol list instead of an entity structure",
+      "severity": "medium",
+      "suggestion": "Group occurrences by entity (one parent symbol per unique kind:id with a count, occurrences as children) or nest tag symbols under their enclosing markdown heading. Deduplicate at minimum so each entity appears once.",
+      "file": "packages/manuscript-workspace/src/browser/semantic-markdown-document-symbol-provider.ts"
+    },
+    {
+      "area": "Semantic Markdown editing, decorations, hover, pre",
+      "title": "Preview injects noisy `(kind:id)` metadata after every tag, hurting the distraction-free reading view (§5.1)",
+      "severity": "low",
+      "suggestion": "Render just the styled label in the preview (e.g. a span with a kind-specific class, matching the editor decoration palette) and move the kind:id into the element title/hover, so the reading view stays clean while remaining inspectable.",
+      "file": "packages/semantic-markdown/src/semantic-markdown.ts"
+    },
+    {
+      "area": "Semantic Markdown editing, decorations, hover, pre",
+      "title": "Dead-code editing artifacts shipped in the parser source",
+      "severity": "low",
+      "suggestion": "Remove the trailing `[]` on both lines.",
+      "file": "packages/semantic-markdown/src/semantic-markdown.ts"
+    },
+    {
+      "area": "Semantic Markdown editing, decorations, hover, pre",
+      "title": "Semantic decorations/preview/outline apply to every .md file, not scoped to manuscript content",
+      "severity": "low",
+      "suggestion": "Gate semantic behavior on membership in the manuscript content tree (via ManuscriptWorkspaceService) rather than raw extension, so incidental markdown files are not parsed/decorated.",
+      "file": "packages/manuscript-workspace/src/browser/semantic-markdown-decoration-service.ts"
+    },
+    {
+      "area": "Theia AI integration (spec §3.5, §5.3, FR-008/009/",
+      "title": "#manuscript context is re-assembled with a full filesystem scan on every resolution",
+      "severity": "low",
+      "suggestion": "Cache the assembled context keyed on workspace + a file-change generation counter (invalidate via FileService.onDidFilesChange), and honor request.arg to allow scoped attachments (e.g. #manuscript:entities).",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-ai-context-assembler.ts"
+    },
+    {
+      "area": "Theia AI integration (spec §3.5, §5.3, FR-008/009/",
+      "title": "PROGRESS.md overclaims the AI user-facing workflow completeness",
+      "severity": "low",
+      "suggestion": "Qualify these entries: note non-streaming chat, notification-based (not panel-based) Change Set review, missing editor context-menu contribution, and metadata-only chat provenance so the progress percentage reflects the AI slice honestly.",
+      "file": "PROGRESS.md"
+    },
+    {
+      "area": "Provider/model configuration + ai-connect service ",
+      "title": "Provider/model/transport free-text inputs let a typo silently produce a broken 'api' transport",
+      "severity": "medium",
+      "suggestion": "Render Provider (and Transport ID / default Model) as selects populated from listTextProviderCatalog(), reserving free-text for a deliberate 'custom/non-catalog' path, and validate the provider+transport combination before Save.",
+      "file": "packages/manuscript-workspace/src/browser/model-config-widget.ts"
+    },
+    {
+      "area": "Provider/model configuration + ai-connect service ",
+      "title": "API key cannot be cleared or rotated when switching provider; no clone/cancel flow",
+      "severity": "medium",
+      "suggestion": "Add an explicit 'Clear key' control and treat a provider change as invalidating the stored secret; consider a 'Test connection' that verifies the current draft (not just the persisted profile) before committing.",
+      "file": "packages/manuscript-workspace/src/browser/model-config-widget.ts"
+    },
+    {
+      "area": "Provider/model configuration + ai-connect service ",
+      "title": "Theia LanguageModel returns only a full-text response — no streaming, cancellationToken ignored",
+      "severity": "low",
+      "suggestion": "If ai-connect exposes a streaming generate, return a LanguageModelStreamResponse and wire the CancellationToken through; otherwise document the non-streaming limitation explicitly.",
+      "file": "packages/manuscript-workspace/src/browser/ai-connect-theia-language-model.ts"
+    },
+    {
+      "area": "Provider/model configuration + ai-connect service ",
+      "title": "Local (cli/acp/server) client runtime cwd hardcoded to server process.cwd(), not the workspace root",
+      "severity": "low",
+      "suggestion": "Thread the workspace root (from request.workingDirectory) into runtime.cwd so file-oriented local agents operate against the manuscript folder.",
+      "file": "packages/manuscript-workspace/src/node/node-local-ai-connection-service.ts"
+    },
+    {
+      "area": "Book build/export + Task integration (spec §5.5, F",
+      "title": "On build failure the writer sees a generic 'exit code 1' — the Output channel carries no actual diagnostics",
+      "severity": "medium",
+      "suggestion": "Either parse the CLI stdout into the Output channel, or (simpler and more Theia-native) call the JSON-RPC BookBuildService directly to obtain structured diagnostics and publish them as Theia Problem markers / detailed Output lines, keeping the task path for the actual background write.",
+      "file": "packages/manuscript-workspace/src/browser/book-build-contribution.ts"
+    },
+    {
+      "area": "Book build/export + Task integration (spec §5.5, F",
+      "title": "HTML export discards entity semantics — [[char:...]] flattened to plain text",
+      "severity": "medium",
+      "suggestion": "Render semantic tags as `<span class=\"entity entity-<kind>\" data-kind data-id>label</span>` (or `<a>` to an entity glossary/section), preserving id/kind for downstream EPUB/index generation while keeping the visible label.",
+      "file": "packages/manuscript-workspace/src/node/node-book-build-service.ts"
+    },
+    {
+      "area": "Book build/export + Task integration (spec §5.5, F",
+      "title": "Custom TaskRunner re-implements process spawning via raw process.execPath (Electron-fragile) instead of a standard process task",
+      "severity": "medium",
+      "suggestion": "Have provideTasks emit a standard `process`-type TaskConfiguration (command = a resolved node path, args = [cliPath, ...]) and let Theia's built-in ProcessTaskRunner execute it, removing the custom TaskRunner/Contribution; or, if kept, explicitly set ELECTRON_RUN_AS_NODE=1 and resolve a real node binary rather than execPath.",
+      "file": "packages/manuscript-workspace/src/node/node-book-build-task-runner.ts"
+    },
+    {
+      "area": "Book build/export + Task integration (spec §5.5, F",
+      "title": "Fallback content scan orders chapters lexicographically, not numerically",
+      "severity": "low",
+      "suggestion": "Use a numeric-aware collator: `localeCompare(right.name, undefined, { numeric: true })`.",
+      "file": "packages/manuscript-workspace/src/node/node-book-build-service.ts"
+    },
+    {
+      "area": "Book build/export + Task integration (spec §5.5, F",
+      "title": "Both Markdown and HTML build tasks are marked isDefault build tasks",
+      "severity": "low",
+      "suggestion": "Mark only one (e.g. Markdown) as isDefault, or set isDefault:false and let the user pick.",
+      "file": "packages/manuscript-workspace/src/browser/book-build-contribution.ts"
+    },
+    {
+      "area": "Book build/export + Task integration (spec §5.5, F",
+      "title": "PROGRESS.md 'generates a TOC' / 'respects manifest.yaml order' understates the flat-only limitation",
+      "severity": "low",
+      "suggestion": "Qualify the claim to 'flat manifest, Latin/Cyrillic titles' and add nested-parts + Unicode-anchor support to the backlog alongside the existing EPUB/PDF item (PROGRESS.md:134).",
+      "file": "PROGRESS.md"
+    },
+    {
+      "area": "Narrative knowledge + sources/citations (spec §5.2",
+      "title": "Entity directory reading is duplicated across 3+ paths instead of flowing through NarrativeEntityService",
+      "severity": "medium",
+      "suggestion": "Route the assembler and (where feasible) the symbol provider through NarrativeEntityService.getSnapshot() so there is a single narrative-entity read path. The backend validation can stay separate but should share the schema/field set.",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-ai-context-assembler.ts"
+    },
+    {
+      "area": "Narrative knowledge + sources/citations (spec §5.2",
+      "title": "Knowledge Cards and Sources views go stale — no filesystem watch",
+      "severity": "medium",
+      "suggestion": "Have each widget (or its service) subscribe to FileService.onDidFilesChange filtered to entities/ resp. sources/, debounce, and call refresh(). Also refresh on WorkspaceService.onWorkspaceChanged so opening a folder populates the view without a manual click.",
+      "file": "packages/manuscript-workspace/src/browser/entity-cards-widget.ts"
+    },
+    {
+      "area": "Narrative knowledge + sources/citations (spec §5.2",
+      "title": "Sources view lists directories with a non-functional Open and no drill-in; images/PDFs invisible",
+      "severity": "medium",
+      "suggestion": "Recurse into sources/ (excluding citations.yaml/excerpts.jsonl) to list real files, group by folder, and only render Open for files (for directories, expand/collapse or reveal in the explorer). For images/PDFs, consider an inline thumbnail/preview since §5.4 centers on visual sources.",
+      "file": "packages/manuscript-workspace/src/browser/source-library-widget.ts"
+    },
+    {
+      "area": "Narrative knowledge + sources/citations (spec §5.2",
+      "title": "Artifact tags can be authored but have no entity kind or card — broken symmetry",
+      "severity": "low",
+      "suggestion": "Add an 'artifact' entity kind reading entities/artifacts/*.yaml (id/name/summary/aliases at minimum) so artifact tags get the same card + hover treatment as characters/terms, closing the author-visible gap without building the full timeline model yet.",
+      "file": "packages/manuscript-workspace/src/common/narrative-entity-protocol.ts"
+    },
+    {
+      "area": "Narrative knowledge + sources/citations (spec §5.2",
+      "title": "Citation source reference is plain text, not openable",
+      "severity": "low",
+      "suggestion": "Resolve citation.source against sourceUri and render it as a button that opens the file via OpenerService (as the source-file rows already do), giving citation → source navigation.",
+      "file": "packages/manuscript-workspace/src/browser/source-library-widget.ts"
+    },
+    {
+      "area": "Architectural rules compliance (spec §3.2, §3.3, §",
+      "title": "ModelConfigWidget writes preferences and the API-key secret directly instead of through the profile service",
+      "severity": "medium",
+      "suggestion": "Add AiProfilePreferenceService.saveProfile(draft) that owns scope resolution and routes the API key through a secret adapter (or at least a single service seam). The widget should call that one method, keeping it a pure view.",
+      "file": "packages/manuscript-workspace/src/browser/model-config-widget.ts"
+    },
+    {
+      "area": "Architectural rules compliance (spec §3.2, §3.3, §",
+      "title": "Decoration service injects CSS by imperatively mutating document.head instead of shipping extension styles",
+      "severity": "low",
+      "suggestion": "Move the decoration CSS into a bundled stylesheet (imported by the frontend module) and use Theia CSS custom properties / color registry so tags respect the active theme.",
+      "file": "packages/manuscript-workspace/src/browser/semantic-markdown-decoration-service.ts"
+    },
+    {
+      "area": "Architectural rules compliance (spec §3.2, §3.3, §",
+      "title": "Dead backend contribution binding",
+      "severity": "low",
+      "suggestion": "Remove the empty contribution and its binding, or implement a real onStart (e.g. warm the workspace snapshot cache).",
+      "file": "packages/manuscript-workspace/src/node/manuscript-workspace-backend-module.ts"
+    },
+    {
+      "area": "Architectural rules compliance (spec §3.2, §3.3, §",
+      "title": "Single tsconfig compiles browser+node+common with lib DOM+node, so the frontend/backend type boundary is unenforced",
+      "severity": "low",
+      "suggestion": "Optionally split into tsconfig references (browser lib DOM, node lib without DOM) or add a lint rule forbidding 'fs'/node builtins in browser/ and DOM globals in node/.",
+      "file": "packages/manuscript-workspace/tsconfig.json"
+    }
+  ],
+  "progress_corrections": [
+    {
+      "title": "\"Change Sets\" claim implies native Change Set UI integration that does not ship",
+      "kind": "progress-correction",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-workspace-contribution.ts",
+      "detail": "PROGRESS.md L105 states Improve Selected \"creates a Theia AI ChangeSetFileElement, opens the AI suggestion as a native diff preview, and applies accepted changes through the Change Set file apply path.\" The diff+apply mechanics are real, but the element is DETACHED from any Theia AI ChatSession/ChangeSet: it is built with a hard-coded synthetic chatSessionId 'ai-focused-editor-improve-selection' (line 300) and is never registered in a ChatService session or ChangeSet, so it never appears in Theia's native Change Set review widget. Accept/Reject is driven by a MessageService notification popup with buttons 'Apply Suggested Change'/'Open Diff'/'Copy AI Text' (lines 245-259), then a second confirm('Apply') modal inside ChangeSetFileElement.apply() (node_modules @theia/ai-chat change-set-file-element.js:210). A reader would reasonably infer the spec's FR-009/§5.3 native Change-Set Accept/Reject UX, which is not what ships.",
+      "suggestion": "Reword the claim to state it REUSES ChangeSetFileElement for diff preview + Monaco apply, driven by a notification (not the Change Set review panel); or register the element in a real ChatSession ChangeSet so it surfaces in Theia's native Accept/Reject UI as FR-009 intends."
+    },
+    {
+      "title": "Headline \"92-95% user-facing workflow\" overstated given stubbed Consistency command",
+      "kind": "progress-correction",
+      "severity": "low",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-workspace-contribution.ts",
+      "detail": "PROGRESS.md L10 asserts \"First Theia MVP: ... 92-95% user-facing workflow.\" One of the three headline domain commands, 'Check Manuscript Consistency', is a pure stub that only shows an info toast ('Consistency Check is registered; next step is publishing findings through Theia markers/diagnostics.') at lines 123-125, doing no analysis. Combined with entity cards and sources being read-only views and AI flows requiring manual provider setup, a 92-95% user-facing figure reads as optimistic. (The individual bullet L21-22 honestly lists Consistency only as a 'command contribution point', so the overstatement is in the aggregate metric, not the bullet.)",
+      "suggestion": "Lower or qualify the headline percentage, or annotate which user-facing flows are functional vs. registered-only, so the metric matches the stub/read-only reality."
+    },
+    {
+      "title": "Several \"Verified: Direct ... smoke\" entries have no reproducible script backing",
+      "kind": "progress-correction",
+      "severity": "low",
+      "file": "PROGRESS.md",
+      "detail": "The Verified list (L115-119) includes 'Direct NodeManuscriptWorkspaceService smoke', 'Direct book-build-task-cli.js smoke', 'Direct book-build-task-cli.js --format html smoke', and 'Direct BookBuildService Node smoke against examples/sample-book'. The repo's scripts/ directory contains only browser-smoke.mjs, and package.json exposes no scripts for these 'Direct' runs, so they are one-off manual invocations that cannot be re-run via a documented command and are not part of verify/test:ui. They read as standing verifications but are not reproducible checks.",
+      "suggestion": "Either add committed scripts (e.g. scripts/backend-smoke.mjs, wired into a package.json script) so these are reproducible, or mark them explicitly as manual/ad-hoc verifications rather than standing 'Verified' checks."
+    },
+    {
+      "title": "\"SCM surface packages wired\" implies functional git that is not present (no provider)",
+      "kind": "progress-correction",
+      "severity": "low",
+      "file": "apps/browser/package.json",
+      "detail": "PROGRESS.md L58/L106 claim app targets 'rely on Theia SCM surface packages already wired through @theia/scm and @theia/scm-extra.' Those packages provide the SCM view shell only; the browser app depends on @theia/scm and @theia/scm-extra but NOT @theia/git (or any ScmProvider), so there is no actual branch/status/diff. Spec §7 lists 'status bar provider/model/git indicators' as MVP and §5.6 wants git branch/status in the status bar; the AI status bar (ai-profile-status-bar-contribution.ts) shows no git indicator. PROGRESS honestly flags this open question at L123 [Review], but the L58/L106 wording still implies working SCM.",
+      "suggestion": "Clarify that only the SCM UI surfaces are wired with no git provider yet (no functional branch/status/diff), so no false impression of working git integration remains; add @theia/git if a real provider is intended for the MVP git indicators."
+    }
+  ],
+  "creative_summary": "The Theia-native plumbing is genuinely good — every user operation is a command, views are proper widget contributions, the status bar AI item is polished, and the preview/knowledge/sources panels map cleanly onto the spec's cockpit quadrants. But as a creative person's product it currently fails its own north star: the app boots into a stock developer IDE (Files navigator, no manuscript view, no welcome), the entire \"AI Focused Editor\" main menu is registered at a dead menu path and never renders, all custom widgets ship with zero CSS, there are no keybindings, no Focus Mode, and the sample book is a single one-line chapter. PROGRESS.md's \"92-95% user-facing workflow\" claim materially overstates the writer-facing experience; the architecture percentage is closer to honest.",
+  "creative_findings": [
+    {
+      "title": "Entire 'AI Focused Editor' main menu never renders — registered outside MAIN_MENU_BAR",
+      "kind": "bug",
+      "severity": "high",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-workspace-contribution.ts",
+      "detail": "Every main-menu registration uses the root path ['ai-focused-editor'] (manuscript-workspace-contribution.ts:496, manuscript-tree-view-contribution.ts:48, semantic-markdown-preview-contribution.ts:48, model-config-view-contribution.ts:48, entity-cards-view-contribution.ts:48, source-library-view-contribution.ts:48, ai-debug-view-contribution.ts:59, book-build-contribution.ts:120, semantic-markdown-actions-contribution.ts:81, ai-mode-contribution.ts:65). In Theia 1.73 MAIN_MENU_BAR = ['menubar'] (apps/browser/node_modules/@theia/core/lib/common/menu/menu-types.js:20) and the menu bar renders only getMenuNode(MAIN_MENU_BAR) children (lib/browser/menu/browser-menu-plugin.js:72), so a submenu registered at root path ['ai-focused-editor'] is a dead sibling of 'menubar' — none of the Build/Knowledge/Sources/AI Modes/AI Debug/Semantic Markdown menus ever appear in browser or Electron. Users can reach these commands only via the command palette or the View > Views toggles that AbstractViewContribution adds. The smoke script only asserts command registration (scripts/browser-smoke.mjs:86-94), so this was never caught. PROGRESS.md:77 ('quick actions contributed to the AI Focused Editor menu') and the 'Knowledge menu commands' claim (PROGRESS.md:73) describe UI that does not exist on screen.",
+      "suggestion": "Register the product menu once under the menubar: const AFE_MENU = [...MAIN_MENU_BAR, '9_ai_focused_editor']; menus.registerSubmenu(AFE_MENU, 'Manuscript'). Export that path from a single shared module (e.g. afe-menus.ts) and have all contributions hang subgroups off it instead of re-registering the top-level submenu four times. Extend browser-smoke.mjs to assert the menubar contains the product menu."
+    },
+    {
+      "title": "App boots as a developer IDE, not a writing cockpit — no default writer layout",
+      "kind": "gap",
+      "severity": "high",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-tree-view-contribution.ts",
+      "detail": "Spec §1 demands 'Theia workbench, focused by default' and §2's north star puts the manuscript tree left and knowledge/AI panels right. No contribution implements FrontendApplicationContribution.initializeLayout/onDidInitializeLayout (grep across packages/manuscript-workspace/src returns nothing), so on first launch the only visible sidebar view is the stock Files navigator from @theia/navigator (apps/browser/package.json:19); Manuscript, Semantic Preview, Knowledge Cards and Sources all stay hidden until the user finds 'AI Focused Editor: Open Manuscript View' in the palette or View > Views. The first-run impression is exactly the 'developer IDE clutter' the spec warns against, with the writer-specific surface invisible.",
+      "suggestion": "Add a small LayoutContribution (FrontendApplicationContribution) that in initializeLayout opens ManuscriptTreeWidget (left, active), SemanticMarkdownPreviewWidget or EntityCardsWidget (right, collapsed ok), mirroring how @theia/navigator self-opens. Also consider rank < 100 for the Manuscript view so it sits above Files in the left activity area."
+    },
+    {
+      "title": "PROGRESS.md overstates user-facing MVP completeness (92-95%)",
+      "kind": "progress-correction",
+      "severity": "medium",
+      "file": "PROGRESS.md",
+      "detail": "PROGRESS.md:10 claims '92-95% user-facing workflow'. Against the observable product: the main menu never renders (see menu finding), the manuscript view is not visible by default, all six custom widgets are unstyled (no CSS file in the package), there are no keybindings, Check Consistency is a stub, and the MVP-listed git status-bar indicator has no provider. PROGRESS.md:77 ('contributed to the AI Focused Editor menu') and PROGRESS.md:73 ('Knowledge menu commands') describe invisible UI as shipped. The architecture-foundation claim (95-98%) is broadly fair; the user-facing number is not.",
+      "suggestion": "Re-baseline the user-facing workflow figure (a defensible number is 60-70%) and annotate menu-related 'Completed' bullets as palette-only until the MAIN_MENU_BAR fix lands. Keep the verified-command list — it is accurate."
+    },
+    {
+      "title": "No Focus Mode anywhere despite being a Primary Workbench Mode",
+      "kind": "gap",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-workspace-frontend-module.ts",
+      "detail": "Spec §2 lists Focus Mode ('distraction-free manuscript editor, minimal chrome, optional preview') first among Primary Workbench Modes, and §5.1 lists 'Focus layout with minimal chrome' as a core capability. grep for focus/distraction/zen across packages and apps finds no product code. The §7 MVP cut does not name Focus Mode, so this is not an MVP violation, but for a product whose identity is 'comfortable editor for creative people' it is the single most identity-defining missing feature, and it is cheap to approximate.",
+      "suggestion": "Add a 'Manuscript: Toggle Focus Mode' command (with keybinding, e.g. Cmd/Ctrl+K F) that collapses left/right panels and the bottom panel via ApplicationShell.collapsePanel + hides the status bar, remembering prior state for restore. That is ~80 lines against existing Theia shell APIs and instantly makes the product feel writer-first."
+    },
+    {
+      "title": "All custom widgets ship with zero CSS — preview, cards, and config render as raw HTML",
+      "kind": "improvement",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/semantic-markdown-preview-widget.ts",
+      "detail": "find packages -name '*.css' returns nothing and no .ts file imports a stylesheet, yet the widgets reference ~30 bespoke classes: afe-semantic-markdown-tag-chip (semantic-markdown-preview-widget.ts:115), afe-entity-card/afe-entity-kind (entity-cards-widget.ts:123-138), afe-source-library-* (source-library-widget.ts:57-121), afe-model-config (model-config-widget.ts:114), plus AI Debug. The 'chip summary' renders as undifferentiated inline text, entity cards have no card affordance, buttons crowd headers, and the preview has no reading typography (measure, line-height, paragraph spacing) — the exact 'is preview pleasant?' bar the spec's cockpit framing sets. Only theia-button styling comes through.",
+      "suggestion": "Add src/browser/style/index.css imported at the top of manuscript-workspace-frontend-module.ts (standard Theia extension idiom). Style with Theia variables (var(--theia-editor-background), --theia-ui-font-family): real chips with per-kind hue for char/term/artifact, card borders and spacing for Knowledge Cards, and a prose class for the preview (max-width ~68ch, 1.6 line-height, serif option). This is the highest polish-per-line change available."
+    },
+    {
+      "title": "No keybindings for any product command",
+      "kind": "gap",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-workspace-frontend-module.ts",
+      "detail": "Spec §2 requires commands to be reachable 'через palette/keybindings/context menu' and §3.2 lists keybindings as a frontend responsibility. grep for KeybindingContribution/registerKeybindings across packages/manuscript-workspace/src returns nothing. A writer must open the command palette and type long 'AI Focused Editor: ...' labels for every core action (improve selection, wrap as character/term, open preview, build).",
+      "suggestion": "Add one KeybindingContribution: Improve Selected (Cmd/Ctrl+Alt+I), Open Semantic Preview (Ctrl+Shift+V, matching VS Code markdown-preview muscle memory), Wrap as Character/Term (Cmd/Ctrl+K C / Cmd/Ctrl+K T, when editorTextFocus && editorLangId == markdown), Build Markdown (Cmd/Ctrl+Shift+B via task default group already set at book-build-contribution.ts:220-223)."
+    },
+    {
+      "title": "'Check Manuscript Consistency' is a placebo that talks roadmap-speak to the writer",
+      "kind": "bug",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-workspace-contribution.ts",
+      "detail": "manuscript-workspace-contribution.ts:123-125: the command's only behavior is messages.info('Consistency Check is registered; next step is publishing findings through Theia markers/diagnostics.') — an internal engineering status sentence surfaced as product UI, listed in the (currently invisible) product menu at line 504-506 and in PROGRESS.md:22 under Completed command contribution points without a stub disclaimer. Spec §7 requires the command to 'exist', so registration is technically compliant, but shipping developer-voice copy breaks the product's voice and trust ('Everything is inspectable' cuts both ways — this inspects as unfinished).",
+      "suggestion": "Either (a) implement a minimal real slice — run the existing semantic diagnostics + entity cross-check (unknown [[char:...]] ids vs entities/) and publish via the ProblemManager path that validateWorkspace already uses (lines 442-471), or (b) remove it from menus and reword to user-voice: 'Consistency checking is coming soon. Validate Manuscript Workspace already checks structure and semantic tags.'"
+    },
+    {
+      "title": "Sample book is a one-line, one-chapter shell — the de facto welcome experience is empty",
+      "kind": "improvement",
+      "severity": "medium",
+      "file": "examples/sample-book/content/chapter-01.md",
+      "detail": "Both start scripts open examples/sample-book as the workspace (apps/browser/package.json:49, apps/electron/package.json:61), making it the product's first impression. It contains one chapter with a single sentence (content/chapter-01.md:1-3), one manifest entry (manifest.yaml:2-5), two characters and one term, no artifact entity (spec §4.3's own example features [[artifact:gandiva|Гандива]]), no locations, no knowledge/ directory, and no nested part-01/ structure (spec §4.1 shows part folders). The manuscript tree, preview chips, knowledge cards, build TOC, and outline all demo at their weakest possible density.",
+      "suggestion": "Grow the sample to 3-5 chapters including one part-01/ folder and one include:false chapter (to show the 'excluded from build' label at manuscript-tree-label-provider.ts:39), add gandiva.yaml artifact + a location, and write 2-3 paragraphs of real prose per chapter with dense semantic tags. Add a README.md in the sample root that doubles as a getting-started page and opens on layout init."
+    },
+    {
+      "title": "Git indicator missing from the status bar — MVP scope lists it, no provider is wired",
+      "kind": "gap",
+      "severity": "medium",
+      "file": "apps/browser/package.json",
+      "detail": "Spec §7 MVP scope requires 'status bar provider/model/git indicators' and §5.6 'Git branch/status in status bar'. The AI provider/model item is done well (ai-profile-status-bar-contribution.ts:58-82), but apps/browser/package.json:24-25 and apps/electron/package.json:25-26 wire only @theia/scm and @theia/scm-extra — surface packages with no SCM provider behind them (no @theia/git, no plugin host for the vscode.git builtin). The SCM view is an empty shell and no branch/status can ever appear. PROGRESS.md:123 flags this as an open review item, which is honest, but the MVP-percentage claims absorb it silently.",
+      "suggestion": "Decide the provider now: the theia-ide-idiomatic route is @theia/plugin-ext + @theia/plugin-ext-vscode with the vscode.git builtin; the lighter interim route is a thin status-bar-only git branch item backed by a backend service. Either way, remove or badge the empty SCM view until a provider exists — an empty dead panel is worse for a writer than no panel."
+    },
+    {
+      "title": "Command labels bake the product prefix instead of using Command.category",
+      "kind": "improvement",
+      "severity": "low",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-workspace-contribution.ts",
+      "detail": "Every command hardcodes 'AI Focused Editor: ' into label (manuscript-workspace-contribution.ts:53,58,63,68,73 and the same pattern in book-build-contribution.ts:57-73, semantic-markdown-actions-contribution.ts:27-47, all view contributions). Theia's Command.category exists precisely for this; with the prefix baked in, menu items (once the menubar fix lands) read 'AI Focused Editor: Build Manuscript Markdown' inside an 'AI Focused Editor' menu, and the palette can't group by category. Naming is also engineer-flavored: 'Validate Manuscript Workspace', 'Normalize Semantic Markdown Tags'.",
+      "suggestion": "Move the prefix to category: 'Manuscript' (shorter and warmer than the app name) and shorten labels to human verbs: 'Improve Selected Text', 'Check Project Health' (validate), 'Tidy Semantic Tags' (normalize), 'Build Book (Markdown/HTML)'. One mechanical sweep across the five command namespaces."
+    },
+    {
+      "title": "No welcome/getting-started surface for first-run writers",
+      "kind": "improvement",
+      "severity": "low",
+      "file": "apps/browser/package.json",
+      "detail": "Neither app includes @theia/getting-started nor contributes a custom welcome widget (apps/browser/package.json:5-35 dependency list). Combined with the hidden manuscript view, a new writer sees an empty editor area with zero orientation toward the six custom views, the #manuscript chat variable, or the AI profile setup that most commands require (improveSelectedText warns and aborts without it, manuscript-workspace-contribution.ts:173-177).",
+      "suggestion": "Ship a small 'Welcome to your manuscript' ReactWidget opened on first layout init: three buttons (Open Manuscript view, Configure AI profile, Open sample chapter) plus a one-paragraph explanation of semantic tags. This converts the AI-profile dead-end into a guided step."
+    },
+    {
+      "title": "Writer-friendly application defaults not set (autosave, theme, build/ exclusion)",
+      "kind": "improvement",
+      "severity": "medium",
+      "file": "apps/browser/package.json",
+      "detail": "The theia frontend config sets only applicationName (apps/browser/package.json:52-57, apps/electron/package.json:63-68). Writers overwhelmingly expect autosave, yet Theia defaults files.autoSave to off; generated build/ output (book.md/book.html) appears in the Files navigator as clutter; no defaultTheme is chosen for a calm reading surface. These are zero-code, config-only wins toward 'focused by default' (§1).",
+      "suggestion": "In both apps' theia.frontend.config add preferences: { 'files.autoSave': 'afterDelay', 'files.exclude': { '**/build': true }, 'workbench.colorTheme': <chosen default> } and consider 'window.menuBarVisibility'. Per-workspace layout persistence already covers the rest."
+    },
+    {
+      "title": "Preview has no editor-toolbar entry point and collides with Knowledge Cards on rank",
+      "kind": "improvement",
+      "severity": "low",
+      "file": "packages/manuscript-workspace/src/browser/semantic-markdown-preview-contribution.ts",
+      "detail": "The Semantic Preview opens only via palette/View menu (semantic-markdown-preview-contribution.ts:29-33); there is no TabBarToolbarContribution putting the classic side-by-side preview icon on Markdown editor tabs, which is the single most-used preview affordance in every Markdown editor writers know. Also SemanticMarkdownPreviewWidget and EntityCardsWidget both declare right-area rank 220 (semantic-markdown-preview-contribution.ts:30, entity-cards-view-contribution.ts:30), leaving their relative order accidental.",
+      "suggestion": "Contribute a TabBarToolbarContribution item (icon codicon-open-preview, when: editorLangId == markdown) executing the existing preview.open command, and stagger right-panel ranks: preview 210, knowledge cards 220, model config 230, AI debug 240 (already 240)."
+    },
+    {
+      "title": "Improve Selected accept flow hangs off a transient notification instead of the Change Set UI",
+      "kind": "improvement",
+      "severity": "low",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-workspace-contribution.ts",
+      "detail": "The ChangeSetFileElement is created with a synthetic chatSessionId 'ai-focused-editor-improve-selection' (manuscript-workspace-contribution.ts:300) so it belongs to no visible chat session, and acceptance happens through a three-button notification (lines 245-259). If the writer dismisses or misses the toast, the opened diff has no accept/reject affordance and the suggestion is stranded; re-running the command is the only recovery. Spec §3.5/§9 ask for Change Sets precisely for their native persistent Accept/Reject controls.",
+      "suggestion": "Route the suggestion through the Manuscript chat agent's session (the agent already exists, manuscript-chat-agent-contribution.ts:20-33) so the Change Set renders in @theia/ai-chat-ui with native controls; or minimally keep a 'Manuscript: Apply Last AI Suggestion' command and re-offer the actions when the diff editor is focused."
+    },
+    {
+      "title": "Manuscript tree cannot manage the book — navigation only, no ordering/inclusion/creation",
+      "kind": "gap",
+      "severity": "medium",
+      "file": "packages/manuscript-workspace/src/browser/manuscript-tree-widget.ts",
+      "detail": "FR-004 (MVP-Core) promises 'drag/drop moves, build inclusion, and manifest-backed ordering', and §7 MVP scope says manifest order is 'edited through services'. The tree opens files (manuscript-tree-widget.ts:50-55) and refreshes (context menu offers only Refresh, manuscript-tree-view-contribution.ts:56-58); there is no move up/down, no drag/drop, no include/exclude toggle, no 'New Chapter' — the writer must hand-edit manifest.yaml to reorder their own book. The primary navigation surface of a writing cockpit is read-only.",
+      "suggestion": "Before full drag/drop (FR-022 spike pending), add command-driven mutations that satisfy the deterministic-seam rule cheaply: 'Move Chapter Up/Down', 'Toggle Include in Build', and 'New Chapter…' context-menu items on tree nodes that call a backend manifest mutation on ManuscriptWorkspaceBackendService, then refresh. This delivers the FR-004 user value with zero DOM-order risk."
+    }
+  ]
+}

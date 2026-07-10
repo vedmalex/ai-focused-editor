@@ -1,0 +1,187 @@
+---
+source_url: https://theia-ide.org/theia-platform/
+fetched_at: 2026-07-10T00:00:00Z
+title: Eclipse Theia Platform Overview
+---
+
+# Eclipse Theia Platform Overview
+
+An open, flexible and extensible platform designed to efficiently develop and deliver cloud and desktop IDEs and tools using modern web technologies. The platform includes native support for AI-powered tools through Theia AI, with Theia IDE serving as a standard reference implementation.
+
+## Core Platform Features
+
+### Cloud & Desktop
+
+With Theia you can develop one IDE and run it in a browser or as a native desktop application from a single source.
+
+### Extensible
+
+Theia is designed in a modular way to allow extenders and adopters to customize and extend every aspect.
+
+The platform enables building fully customized or white-labeled products beyond standard extensions.
+
+### Vendor Neutral
+
+Theia is truly vendor-neutral and developed by a diverse community.
+
+Hosted at an Open-Source Foundation rather than controlled by a single vendor. Multiple companies offer professional support.
+
+### Modern Tech
+
+Built on contemporary web technology stack featuring:
+
+- Language support via LSP (Language Server Protocol)
+- DAP (Debug Adapter Protocol) support
+- VS Code extension hosting
+- Full terminal access
+
+**Note:** While it reuses components from VS Code, such as the Monaco editor, Theia is an independent platform with a modular architecture - NOT a fork of VS Code.
+
+## Selected Tools Based on Eclipse Theia
+
+The platform powers various professional tools:
+
+- STM32CubeMX2 by STMicroelectronics
+- Mbed Studio by Arm
+- Sokatoa by Samsung SARC/ACL
+- CDT Cloud Blueprint
+- Coffee Editor Example by EclipseSource
+- Neuron Smart Engineer by Neuron Automation
+- Theia IDE
+- Record Evolution
+- VUEngine Studio
+- Smartface
+- Code RealTime
+- QuickConnect Studio
+- Red Hat CodeReady Workspaces
+- Martini Designer
+- MVTec HDevelopEVO
+- Coding Park Web IDE
+- ZStudio
+
+## Contributors & Adopters
+
+Organizations using or contributing to Theia:
+
+- Acquia
+- Arduino
+- Arm
+- Broadcom Inc.
+- Coding Park
+- CS GROUP - France
+- EclipseSource
+- Ericsson
+- Gitpod
+- Google
+- Huawei
+- IBM
+- K2View
+- Killercoda
+- Logi.cals
+- Lonti
+- MVTec Software
+- Record Evolution
+- Red Hat
+- Renesas
+- Samsung
+- SAP
+- Smartface
+- STMicroelectronics
+- Terapines
+- Texas Instruments
+- TypeFox
+- VUEngine
+
+For information on getting listed as an Eclipse Theia adopter or contributor, see https://theia-ide.org/
+
+## Getting Started Section
+
+### Try It
+
+Eclipse Theia is a framework for building tools and IDEs.
+
+Options include building custom IDE/tools within minutes, downloading Theia IDE template, or trying online at https://try.theia-cloud.io/
+
+### Learn More
+
+Comprehensive resources available:
+
+- Getting started guides
+- How to build custom tools/IDEs
+- Project goals documentation
+- Full documentation suite
+- Resource section
+- Introductory videos
+
+### Adopt It
+
+Checkout the available releases including changelogs, migration guides and news and noteworthy articles.
+
+Resources include:
+
+- Project source code on GitHub: https://github.com/eclipse-theia/theia
+- npm registry packages
+- Professional support options
+
+### Contribute
+
+Eclipse Theia is an open source project governed by the Eclipse Foundation.
+
+Community contribution resources:
+
+- Contribution guide: https://github.com/eclipse-theia/theia/blob/master/CONTRIBUTING.md
+- Code of conduct
+- Good first issues for new contributors
+
+## Video Introductions
+
+Featured educational videos:
+
+1. **Getting started with Eclipse Theia** - Jonas Helming, Theia project lead and Principal Software Architect at EclipseSource
+
+2. **Why Eclipse Theia** - Marc Dumais, Theia project lead and Software Developer at Ericsson AB
+
+3. **How to be an Eclipse Theia Adopter** - Jonas Helming, Principal Software Architect at EclipseSource
+
+4. **The Eclipse Theia Architecture** - Thomas Mäder, Theia project lead and Principal Software Developer at Red Hat
+
+## Professional Support
+
+Get professional support, training, and custom development from Theia experts to accelerate your project.
+
+Multiple certified providers offer support and development services: https://theia-ide.org/support/
+
+## News & Updates
+
+Recent announcements:
+
+- Latest 1.72 Release information and noteworthy features
+- Latest Community Release (2026-05)
+- "Eclipse Theia: The Eclipse tool platform in production" coverage
+- Invitation to join "Friends of Theia" mailing list
+- Follow on X (formerly Twitter): https://x.com/theia_ide
+
+## Community Engagement
+
+Join the community via:
+
+- GitHub repository: https://github.com/eclipse-theia/theia
+- X (Twitter) account: https://x.com/theia_ide
+
+## Sponsorship
+
+Support the evolution of Theia — become a sponsor.
+
+Learn more at: https://theia-ide.org/sponsoring/
+
+## Footer Links
+
+- About: https://theia-ide.org/about/
+- Sponsoring: https://theia-ide.org/sponsoring/
+- Privacy Policy: https://theia-ide.org/privacy-policy/
+- Terms of Use: https://theia-ide.org/terms-of-use/
+- Copyright Agent: https://theia-ide.org/copyright-agent/
+
+---
+
+Copyright © 2026 by Eclipse Foundation

@@ -1,0 +1,121 @@
+---
+source_url: https://theia-ide.org/docs/services_and_contributions/
+fetched_at: 2026-07-10T00:00:00Z
+title: Services and Contributions in Theia
+---
+
+# Services and Contributions in Theia
+
+## Overview
+
+The Theia platform enables extensions to interact through two primary mechanisms: **services** and **contribution points**. These concepts rely on dependency injection to decouple implementation from consumption.
+
+### Services
+
+Services are objects providing specific functionality through well-defined interfaces. The platform supplies default services like `MessageService`, but extensions can create custom ones. Services decouple implementation from consumption, allowing flexible component interaction.
+
+Services are functionality-providing objects with documented interfaces. Any extension can provide or consume custom services, in addition to platform-provided defaults like `MessageService`.
+
+### Contribution Points
+
+Contribution points define extensibility hooks through interfaces that contributors implement. For example, `CommandContribution` allows adding commands to the workbench. Like services, these can be platform-provided or custom.
+
+Contribution Points define extensibility hooks through implemented interfaces (e.g., `CommandContribution`). The defining extension picks up contributions and integrates them into the workbench.
+
+Both mechanisms use dependency injection to avoid direct implementation dependencies between extensions.
+
+## Key Concepts
+
+**Services** are objects implementing interfaces that provide functionality to consumers. The Theia platform offers default services like `MessageService`, and extensions can create custom services.
+
+**Contribution points** define hooks for extending functionality. They're implemented through interfaces—for example, `CommandContribution`—that contributors must implement to add commands or menus.
+
+## Dependency Injection (DI)
+
+Theia uses the **InversifyJS** dependency injection framework to wire up the different services and contribution points.
+
+Dependency injection decouples service consumers from service creation. Rather than manually instantiating dependencies, the DI container injects them automatically. This approach enables:
+
+- Seamless implementation swapping without affecting consumers
+- Automatic resolution of transitive dependencies
+- Configuration-driven wiring through container modules
+- Automatic service resolution without manual instantiation
+- Easy implementation swapping without affecting consumers
+- Container-based configuration through modules
+
+The framework draws from [InversifyJS](http://inversify.io/) principles.
+
+Services are injected via annotations like `@inject(ServiceName)` in constructors, fields, or initialization functions. Components must be marked `@injectable()` to participate in DI.
+
+## Using Services
+
+Services are typically injected via constructor parameters or field decorators using the `@inject` annotation. The service interface name usually corresponds to the identifier symbol.
+
+Services are consumed through dependency injection:
+
+```typescript
+constructor(@inject(MessageService) private readonly messageService: MessageService) { }
+```
+
+Field decorator example:
+
+```typescript
+@inject(MessageService)
+protected readonly messageService!: MessageService;
+```
+
+Components must be marked with `@injectable` and registered in the DI container to enable injection. Injection works only in components created by the DI container and properly registered.
+
+## Contributing to Contribution Points
+
+Extensions implement contribution interfaces and register them in container modules.
+
+### Implementation Example
+
+```typescript
+@injectable()
+export class MyCommandContribution implements CommandContribution
+```
+
+### Container Module Binding
+
+The binding occurs in the container module:
+
+```typescript
+bind(CommandContribution).to(HelloworldCommandContribution);
+```
+
+## Defining Custom Contribution Points
+
+Extensions can define their own contribution points as interfaces, allowing others to extend functionality. The `OpenerService` exemplifies this pattern by defining `OpenHandler` contributions.
+
+Extensions can create their own contribution points by defining interfaces and using contribution providers. The `bindContributionProvider` function registers types, enabling multiple implementations to coexist.
+
+This architecture promotes modularity and allows the Theia ecosystem to grow through clean, loosely-coupled extensions.
+
+## Contribution Providers
+
+Contribution providers act as generic containers for multiple contribution instances. They're bound using `bindContributionProvider` and injected with named type references, enabling batch initialization of all bound implementations.
+
+### Binding Contribution Providers
+
+Contribution providers are bound using `bindContributionProvider`:
+
+```typescript
+bindContributionProvider(bind, ConnectionHandler)
+```
+
+### Consuming Contribution Providers
+
+Consumers inject these providers to access all registered contributions:
+
+```typescript
+constructor(@inject(ContributionProvider) @named(ConnectionHandler) 
+  protected readonly handlers: ContributionProvider<ConnectionHandler>) { }
+```
+
+These generic containers hold multiple contribution instances. They're bound using `bindContributionProvider` and injected with named type references, enabling batch initialization of all bound implementations.
+
+## Resources
+
+The page links to detailed guides on related topics including commands, menus, widgets, and preferences.

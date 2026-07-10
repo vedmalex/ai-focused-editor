@@ -1,0 +1,158 @@
+---
+source_url: https://theia-ide.org/docs/authoring_extensions/
+fetched_at: 2026-07-10T00:00:00Z
+title: Authoring Theia Extensions
+---
+
+# Authoring Theia Extensions
+
+## Overview
+
+This comprehensive guide walks developers through creating and deploying Theia extensions. The documentation uses a practical "Say hello" example that adds a menu item displaying a notification.
+
+## Prerequisites
+
+Before beginning, developers should review the [Theia repository prerequisites](https://github.com/eclipse-theia/theia/blob/master/doc/Developing.md#prerequisites) and familiarize themselves with [creating Theia applications](/docs/composing_applications/).
+
+## Project Layout
+
+The recommended approach involves using the [Yeoman Generator](https://github.com/eclipse-theia/generator-theia-extension) to scaffold a Theia project with an example extension structure.
+
+## Custom Theia Extension Structure
+
+### Package Configuration
+
+The extension's `package.json` serves as the foundation:
+
+```json
+{
+  "name": "hello-world",
+  "keywords": [
+    "theia-extension"
+  ],
+  "version": "0.0.0",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "dependencies": {
+    "@theia/core": "latest"
+  },
+  "devDependencies": {
+    "rimraf": "latest",
+    "typescript": "~5.4.5"
+  },
+  "scripts": {
+    "prepare": "yarn run clean && yarn run build",
+    "clean": "rimraf lib",
+    "build": "tsc",
+    "watch": "tsc -w"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/hello-world-frontend-module"
+    }
+  ]
+}
+```
+
+### Key Concepts
+
+The `theia-extension` keyword identifies packages as Theia extensions for automated discovery. Extensions wire functionality through [dependency injection](/docs/services_and_contributions#dependency-injection-di), binding implementations to contribution interfaces.
+
+The `theiaExtensions` property specifies JavaScript modules exporting InversifyJS `ContainerModule` definitions. Extensions can contribute to frontend (UI features) or backend (language servers) components.
+
+### Dependency Injection Module
+
+```javascript
+export default new ContainerModule(bind => {
+    // add your contribution bindings here
+    bind(CommandContribution).to(HelloWorldCommandContribution);
+    bind(MenuContribution).to(HelloWorldMenuContribution);
+});
+```
+
+### Command Implementation
+
+Commands are data structures with ID and label; handlers implement their behavior:
+
+```javascript
+export const HelloWorldCommand = {
+    id: 'HelloWorld.command',
+    label: "Shows a message"
+};
+
+@injectable()
+export class HelloWorldCommandContribution implements CommandContribution {
+
+    constructor(
+        @inject(MessageService) private readonly messageService: MessageService,
+    ) { }
+
+    registerCommands(registry: CommandRegistry): void {
+        registry.registerCommand(HelloWorldCommand, {
+            execute: () => this.messageService.info('Hello World!')
+        });
+    }
+}
+```
+
+The `@inject` decorator provides dependencies through the container, eliminating concerns about lifecycle or source.
+
+### Menu Integration
+
+Making commands accessible through the UI requires implementing `MenuContribution`:
+
+```javascript
+@injectable()
+export class HelloWorldMenuContribution implements MenuContribution {
+
+    registerMenus(menus: MenuModelRegistry): void {
+        menus.registerMenuAction(CommonMenus.EDIT_FIND, {
+                commandId: HelloWorldCommand.id,
+                label: 'Say Hello'
+            });
+    }
+}
+```
+
+## Adding Extensions to Applications
+
+Include extensions as dependencies in the application's `package.json`:
+
+```json
+{
+  "private": true,
+  "name": "browser-app",
+  "version": "0.0.0",
+  "dependencies": {
+    "@theia/core": "latest",
+    "hello-world": "0.0.0"
+  },
+  "devDependencies": {
+    "@theia/cli": "latest"
+  },
+  "scripts": {
+    "bundle": "yarn rebuild && theia build --mode development",
+    "rebuild": "theia rebuild:browser --cacheRoot ..",
+    "start": "theia start",
+    "watch": "yarn rebuild && theia build --watch --mode development"
+  },
+  "theia": {
+    "target": "browser"
+  }
+}
+```
+
+## Deployment Options
+
+Two primary deployment strategies exist:
+
+1. **Monorepo approach**: Include the extension within a repository containing a Theia-based application that imports it
+2. **NPM publishing**: Publish the extension via `yarn publish` and consume it as a dependency in applications
+
+Additional details appear in documentation covering browser application execution and Electron deployment.
+
+## Additional Resources
+
+Theia provides extensive contribution interfaces (marked with `*Contribution` naming) enabling extensions to integrate with various application aspects. The "Platform Concepts & APIs" documentation section explores available interfaces and services for extending functionality.
