@@ -208,6 +208,27 @@ export default {
       };
       await assertSectionMenu('Characters', 'New Character...', ['New Chapter...']);
       await assertSectionMenu('Locations', 'New Location...', ['New Chapter...']);
+    `),
+    assert_menu_bar_create_visibility: action(`
+      await waitForText('Part One', 45000);
+      const characters = treeNode('Characters');
+      if (!characters) { throw new Error('Tree section row not found: Characters'); }
+      // Right-clicking the Characters section selects it (Theia handleContextMenuEvent),
+      // so the section context key becomes 'characters' — the state that used to
+      // hide non-matching create actions from the product menu bar before the fix.
+      await openTreeContextMenu(characters);
+      await closeMenus();
+      // The product menu bar must stay fully populated regardless of tree selection:
+      // 'New Location...' and 'New Chapter...' (both hidden pre-fix while a
+      // non-matching node was selected) plus 'New Character...' are all present.
+      await openMenu('Manuscript');
+      const texts = menuItems().map(el => el.textContent.trim());
+      const required = ['New Character...', 'New Location...', 'New Chapter...'];
+      const missing = required.filter(entry => !menuItem(entry));
+      if (missing.length > 0) {
+        throw new Error('Menu-bar create items hidden while Characters selected: ' + missing.join(', ') + ' (visible: ' + texts.join(' | ') + ')');
+      }
+      await closeMenus();
     `)
   },
   scenarios: [
@@ -280,6 +301,16 @@ export default {
       action: 'assert_tree_create_context_menu',
       requiredText: [],
       screenshot: 'afe-07-tree-create-context-menu.png'
+    },
+    {
+      id: 'AFE-08-MENU-BAR-CREATE-VISIBILITY',
+      flowIds: ['AFE-08'],
+      profile: 'default',
+      path: '/',
+      viewport: 'desktop',
+      action: 'assert_menu_bar_create_visibility',
+      requiredText: [],
+      screenshot: 'afe-08-menu-bar-create-visibility.png'
     }
   ]
 };
