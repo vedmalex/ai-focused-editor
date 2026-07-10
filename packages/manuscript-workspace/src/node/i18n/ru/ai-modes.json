@@ -29,6 +29,8 @@
       "result-ready": "Результат «{0}» готов к просмотру в diff и в наборе изменений чата.",
       "mode-failed": "«{0}» завершился ошибкой: {1}",
       "agent-description": "Агент AI-режима проекта: {0}",
+      "fragment-name": "AI Focused Editor: {0}",
+      "fragment-fallback-description": "AI-режим проекта: {0}",
 
       "editor-label": "AI-режимы",
       "editor-caption": "Форма AI-режимов: {0}",

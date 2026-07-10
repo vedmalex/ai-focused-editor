@@ -1,5 +1,6 @@
 import URI from '@theia/core/lib/common/uri';
 import { DisposableCollection } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
@@ -109,14 +110,19 @@ export class AiModePromptFragmentContribution implements FrontendApplicationCont
   }
 
   protected toPromptFragment(mode: AiMode): BasePromptFragment {
+    // The prompt-fragment picker renders `name` (falling back to the fragment id)
+    // and `description`, so both carry the author's mode label/description; the
+    // 1.73 slash-command list can only render the ASCII `commandName`, so that
+    // stays a normalized slug while the label surfaces through name/description.
+    const displayLabel = mode.label?.trim() || mode.id;
     return {
       id: this.getFragmentId(mode.id),
-      name: `AI Focused Editor: ${mode.label}`,
-      description: mode.description || `Project AI mode: ${mode.id}`,
+      name: nls.localize('ai-focused-editor/ai-modes/fragment-name', 'AI Focused Editor: {0}', displayLabel),
+      description: mode.description || nls.localize('ai-focused-editor/ai-modes/fragment-fallback-description', 'Project AI mode: {0}', mode.id),
       template: this.getTemplate(mode),
       isCommand: true,
       commandName: `${PROJECT_AI_MODE_COMMAND_PREFIX}${this.normalizeCommandName(mode.id)}`,
-      commandDescription: mode.description || mode.label
+      commandDescription: mode.description || displayLabel
     };
   }
 

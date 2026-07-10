@@ -269,7 +269,13 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
       try {
         this.customAgentFactory(
           agentId,
-          this.agentName(mode.id),
+          // The @mention dropdown and the AI capabilities/settings panels render
+          // the agent NAME, so it carries the human-readable mode label (falling
+          // back to the id). Mentions still resolve by the stable ASCII agent id:
+          // the completion inserts the id as the token and the chat request parser
+          // resolves `@<id>` via `ChatAgentService.getAgent(id)`, so a non-ASCII
+          // label here is display-only and never has to satisfy the mention regex.
+          this.agentDisplayName(mode),
           mode.description || nls.localize('ai-focused-editor/ai-modes/agent-description', 'Project AI mode agent: {0}', mode.id),
           [
             mode.systemPrompt,
@@ -299,16 +305,17 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
     return `${MODE_AGENT_ID_PREFIX}${modeId}`;
   }
 
-  /** Chat `@mention` name: lowercase, dashes, no spaces. */
-  protected agentName(modeId: string): string {
-    return modeId
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, '-')
-      .replace(/^-+|-+$/g, '') || 'mode';
+  /**
+   * Human-readable agent name shown in the chat `@mention` completion and the AI
+   * capabilities/settings panels; falls back to the mode id when a label is
+   * missing. This is display text only — mentions resolve by {@link agentId}.
+   */
+  protected agentDisplayName(mode: AiMode): string {
+    return mode.label?.trim() || mode.id;
   }
 
   protected agentSignature(mode: AiMode): string {
-    return JSON.stringify([this.agentName(mode.id), mode.description ?? '', mode.systemPrompt]);
+    return JSON.stringify([this.agentDisplayName(mode), mode.description ?? '', mode.systemPrompt]);
   }
 
   // --- Execution ------------------------------------------------------------
@@ -392,7 +399,10 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
     const instruction = input
       ? `Use the "${mode.label}" instruction on this input:\n\n${input}`
       : `Use the "${mode.label}" instruction.`;
-    const text = mode.agent ? `@${this.agentName(mode.id)} ${instruction}` : instruction;
+    // Reference the agent by its stable ASCII id (not its now-human-readable
+    // name): the chat request parser resolves `@<id>` via getAgent(id), and the
+    // id always satisfies the mention regex even when the label does not.
+    const text = mode.agent ? `@${this.agentId(mode.id)} ${instruction}` : instruction;
 
     await this.chatService.sendRequest(session.id, { text });
     await this.logRun(mode, context, 'chat', documentUri, { chatSessionId: session.id });
