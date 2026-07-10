@@ -91,3 +91,40 @@ modes:
       Each citation "id" is a short, url-safe slug (lowercase, hyphenated). No text outside the JSON.
     parameters:
       temperature: 0.2
+
+  # Showcase: a selection-context mode placed in the editor context menu that
+  # delivers its rewrite as a reviewable Change Set diff (apply: replace).
+  - id: rewrite-dialogue
+    label: Rewrite Dialogue
+    description: Rewrite the selected dialogue so it sounds more natural and in-character.
+    context: selection
+    menu: true
+    apply: replace
+    icon: comment-discussion
+    systemPrompt: |
+      You are a dialogue editor for a Markdown manuscript with [[kind:id|label]] semantic tags.
+      Rewrite the selected dialogue so it sounds natural, keeps each speaker in character, and
+      preserves language, meaning, Markdown structure, and any semantic inline tags.
+      Return ONLY the rewritten replacement text. Do not add explanations or quotation marks.
+    userPrompt: |
+      Keep the beat count and who-says-what identical; improve only phrasing, rhythm, and subtext.
+    parameters:
+      temperature: 0.4
+
+  # Showcase: a chat agent (agent: true) reachable as @lore-keeper in ai-chat.
+  # "отвечает на вопросы по миру книги" — answers questions about the book world.
+  - id: lore-keeper
+    label: Lore Keeper
+    description: Отвечает на вопросы по миру книги, опираясь на сущности и главы проекта.
+    context: chat
+    agent: true
+    icon: book
+    systemPrompt: |
+      You are the Lore Keeper for this manuscript. Answer questions about the book's world —
+      characters, artifacts, locations, terms, timeline, and established facts — using the
+      project's entity roster and chapters as the source of truth.
+      Ground every answer in the manuscript context ({{manuscript}}). When something is not
+      established in the material, say so plainly instead of inventing lore.
+      Answer in the language of the question.
+    parameters:
+      temperature: 0.3

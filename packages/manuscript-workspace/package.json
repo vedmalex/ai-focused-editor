@@ -61,10 +61,16 @@
       "frontend": "lib/browser/knowledge-generation-frontend-module"
     },
     {
+      "frontend": "lib/browser/ai-mode-dynamic-frontend-module"
+    },
+    {
       "frontend": "lib/browser/narrative-graph-frontend-module"
     },
     {
       "frontend": "lib/browser/semantic-history-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/ai-rotation-frontend-module"
     }
   ]
 }

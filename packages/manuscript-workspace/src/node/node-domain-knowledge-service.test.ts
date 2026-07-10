@@ -431,4 +431,122 @@ describe('NodeAiModeRegistryService', () => {
     const warning = snapshot.diagnostics.find(diagnostic => diagnostic.message.includes('must contain a modes list'));
     expect(warning?.severity).toBe('warning');
   });
+
+  test('defaults context to chat, menu/agent to false and apply to chat', async () => {
+    await fs.writeFile(join(root, 'ai/prompts/custom-modes.yaml'), [
+      'modes:',
+      '  - id: plain',
+      '    systemPrompt: Do a thing.',
+      ''
+    ].join('\n'));
+
+    const snapshot = await service.getSnapshot(root);
+    const plain = snapshot.modes[0];
+    expect(plain.context).toBe('chat');
+    expect(plain.menu).toBe(false);
+    expect(plain.agent).toBe(false);
+    expect(plain.apply).toBe('chat');
+    expect(plain.icon).toBeUndefined();
+    expect(snapshot.diagnostics.filter(diagnostic => diagnostic.severity === 'warning')).toEqual([]);
+  });
+
+  test('defaults apply to replace for selection modes and parses menu/icon', async () => {
+    await fs.writeFile(join(root, 'ai/prompts/custom-modes.yaml'), [
+      'modes:',
+      '  - id: rewrite',
+      '    label: Rewrite',
+      '    systemPrompt: Rewrite the selection.',
+      '    context: selection',
+      '    menu: true',
+      '    icon: sparkle',
+      ''
+    ].join('\n'));
+
+    const snapshot = await service.getSnapshot(root);
+    const rewrite = snapshot.modes[0];
+    expect(rewrite.context).toBe('selection');
+    expect(rewrite.menu).toBe(true);
+    expect(rewrite.apply).toBe('replace');
+    expect(rewrite.icon).toBe('sparkle');
+  });
+
+  test('honours an explicit insert apply for word modes', async () => {
+    await fs.writeFile(join(root, 'ai/prompts/custom-modes.yaml'), [
+      'modes:',
+      '  - id: define',
+      '    systemPrompt: Define the word.',
+      '    context: word',
+      '    apply: insert',
+      ''
+    ].join('\n'));
+
+    const snapshot = await service.getSnapshot(root);
+    expect(snapshot.modes[0].apply).toBe('insert');
+  });
+
+  test('warns and defaults on an unknown context value', async () => {
+    await fs.writeFile(join(root, 'ai/prompts/custom-modes.yaml'), [
+      'modes:',
+      '  - id: weird',
+      '    systemPrompt: Prompt.',
+      '    context: paragraph',
+      ''
+    ].join('\n'));
+
+    const snapshot = await service.getSnapshot(root);
+    expect(snapshot.modes[0].context).toBe('chat');
+    const warning = snapshot.diagnostics.find(diagnostic => diagnostic.message.includes('unknown context "paragraph"'));
+    expect(warning?.severity).toBe('warning');
+  });
+
+  test('warns and defaults on an unknown apply value', async () => {
+    await fs.writeFile(join(root, 'ai/prompts/custom-modes.yaml'), [
+      'modes:',
+      '  - id: weird-apply',
+      '    systemPrompt: Prompt.',
+      '    context: selection',
+      '    apply: overwrite',
+      ''
+    ].join('\n'));
+
+    const snapshot = await service.getSnapshot(root);
+    // Falls back to the selection default.
+    expect(snapshot.modes[0].apply).toBe('replace');
+    const warning = snapshot.diagnostics.find(diagnostic => diagnostic.message.includes('unknown apply "overwrite"'));
+    expect(warning?.severity).toBe('warning');
+  });
+
+  test('warns when replace/insert is used with a non-editable context and falls back to chat', async () => {
+    await fs.writeFile(join(root, 'ai/prompts/custom-modes.yaml'), [
+      'modes:',
+      '  - id: chapter-replace',
+      '    systemPrompt: Prompt.',
+      '    context: chapter',
+      '    apply: replace',
+      ''
+    ].join('\n'));
+
+    const snapshot = await service.getSnapshot(root);
+    expect(snapshot.modes[0].apply).toBe('chat');
+    const warning = snapshot.diagnostics.find(diagnostic =>
+      diagnostic.message.includes('only selection/word modes can replace or insert'));
+    expect(warning?.severity).toBe('warning');
+  });
+
+  test('parses the agent flag and ignores a non-boolean menu value', async () => {
+    await fs.writeFile(join(root, 'ai/prompts/custom-modes.yaml'), [
+      'modes:',
+      '  - id: lore',
+      '    systemPrompt: Answer world questions.',
+      '    agent: true',
+      '    menu: yes-please',
+      ''
+    ].join('\n'));
+
+    const snapshot = await service.getSnapshot(root);
+    const lore = snapshot.modes[0];
+    expect(lore.agent).toBe(true);
+    // A non-boolean menu value is treated as false rather than truthy.
+    expect(lore.menu).toBe(false);
+  });
 });

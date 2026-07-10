@@ -5,7 +5,11 @@ import { FileUri } from '@theia/core/lib/common/file-uri';
 import { injectable } from '@theia/core/shared/inversify';
 import { parse } from 'yaml';
 import {
+  AI_MODE_APPLY_KINDS,
+  AI_MODE_CONTEXTS,
   AiMode,
+  AiModeApply,
+  AiModeContext,
   AiModeRegistryBackendService,
   AiModeRegistrySnapshot,
   CitationEntry,
@@ -72,6 +76,11 @@ interface AiModeEntry {
   prompt?: unknown;
   userPrompt?: unknown;
   parameters?: unknown;
+  context?: unknown;
+  menu?: unknown;
+  apply?: unknown;
+  agent?: unknown;
+  icon?: unknown;
 }
 
 const AI_MODES_PATH = 'ai/prompts/custom-modes.yaml';
@@ -707,13 +716,22 @@ export class NodeAiModeRegistryService implements AiModeRegistryBackendService {
       return undefined;
     }
 
+    const context = this.asContext(modeEntry.context, id, sourceUri, diagnostics);
+    const apply = this.asApply(modeEntry.apply, context, id, sourceUri, diagnostics);
+    const icon = asString(modeEntry.icon);
+
     return {
       id,
       label: asString(modeEntry.label) || id,
       description: asString(modeEntry.description),
       systemPrompt,
       userPrompt: asString(modeEntry.userPrompt),
-      parameters: this.asParameters(modeEntry.parameters)
+      parameters: this.asParameters(modeEntry.parameters),
+      context,
+      menu: this.asBoolean(modeEntry.menu),
+      apply,
+      agent: this.asBoolean(modeEntry.agent),
+      ...(icon ? { icon } : {})
     };
   }
 
@@ -722,5 +740,70 @@ export class NodeAiModeRegistryService implements AiModeRegistryBackendService {
       return undefined;
     }
     return { ...value } as AiMode['parameters'];
+  }
+
+  protected asBoolean(value: unknown): boolean {
+    return value === true;
+  }
+
+  /** Normalizes `context`, defaulting to `chat` and warning on unknown values. */
+  protected asContext(
+    value: unknown,
+    modeId: string,
+    sourceUri: string,
+    diagnostics: WorkspaceDiagnostic[]
+  ): AiModeContext {
+    if (value === undefined || value === null || value === '') {
+      return 'chat';
+    }
+    if (typeof value === 'string' && (AI_MODE_CONTEXTS as readonly string[]).includes(value)) {
+      return value as AiModeContext;
+    }
+    diagnostics.push({
+      severity: 'warning',
+      source: 'ai-mode-registry',
+      uri: sourceUri,
+      message: `AI mode "${modeId}" has unknown context "${String(value)}"; defaulting to "chat".`
+    });
+    return 'chat';
+  }
+
+  /**
+   * Normalizes `apply`, defaulting to `replace` for selection modes and `chat`
+   * otherwise. `replace`/`insert` are only valid for `selection`/`word`; for
+   * other contexts they warn and fall back to `chat`.
+   */
+  protected asApply(
+    value: unknown,
+    context: AiModeContext,
+    modeId: string,
+    sourceUri: string,
+    diagnostics: WorkspaceDiagnostic[]
+  ): AiModeApply {
+    const fallback: AiModeApply = context === 'selection' ? 'replace' : 'chat';
+    let apply: AiModeApply = fallback;
+    if (value !== undefined && value !== null && value !== '') {
+      if (typeof value === 'string' && (AI_MODE_APPLY_KINDS as readonly string[]).includes(value)) {
+        apply = value as AiModeApply;
+      } else {
+        diagnostics.push({
+          severity: 'warning',
+          source: 'ai-mode-registry',
+          uri: sourceUri,
+          message: `AI mode "${modeId}" has unknown apply "${String(value)}"; defaulting to "${fallback}".`
+        });
+        return fallback;
+      }
+    }
+    if ((apply === 'replace' || apply === 'insert') && context !== 'selection' && context !== 'word') {
+      diagnostics.push({
+        severity: 'warning',
+        source: 'ai-mode-registry',
+        uri: sourceUri,
+        message: `AI mode "${modeId}" uses apply "${apply}" with context "${context}"; only selection/word modes can replace or insert. Falling back to "chat".`
+      });
+      return 'chat';
+    }
+    return apply;
   }
 }
