@@ -164,6 +164,7 @@ export default new ContainerModule(bind => {
   bind(PreferenceContribution).toConstantValue(AiFocusedEditorPreferenceContribution);
   bindViewContribution(bind, ManuscriptTreeViewContribution);
   bind(FrontendApplicationContribution).toService(ManuscriptTreeViewContribution);
+  bind(TabBarToolbarContribution).toService(ManuscriptTreeViewContribution);
   bindViewContribution(bind, EntityCardsViewContribution);
   bindViewContribution(bind, SourceLibraryViewContribution);
   bindViewContribution(bind, SemanticMarkdownPreviewContribution);

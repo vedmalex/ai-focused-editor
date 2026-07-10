@@ -8,7 +8,11 @@ import {
 } from '@theia/core/lib/common';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
-import type { FrontendApplication, FrontendApplicationContribution } from '@theia/core/lib/browser';
+import type { FrontendApplication, FrontendApplicationContribution, Widget } from '@theia/core/lib/browser';
+import {
+  TabBarToolbarContribution,
+  TabBarToolbarRegistry
+} from '@theia/core/lib/browser/shell/tab-bar-toolbar';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import { AFE_MANUSCRIPT_SECTION_CONTEXT_KEY, ManuscriptTreeNode } from './manuscript-tree';
 import {
@@ -56,7 +60,7 @@ export namespace ManuscriptTreeCommands {
 
 @injectable()
 export class ManuscriptTreeViewContribution extends AbstractViewContribution<ManuscriptTreeWidget>
-  implements FrontendApplicationContribution {
+  implements FrontendApplicationContribution, TabBarToolbarContribution {
   @inject(QuickInputService)
   protected readonly quickInput!: QuickInputService;
 
@@ -146,6 +150,25 @@ export class ManuscriptTreeViewContribution extends AbstractViewContribution<Man
         ...(when ? { when } : {})
       });
     }
+  }
+
+  registerToolbarItems(registry: TabBarToolbarRegistry): void {
+    registry.registerItem({
+      id: 'ai-focused-editor.manuscriptTree.toolbar.newChapter',
+      command: ManuscriptTreeCommands.NEW_CHAPTER.id,
+      icon: 'codicon codicon-add',
+      tooltip: 'New Chapter...',
+      priority: 2,
+      isVisible: (widget: Widget) => widget instanceof ManuscriptTreeWidget
+    });
+    registry.registerItem({
+      id: 'ai-focused-editor.manuscriptTree.toolbar.refresh',
+      command: ManuscriptTreeCommands.REFRESH.id,
+      icon: 'codicon codicon-refresh',
+      tooltip: 'Refresh Manuscript View',
+      priority: 3,
+      isVisible: (widget: Widget) => widget instanceof ManuscriptTreeWidget
+    });
   }
 
   protected getSelectedManuscriptNode(): ManuscriptTreeNode | undefined {
