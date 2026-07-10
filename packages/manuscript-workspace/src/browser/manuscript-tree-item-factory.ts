@@ -29,7 +29,7 @@ export class ManuscriptTreeItemFactory {
   protected createNode(manuscript: ManuscriptNode): ManuscriptTreeNode {
     if (manuscript.type === 'folder') {
       const folder: ManuscriptFolderTreeNode = {
-        id: `manuscript:${manuscript.path}`,
+        id: `manuscript:${manuscript.id}`,
         name: manuscript.name,
         parent: undefined,
         nodeType: 'folder',

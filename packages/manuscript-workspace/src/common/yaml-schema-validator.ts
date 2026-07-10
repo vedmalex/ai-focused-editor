@@ -3,9 +3,38 @@ import Ajv, {
   ValidateFunction
 } from 'ajv';
 import { injectable } from '@theia/core/shared/inversify';
-import type { WorkspaceDiagnostic } from '../common';
+import type { WorkspaceDiagnostic } from './manuscript-workspace-protocol';
 
-export type DomainYamlSchemaKind = 'metadata' | 'manifest' | 'character' | 'term';
+export type DomainYamlSchemaKind =
+  | 'metadata'
+  | 'manifest'
+  | 'character'
+  | 'term'
+  | 'artifact'
+  | 'location';
+
+/** Optional narrative fields shared by every entity kind (spec §5.2). */
+const richEntityProperties = {
+  aliases: {
+    type: 'array',
+    items: { type: 'string' },
+    nullable: true
+  },
+  epithets: {
+    type: 'array',
+    items: { type: 'string' },
+    nullable: true
+  },
+  speechPatterns: {
+    type: 'array',
+    items: { type: 'string' },
+    nullable: true
+  },
+  summary: { type: 'string', nullable: true },
+  backstory: { type: 'string', nullable: true },
+  arc: { type: 'string', nullable: true },
+  notes: { type: 'string', nullable: true }
+} as const;
 
 const metadataSchema = {
   type: 'object',
@@ -54,12 +83,7 @@ const characterSchema = {
   properties: {
     id: { type: 'string', minLength: 1 },
     name: { type: 'string', minLength: 1 },
-    aliases: {
-      type: 'array',
-      items: { type: 'string' },
-      nullable: true
-    },
-    summary: { type: 'string', nullable: true }
+    ...richEntityProperties
   }
 };
 
@@ -70,7 +94,50 @@ const termSchema = {
   properties: {
     id: { type: 'string', minLength: 1 },
     term: { type: 'string', minLength: 1 },
-    summary: { type: 'string', nullable: true }
+    ...richEntityProperties
+  }
+};
+
+/**
+ * Optional artifact ownership/transfer history (FR-007, spec §5.2). Chronology
+ * follows list order; from/to are freeform story-time labels, not real dates.
+ */
+const ownershipSchema = {
+  type: 'array',
+  nullable: true,
+  items: {
+    type: 'object',
+    required: ['owner'],
+    additionalProperties: true,
+    properties: {
+      owner: { type: 'string', minLength: 1 },
+      from: { type: 'string', nullable: true },
+      to: { type: 'string', nullable: true },
+      note: { type: 'string', nullable: true }
+    }
+  }
+} as const;
+
+const artifactSchema = {
+  type: 'object',
+  required: ['id', 'name'],
+  additionalProperties: true,
+  properties: {
+    id: { type: 'string', minLength: 1 },
+    name: { type: 'string', minLength: 1 },
+    ownership: ownershipSchema,
+    ...richEntityProperties
+  }
+};
+
+const locationSchema = {
+  type: 'object',
+  required: ['id', 'name'],
+  additionalProperties: true,
+  properties: {
+    id: { type: 'string', minLength: 1 },
+    name: { type: 'string', minLength: 1 },
+    ...richEntityProperties
   }
 };
 
@@ -85,7 +152,9 @@ export class YamlSchemaValidator {
     metadata: this.ajv.compile(metadataSchema),
     manifest: this.ajv.compile(manifestSchema),
     character: this.ajv.compile(characterSchema),
-    term: this.ajv.compile(termSchema)
+    term: this.ajv.compile(termSchema),
+    artifact: this.ajv.compile(artifactSchema),
+    location: this.ajv.compile(locationSchema)
   };
 
   validate(kind: DomainYamlSchemaKind, uri: string, value: unknown): WorkspaceDiagnostic[] {
@@ -112,6 +181,10 @@ export class YamlSchemaValidator {
         return 'character entity';
       case 'term':
         return 'term entity';
+      case 'artifact':
+        return 'artifact entity';
+      case 'location':
+        return 'location entity';
     }
   }
 
