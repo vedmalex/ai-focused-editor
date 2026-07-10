@@ -9,18 +9,21 @@
   ],
   "scripts": {
     "build": "bun run build:packages && bun run build:browser",
-    "build:packages": "bun run --cwd packages/semantic-markdown build && bun run --cwd packages/book-export build && bun run --cwd packages/theia-git-fork build && bun run --cwd packages/manuscript-workspace build",
+    "build:all": "bun run build && bun run build:electron",
     "build:browser": "bun run --cwd apps/browser bundle",
     "build:electron": "bun run --cwd apps/electron bundle",
+    "build:packages": "bun run --cwd packages/semantic-markdown build && bun run --cwd packages/book-export build && bun run --cwd packages/theia-git-fork build && bun run --cwd packages/manuscript-workspace build",
     "clean": "bun run --cwd packages/semantic-markdown clean && bun run --cwd packages/book-export clean && bun run --cwd packages/theia-git-fork clean && bun run --cwd packages/manuscript-workspace clean && rm -rf apps/browser/lib apps/browser/.theia apps/electron/lib apps/electron/.theia",
     "start": "bun run --cwd apps/browser start",
     "start:browser": "bun run --cwd apps/browser start",
     "start:electron": "bun run --cwd apps/electron start",
-    "test:ui": "node scripts/browser-smoke.mjs",
     "test": "bun test packages",
+    "test:electron": "node scripts/electron-smoke.mjs",
+    "test:ui": "node scripts/browser-smoke.mjs",
+    "test:ui:flows": "bash scripts/ui-flows/run-flow-checks.sh",
     "verify": "bun test packages && bun run build && bun run build:electron",
-    "watch": "bun run --cwd packages/manuscript-workspace watch",
-    "test:ui:flows": "bash scripts/ui-flows/run-flow-checks.sh"
+    "verify:full": "bun run verify && bun run test:ui && bun run test:electron",
+    "watch": "bun run --cwd packages/manuscript-workspace watch"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
