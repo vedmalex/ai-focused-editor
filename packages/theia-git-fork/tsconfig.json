@@ -1,0 +1,39 @@
+{
+  "//": "Compiler options mirror the upstream Eclipse Theia base tsconfig (configs/base.tsconfig.json) rather than this repo's stricter default, because the vendored @theia/git sources rely on Theia conventions: DI @inject properties without initializers (strictPropertyInitialization OFF) and `import * as React from '@theia/core/shared/react'` against an `export =` shim (esModuleInterop OFF). See FORK.md.",
+  "compilerOptions": {
+    "target": "ES2017",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": [
+      "ES2017",
+      "ES2018.Regexp",
+      "DOM"
+    ],
+    "jsx": "react",
+    "rootDir": "src",
+    "outDir": "lib",
+    "declaration": true,
+    "sourceMap": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "strictNullChecks": true,
+    "strictBindCallApply": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "downlevelIteration": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "src/**/*.spec.ts",
+    "src/**/*.slow-spec.ts",
+    "src/**/*.test.ts",
+    "src/node/test"
+  ]
+}

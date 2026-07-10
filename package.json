@@ -9,10 +9,10 @@
   ],
   "scripts": {
     "build": "bun run build:packages && bun run build:browser",
-    "build:packages": "bun run --cwd packages/semantic-markdown build && bun run --cwd packages/book-export build && bun run --cwd packages/manuscript-workspace build",
+    "build:packages": "bun run --cwd packages/semantic-markdown build && bun run --cwd packages/book-export build && bun run --cwd packages/theia-git-fork build && bun run --cwd packages/manuscript-workspace build",
     "build:browser": "bun run --cwd apps/browser bundle",
     "build:electron": "bun run --cwd apps/electron bundle",
-    "clean": "bun run --cwd packages/semantic-markdown clean && bun run --cwd packages/book-export clean && bun run --cwd packages/manuscript-workspace clean && rm -rf apps/browser/lib apps/browser/.theia apps/electron/lib apps/electron/.theia",
+    "clean": "bun run --cwd packages/semantic-markdown clean && bun run --cwd packages/book-export clean && bun run --cwd packages/theia-git-fork clean && bun run --cwd packages/manuscript-workspace clean && rm -rf apps/browser/lib apps/browser/.theia apps/electron/lib apps/electron/.theia",
     "start": "bun run --cwd apps/browser start",
     "start:browser": "bun run --cwd apps/browser start",
     "start:electron": "bun run --cwd apps/electron start",

@@ -1,0 +1,68 @@
+{
+  "name": "@ai-focused-editor/git",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TEMPORARY local fork of @theia/git@1.60.2 rebuilt against Theia platform 1.73.1. Drop when upstream @theia/git ships a 1.73-compatible release.",
+  "keywords": [
+    "theia-extension"
+  ],
+  "license": "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0",
+  "files": [
+    "lib",
+    "src",
+    "FORK.md",
+    "LICENSE"
+  ],
+  "main": "lib/common/index.js",
+  "typings": "lib/common/index.d.ts",
+  "dependencies": {
+    "@theia/core": "1.73.1",
+    "@theia/editor": "1.73.1",
+    "@theia/filesystem": "1.73.1",
+    "@theia/monaco-editor-core": "1.108.201",
+    "@theia/navigator": "1.73.1",
+    "@theia/scm": "1.73.1",
+    "@theia/scm-extra": "1.73.1",
+    "@theia/workspace": "1.73.1",
+    "@types/diff": "^5.2.1",
+    "diff": "^5.2.0",
+    "dugite-extra": "0.1.17",
+    "find-git-exec": "^0.0.4",
+    "find-git-repositories": "^0.1.1",
+    "luxon": "^2.4.0",
+    "node-ssh": "^12.0.1",
+    "octicons": "^7.1.0",
+    "p-queue": "^8.0.1",
+    "ts-md5": "^1.2.2",
+    "tslib": "^2.6.2",
+    "upath": "^1.0.2"
+  },
+  "devDependencies": {
+    "@types/luxon": "^2.3.2",
+    "@types/node": "^24.0.10",
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0",
+    "reflect-metadata": "0.2.2",
+    "typescript": "~5.8.3"
+  },
+  "scripts": {
+    "build": "rm -rf lib && tsc && bun run build:native",
+    "build:native": "node scripts/ensure-native-git.mjs",
+    "clean": "rm -rf lib *.tsbuildinfo",
+    "watch": "tsc -w"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/git-frontend-module",
+      "backend": "lib/node/git-backend-module"
+    },
+    {
+      "backend": "lib/node/env/git-env-module",
+      "backendElectron": "lib/electron-node/env/electron-git-env-module"
+    },
+    {
+      "frontend": "lib/browser/prompt/git-prompt-module",
+      "frontendElectron": "lib/electron-browser/prompt/electron-git-prompt-module"
+    }
+  ]
+}
