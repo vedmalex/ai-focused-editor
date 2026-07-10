@@ -231,7 +231,13 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - Infra find: flow runs had been served for ~12h by a zombie backend on port 3311 (fresh frontend from disk masked it) — `run-flow-checks.sh` now kills whatever holds the port before starting.
 - Tests: 533; `verify:full` green (browser + electron smokes, 10/10 UI flows).
 
+## Wave 20 — Tree: localized sections, Entities group (shipped)
+
+- Section headers localize at the display point (Рукопись, Персонажи, …); the four entity sections nest under one expanded «Мир книги»/Entities group (globe icon, summed count) mirroring `entities/` and cutting top-level noise; right-click on the group offers all four create commands. 533 tests, 10/10 flows.
+
 ## Backlog (queued)
+
+0. **Electron smoke pipeline flake** (diagnosed, mitigated, not root-caused): only inside `verify:full` right after builds, the electron backend occasionally prints its yargs usage + an unhandled null rejection and the window dies; standalone and `bun run test:electron` always pass. Smoke has 3 launch retries with backoff and captures the main-process output tail for the next occurrence.
 
 1. Full LSP transport if live validation ever needs cross-file incremental analysis (current backend-RPC path covers the active-document case).
 2. Drop the git fork when a platform-compatible `@theia/git` ships.
