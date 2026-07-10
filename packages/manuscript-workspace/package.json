@@ -21,6 +21,7 @@
     "@theia/editor": "1.73.1",
     "@theia/filesystem": "1.73.1",
     "@theia/markers": "1.73.1",
+    "@theia/monaco": "1.73.1",
     "@theia/monaco-editor-core": "1.108.201",
     "@theia/navigator": "1.73.1",
     "@theia/output": "1.73.1",
@@ -40,7 +41,7 @@
     "typescript": "~5.8.3"
   },
   "scripts": {
-    "build": "rm -rf lib && tsc",
+    "build": "rm -rf lib && tsc && mkdir -p lib/browser/themes && cp src/browser/themes/*.json lib/browser/themes/",
     "clean": "rm -rf lib *.tsbuildinfo",
     "watch": "tsc -w"
   },
@@ -75,6 +76,12 @@
     },
     {
       "frontend": "lib/browser/live-validation-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/writer-icon-theme-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/bundled-color-themes-frontend-module"
     }
   ]
 }
