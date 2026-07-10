@@ -128,6 +128,15 @@ export default {
   profiles: {
     default: {
       localStorage: {}
+    },
+    // Force the Russian display language by seeding the same localStorage key
+    // (`localeId`) that @theia/core's nls.setLocale writes. The i18n preloader
+    // reads it before the workbench renders, so no in-app 'Configure Display
+    // Language' click / reload dance is needed — the page simply boots in ru.
+    locale_ru: {
+      localStorage: {
+        localeId: 'ru'
+      }
     }
   },
   actions: {
@@ -291,6 +300,27 @@ export default {
       }
       if (!icons.rocket) { throw new Error('codicon-rocket toolbar icon (Build Book...) not found/visible near the manuscript view'); }
       if (!icons.pulse) { throw new Error('codicon-pulse toolbar icon (Book Doctor) not found/visible near the manuscript view'); }
+    `),
+    // Booted under the locale_ru profile: the product menu label 'Manuscript'
+    // is localized to 'Рукопись' (proves the central registerSubmenu nls wrap +
+    // that the ru languagePack actually applied), and the manuscript-tree
+    // command 'New Chapter...' is localized to 'Новая глава…' (proves our
+    // i18n/ru/manuscript-tree.json dictionary shipped into the bundle and is
+    // resolved by nls). 'File' stays English — @theia/core 1.73 ships no ru for
+    // vscode-derived labels — so this asserts our strings, not core's.
+    assert_locale_ru: action(`
+      await waitForText('Рукопись', 45000);
+      const menuLabels = [...document.querySelectorAll('.lm-MenuBar-itemLabel, .p-MenuBar-itemLabel')]
+        .filter(visible).map(el => el.textContent.trim());
+      if (!menuLabels.includes('Рукопись')) {
+        throw new Error('Expected localized menu label "Рукопись" (menu bar: ' + menuLabels.join(' | ') + ')');
+      }
+      await openMenu('Рукопись');
+      if (!menuItem('Новая глава…')) {
+        throw new Error('Expected localized command "Новая глава…" in the Рукопись menu (visible: '
+          + menuItems().map(el => el.textContent.trim()).join(' | ') + ')');
+      }
+      await closeMenus();
     `)
   },
   scenarios: [
@@ -383,6 +413,32 @@ export default {
       action: 'assert_book_menu_and_toolbar',
       requiredText: [],
       screenshot: 'afe-09-book-menu-and-toolbar.png'
+    },
+    {
+      id: 'AFE-10-LOCALE-RU',
+      flowIds: ['AFE-10'],
+      profile: 'locale_ru',
+      // Belt and braces: the collector seeds localStorage AFTER the first page
+      // load and its goto can race the seeding, so the scenario bootstraps the
+      // locale itself — set the key and schedule ONE reload when the menu bar
+      // is still English; the action then waits on the reloaded page.
+      beforeCode: {
+        eval: `(async () => {
+          localStorage.setItem('localeId', 'ru');
+          const ruApplied = [...document.querySelectorAll('.lm-MenuBar-itemLabel, .p-MenuBar-itemLabel')]
+            .some(el => el.textContent.trim() === 'Рукопись');
+          if (!ruApplied) { setTimeout(() => location.reload(), 100); }
+          return true;
+        })()`
+      },
+      // A query param forces a REAL navigation: the collector seeds localStorage
+      // after the initial load, and a hash-only goto would not reload the page,
+      // so nls would never re-read localeId (menu would stay English).
+      path: '/?locale-check=ru',
+      viewport: 'desktop',
+      action: 'assert_locale_ru',
+      requiredText: ['Рукопись'],
+      screenshot: 'afe-10-locale-ru.png'
     }
   ]
 };

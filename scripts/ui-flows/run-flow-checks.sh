@@ -18,6 +18,15 @@ if [[ ! -f "$FLOW_RUNNER" ]]; then
   exit 1
 fi
 
+# A stale instance on the port would silently serve an OLD backend (the new
+# app fails to bind and dies, curl happily finds the zombie): kill it first.
+STALE_PIDS="$(lsof -tnP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
+if [[ -n "$STALE_PIDS" ]]; then
+  echo "Killing stale process(es) on port $PORT: $STALE_PIDS"
+  kill $STALE_PIDS 2>/dev/null || true
+  sleep 2
+fi
+
 echo "Starting AI Focused Editor browser app on port $PORT ..."
 (cd "$REPO_ROOT/apps/browser" && bunx theia start --hostname 127.0.0.1 --port "$PORT" ../../examples/sample-book) >/tmp/afe-flow-app.log 2>&1 &
 APP_PID=$!
