@@ -162,7 +162,12 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - Feature map in `.llm-wiki` refreshed for waves 9–10 (9 modules, 57 commands, connection-model + dynamic-modes sections).
 - Tests: 297 across 20 files.
 
+## Wave 10.1 — Electron exercised (shipped)
+
+- **Electron runtime smoke** (`bun run test:electron`, Playwright Electron driver): workbench render, manuscript tree, no native-module/DI console errors — the git fork runs clean on the Electron target; soft git status-bar branch check. Conflicting `find-git-repositories@0.2.2` app dep removed (the fork brings its own 0.1.x).
+- Unified scripts: `build:all` (packages + browser + electron), `verify:full` (verify + browser smoke + electron smoke).
+
 ## Backlog (queued)
 
 1. Full LSP transport if live validation ever needs cross-file incremental analysis (current backend-RPC path covers the active-document case).
-2. Drop the git fork when a platform-compatible `@theia/git` ships; exercise the fork on the electron target.
+2. Drop the git fork when a platform-compatible `@theia/git` ships.
