@@ -12,3 +12,6 @@ apps/*/src-gen/
 .DS_Store
 output/
 .playwright-cli/
+
+# runtime chat logs written by smoke/flow runs against the sample book
+examples/sample-book/ai/chat/
