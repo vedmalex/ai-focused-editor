@@ -17,6 +17,7 @@ import {
   WidgetFactory
 } from '@theia/core/lib/browser';
 import { ServiceConnectionProvider } from '@theia/core/lib/browser/messaging/service-connection-provider';
+import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
 import { bindViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { createTreeContainer } from '@theia/core/lib/browser/tree';
 import {
@@ -167,6 +168,7 @@ export default new ContainerModule(bind => {
   bindViewContribution(bind, EntityCardsViewContribution);
   bindViewContribution(bind, SourceLibraryViewContribution);
   bindViewContribution(bind, SemanticMarkdownPreviewContribution);
+  bind(TabBarToolbarContribution).toService(SemanticMarkdownPreviewContribution);
   bindViewContribution(bind, ModelConfigViewContribution);
   bindViewContribution(bind, AiDebugViewContribution);
   bind(FrontendApplicationContribution).to(MarkdownLanguageContribution).inSingletonScope();

@@ -101,6 +101,12 @@ export namespace AiFocusedEditorCommands {
     category: 'AI Focused Editor',
     label: 'Suggest Coreference Tags'
   };
+
+  export const AI_REVIEW_CHAPTER: Command = {
+    id: 'ai-focused-editor.ai.reviewChapter',
+    category: 'AI Focused Editor',
+    label: 'AI Review Current Chapter'
+  };
 }
 
 @injectable()
@@ -180,6 +186,39 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     registry.registerCommand(AiFocusedEditorCommands.SUGGEST_COREFERENCE, {
       execute: () => this.suggestCoreferenceTags()
     });
+
+    registry.registerCommand(AiFocusedEditorCommands.AI_REVIEW_CHAPTER, {
+      execute: () => this.aiReviewCurrentChapter()
+    });
+  }
+
+  /**
+   * Chapter review through the Theia AI chat pipeline: the request goes to the
+   * Manuscript agent with the #chapter and #entities context variables, so the
+   * review streams into the chat view with full provenance and tool access.
+   */
+  protected async aiReviewCurrentChapter(): Promise<void> {
+    const editorWidget = this.editorManager.currentEditor ?? this.editorManager.activeEditor;
+    const editor = editorWidget?.editor;
+    if (!editor || !editor.uri.path.toString().endsWith('.md')) {
+      await this.messages.warn('Open a Markdown chapter before requesting an AI review.');
+      return;
+    }
+
+    const session = this.chatService.getSessions().find(candidate => candidate.isActive)
+      ?? this.chatService.createSession();
+    await this.revealChatView();
+    const text = [
+      'Review the current chapter critically as an experienced literary editor:',
+      '- style, clarity, rhythm, and repetitions;',
+      '- scene logic and pacing;',
+      '- consistency with the entity roster (names, epithets, facts);',
+      '- concrete, actionable suggestions — quote the fragment, propose a fix.',
+      'Answer in the language the chapter is written in.',
+      '',
+      '#chapter #entities'
+    ].join('\n');
+    await this.chatService.sendRequest(session.id, { text });
   }
 
   /**
@@ -909,6 +948,9 @@ export class ManuscriptWorkspaceMenuContribution implements MenuContribution {
     menus.registerMenuAction(menuPath, {
       commandId: AiFocusedEditorCommands.SUGGEST_COREFERENCE.id
     });
+    menus.registerMenuAction(menuPath, {
+      commandId: AiFocusedEditorCommands.AI_REVIEW_CHAPTER.id
+    });
 
     // Writer-facing AI actions belong in the editor context menu (spec FR-009).
     const editorAiMenuPath = [...EDITOR_CONTEXT_MENU, ...EditorContextMenu.MODIFICATION];
@@ -919,6 +961,10 @@ export class ManuscriptWorkspaceMenuContribution implements MenuContribution {
     menus.registerMenuAction(editorAiMenuPath, {
       commandId: AiFocusedEditorCommands.SUGGEST_COREFERENCE.id,
       order: 'z2'
+    });
+    menus.registerMenuAction(editorAiMenuPath, {
+      commandId: AiFocusedEditorCommands.AI_REVIEW_CHAPTER.id,
+      order: 'z3'
     });
   }
 }

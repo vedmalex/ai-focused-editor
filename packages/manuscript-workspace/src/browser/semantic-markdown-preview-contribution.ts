@@ -8,6 +8,12 @@ import {
   PreferenceService
 } from '@theia/core/lib/common/preferences';
 import { inject, injectable } from '@theia/core/shared/inversify';
+import type { Widget } from '@theia/core/lib/browser';
+import {
+  TabBarToolbarContribution,
+  TabBarToolbarRegistry
+} from '@theia/core/lib/browser/shell/tab-bar-toolbar';
+import { EditorWidget } from '@theia/editor/lib/browser/editor-widget';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { SemanticMarkdownPreviewWidget } from './semantic-markdown-preview-widget';
 import { AI_FOCUSED_EDITOR_PREVIEW_SHOW_TAG_CHIPS } from './ai-focused-editor-preferences';
@@ -34,7 +40,24 @@ export namespace SemanticMarkdownPreviewCommands {
 }
 
 @injectable()
-export class SemanticMarkdownPreviewContribution extends AbstractViewContribution<SemanticMarkdownPreviewWidget> {
+export class SemanticMarkdownPreviewContribution extends AbstractViewContribution<SemanticMarkdownPreviewWidget>
+  implements TabBarToolbarContribution {
+
+  /**
+   * The live Markdown preview button on every .md editor tab — the preview
+   * existed but was hidden in the menu, which read as "no markdown preview".
+   */
+  registerToolbarItems(registry: TabBarToolbarRegistry): void {
+    registry.registerItem({
+      id: 'ai-focused-editor.preview.toolbar',
+      command: SemanticMarkdownPreviewCommands.OPEN.id,
+      icon: 'codicon codicon-open-preview',
+      tooltip: 'Open Markdown Preview',
+      priority: 0,
+      isVisible: (widget: Widget) => widget instanceof EditorWidget
+        && widget.editor.uri.path.ext.toLowerCase() === '.md'
+    });
+  }
   @inject(PreferenceService)
   protected readonly preferenceService!: PreferenceService;
 
