@@ -16,6 +16,7 @@ import {
 } from './ai-focused-editor-preferences';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
 import { ModelConfigCommands } from './model-config-view-contribution';
+import { AiRotationCommands } from './ai-rotation-contribution';
 
 const STATUS_BAR_ID = 'ai-focused-editor.ai-profile-status';
 const AI_PROFILE_PREFERENCES = new Set([
@@ -84,7 +85,8 @@ export class AiProfileStatusBarContribution implements FrontendApplicationContri
           nls.localize('ai-focused-editor/ai-config/tt-api-key', 'API key: {0}', apiKeyValue),
           summary.skipped.length > 0
             ? nls.localize('ai-focused-editor/ai-config/tt-skipped', 'Skipped: {0}', summary.skipped.map(entry => `${entry.endpointId} (${entry.reason})`).join(', '))
-            : undefined
+            : undefined,
+          nls.localize('ai-focused-editor/ai-config/tt-click-switch', 'Click to switch the active alias.')
         ].filter((line): line is string => Boolean(line)).join('\n')
       : status.notConfigured
         ? nls.localize('ai-focused-editor/ai-config/tt-not-configured', 'No AI connection configured yet.\nAdd an endpoint and an alias in AI Model Config.\nClick to open AI Model Config.')
@@ -94,7 +96,9 @@ export class AiProfileStatusBarContribution implements FrontendApplicationContri
       text,
       alignment: StatusBarAlignment.RIGHT,
       priority: 120,
-      command: ModelConfigCommands.OPEN.id,
+      // Mid-writing flow: a configured connection switches the alias in one
+      // click; an unconfigured one still leads into the full Model Config.
+      command: status.configured ? AiRotationCommands.SWITCH_ALIAS.id : ModelConfigCommands.OPEN.id,
       tooltip
     });
   }

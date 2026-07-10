@@ -2,12 +2,14 @@ import {
   Command,
   CommandContribution,
   CommandRegistry,
+  CommandService,
   MenuContribution,
   MenuModelRegistry,
   MessageService,
   QuickInputService,
   QuickPickItem
 } from '@theia/core/lib/common';
+import { ModelConfigCommands } from './model-config-view-contribution';
 import { nls } from '@theia/core/lib/common/nls';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
@@ -39,6 +41,9 @@ export namespace AiRotationCommands {
 
 const UNPIN_ITEM_ID = '__afe_unpin__';
 
+/** Marks the picker row that opens the full Model Config view. */
+const CONFIGURE_CONNECTIONS_SENTINEL = '::configure::';
+
 interface AliasPickItem extends QuickPickItem {
   aliasId: string;
 }
@@ -62,6 +67,9 @@ export class AiRotationContribution implements CommandContribution, MenuContribu
 
   @inject(QuickInputService)
   protected readonly quickInput!: QuickInputService;
+
+  @inject(CommandService)
+  protected readonly commandService!: CommandService;
 
   @inject(MessageService)
   protected readonly messages!: MessageService;
@@ -99,12 +107,21 @@ export class AiRotationContribution implements CommandContribution, MenuContribu
       detail: this.describeAliasChain(alias.chain.length, alias.availableLegs),
       aliasId: alias.id
     }));
+    // Escape hatch into the full configuration from the quick switcher.
+    items.push({
+      label: nls.localize('ai-focused-editor/ai-config/configure-connections', '$(gear) Configure connections...'),
+      aliasId: CONFIGURE_CONNECTIONS_SENTINEL
+    });
 
     const picked = await this.quickInput.showQuickPick(items, {
       title: nls.localize('ai-focused-editor/ai-config/switch-alias-title', 'Switch AI Alias'),
       placeholder: nls.localize('ai-focused-editor/ai-config/switch-alias-placeholder', 'Select the active AI alias (default chain)')
     });
     if (!picked) {
+      return;
+    }
+    if (picked.aliasId === CONFIGURE_CONNECTIONS_SENTINEL) {
+      await this.commandService.executeCommand(ModelConfigCommands.OPEN.id);
       return;
     }
     await this.aiProfilePreferences.setActiveAlias(picked.aliasId);
