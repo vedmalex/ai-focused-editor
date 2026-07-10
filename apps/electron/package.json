@@ -58,7 +58,7 @@
   "scripts": {
     "bundle": "bun run build:ffmpeg-native && bun run rebuild && theia build --app-target electron --mode development",
     "build:ffmpeg-native": "node-gyp rebuild --directory node_modules/@theia/ffmpeg",
-    "rebuild": "theia rebuild:electron --cacheRoot ../.. --modules=keytar,native-keymap,find-git-repositories,drivelist,ssh2,node-pty",
+    "rebuild": "theia rebuild:electron --cacheRoot ../.. --modules=keytar,native-keymap,drivelist,ssh2,node-pty",
     "start": "theia start --app-target electron ../../examples/sample-book"
   },
   "theia": {
@@ -66,6 +66,7 @@
     "frontend": {
       "applicationName": "AI Focused Editor",
       "config": {
+        "defaultIconTheme": "afe-writer-icons",
         "preferences": {
           "files.autoSave": "afterDelay",
           "files.autoSaveDelay": 1000,

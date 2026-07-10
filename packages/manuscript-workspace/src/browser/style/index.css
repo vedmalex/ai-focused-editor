@@ -1265,6 +1265,29 @@
   vertical-align: -1px;
 }
 
+/* ---------- Writer Icons file icon theme (afe-writer-icons) ---------- */
+/* Codicon-based workbench file icons with per-type accents, applied while the
+   WriterIconThemeContribution is the active icon theme (it toggles this root
+   class on <body>). Colours reuse Theia chart variables so they stay
+   theme-aware, consistent with the afe-ico-* author-navigator palette. */
+
+.afe-writer-icons .file-icon.codicon {
+  min-width: var(--theia-icon-size);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.afe-writer-icons .afe-writer-md { color: var(--theia-charts-blue, #4e94ce); }
+.afe-writer-icons .afe-writer-yaml { color: var(--theia-charts-green, #89d185); }
+.afe-writer-icons .afe-writer-json { color: var(--theia-charts-yellow, #cca700); }
+.afe-writer-icons .afe-writer-image { color: var(--theia-charts-purple, #b180d7); }
+.afe-writer-icons .afe-writer-pdf { color: var(--theia-charts-red, #e51400); }
+.afe-writer-icons .afe-writer-epub { color: var(--theia-charts-orange, #d18616); }
+.afe-writer-icons .afe-writer-html { color: var(--theia-charts-orange, #d18616); }
+.afe-writer-icons .afe-writer-folder { color: var(--theia-charts-blue, #4e94ce); }
+.afe-writer-icons .afe-writer-txt { color: var(--theia-descriptionForeground); }
+
 /* ---------- book-config form editors (metadata.yaml / manifest.yaml) ---------- */
 
 .afe-form-editor {
