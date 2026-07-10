@@ -223,6 +223,14 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - Electron smoke: launch retries with main-process output capture + backoff; `verify:full` runs the electron smoke before the Playwright browser chain (back-to-back launches after a heavy Playwright run were the observed flake).
 - Tests: 533 across 29 files; browser smoke + 9/9 UI flows green.
 
+## Wave 19 — Localization ru/en (shipped)
+
+- **Mechanism** (contract wave): node-side `LocalizationContribution` registers per-area ru dictionaries (`src/node/i18n/ru/<area>.json`) with `languagePack: true` — mandatory for the preloader to apply translations, and it also unlocks Theia core's partial ru (`nls.ru.json`; vscode-derived workbench strings like File/Edit stay English — honest partial). Keys `ai-focused-editor/<area>/<slug>`, en defaults inline in code; locale in `localStorage['localeId']`, applied on reload via Configure Display Language.
+- **Coverage** (fan-out wave, 9 parallel area agents): all user-facing strings across ~44 browser files — commands (`Command.toLocalizedCommand`), widget texts, wizards, QuickPick/QuickInput prompts, messages, tooltips, preference descriptions — ~700 strings in 15 dictionaries, natural literary Russian («ёлочки», «…»). User content (mode labels from yaml) intentionally not wrapped; `common/` validation strings stay English this wave (bun tests assert them; queued as a follow-up).
+- Flow AFE-10 forces ru via localStorage and asserts «Рукопись»/«Новая глава…» live; the other nine scenarios pin the English defaults byte-identical.
+- Infra find: flow runs had been served for ~12h by a zombie backend on port 3311 (fresh frontend from disk masked it) — `run-flow-checks.sh` now kills whatever holds the port before starting.
+- Tests: 533; `verify:full` green (browser + electron smokes, 10/10 UI flows).
+
 ## Backlog (queued)
 
 1. Full LSP transport if live validation ever needs cross-file incremental analysis (current backend-RPC path covers the active-document case).
