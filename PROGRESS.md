@@ -167,6 +167,21 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **Electron runtime smoke** (`bun run test:electron`, Playwright Electron driver): workbench render, manuscript tree, no native-module/DI console errors — the git fork runs clean on the Electron target; soft git status-bar branch check. Conflicting `find-git-repositories@0.2.2` app dep removed (the fork brings its own 0.1.x).
 - Unified scripts: `build:all` (packages + browser + electron), `verify:full` (verify + browser smoke + electron smoke).
 
+## Wave 11 — Visual polish (shipped)
+
+- **Writer Icons file icon theme** (`afe-writer-icons`, the app default on both targets): codicon-based icons with `afe-ico-*` accent colours for manuscript sections, materials, and file types; LabelProvider active only while the theme is selected.
+- **Five bundled MIT color themes** registered via `MonacoThemingService.registerParsedTheme` (JSON vendored under `src/browser/themes/`, copied to `lib/` at build time).
+- **Manifest editor drag-and-drop** reordering routed through the same `moveEntry` backend mutation as the tree — both surfaces stay in sync.
+- **Pure-JS git repository locator** in the fork: the `find-git-repositories` native addon flipped ABIs between browser/electron rebuilds; replaced with a depth-6 `.git`-folder walk matching the native contract.
+
+## Wave 12 — Click navigation, AI modes editor, UX fixes (shipped)
+
+- **Clickable navigation in the editor**: semantic tags `[[kind:id|label]]` / `[[id]]` open the entity card (form editor wins via priority 500); relative markdown links `[text](chapter.md#anchor)` open the file and reveal the matching ATX heading by slug. One Monaco link provider coexisting with the cite/footnote providers; workspace-escape guard; only the `[[kind:id` portion is linkified so labels stay editable.
+- **AI modes form editor** for `ai/prompts/custom-modes.yaml`: expandable mode cards (id/label/description/context/apply/menu/agent/icon/prompts/temperature/maxTokens), validation (duplicate ids, missing systemPrompt, invalid apply/context combos), comment-preserving yaml patches that omit default values; `Edit AI Modes...` command seeds the file when missing; opens as the default editor (priority 500), raw YAML via Open With. Saves hot-apply through the existing dynamic-mode watcher.
+- **Manuscript tree icons fixed**: the base `TreeWidget.renderIcon` returns `null`, so LabelProvider icons never rendered — added a `renderIcon` override (FileTreeWidget pattern) + codicon sizing CSS. Flow AFE-03 now asserts ≥5 rendered codicons in the tree.
+- **Duplicate git indicator removed**: our read-only status-bar contribution retired in favour of the fork's richer SCM status bar (Semantic History, Initialize Git Repository, Add to .gitignore untouched).
+- Tests: 357 across 22 files; `verify:full` green (browser + electron smokes, 6/6 UI flows).
+
 ## Backlog (queued)
 
 1. Full LSP transport if live validation ever needs cross-file incremental analysis (current backend-RPC path covers the active-document case).
