@@ -324,6 +324,10 @@ export class NodeManuscriptWorkspaceService implements ManuscriptWorkspaceBacken
     await this.validateEntityDirectory(join(rootPath, 'entities/artifacts'), 'artifact', diagnostics);
     await this.validateEntityDirectory(join(rootPath, 'entities/locations'), 'location', diagnostics);
     await this.validateMarkdownNodes(content, diagnostics);
+    // Supplementary materials are texts too (owner intake 2026-07-10):
+    // lint sources/ and knowledge/ Markdown with the same semantic checks.
+    await this.validateAuxiliaryMarkdown(rootPath, join(rootPath, 'sources'), diagnostics);
+    await this.validateAuxiliaryMarkdown(rootPath, join(rootPath, 'knowledge'), diagnostics);
 
     return {
       rootUri,
@@ -540,6 +544,43 @@ export class NodeManuscriptWorkspaceService implements ManuscriptWorkspaceBacken
       .filter(child => child.isFile() && (child.name.endsWith('.yaml') || child.name.endsWith('.yml')))
       .sort((left, right) => left.name.localeCompare(right.name))) {
       await this.validateYamlFile(join(directoryPath, entry.name), kind, diagnostics);
+    }
+  }
+
+  /** Recursively lints every Markdown file under a supplementary directory. */
+  protected async validateAuxiliaryMarkdown(
+    rootPath: string,
+    directoryPath: string,
+    diagnostics: WorkspaceDiagnostic[]
+  ): Promise<void> {
+    const stat = await this.statIfExists(directoryPath);
+    if (!stat?.isDirectory()) {
+      return;
+    }
+
+    const entries = await fs.readdir(directoryPath, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      const childPath = join(directoryPath, entry.name);
+      if (entry.isDirectory()) {
+        await this.validateAuxiliaryMarkdown(rootPath, childPath, diagnostics);
+        continue;
+      }
+      if (!entry.isFile() || !/\.(md|markdown)$/i.test(entry.name)) {
+        continue;
+      }
+      const text = await this.readTextIfExists(childPath);
+      if (text === undefined) {
+        continue;
+      }
+      for (const diagnostic of validateSemanticMarkdown(text)) {
+        diagnostics.push({
+          severity: diagnostic.severity,
+          source: 'semantic-markdown',
+          uri: FileUri.create(childPath).toString(),
+          message: diagnostic.message,
+          range: diagnostic.range
+        });
+      }
     }
   }
 

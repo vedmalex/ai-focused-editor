@@ -890,6 +890,21 @@ export class ManuscriptWorkspaceMenuContribution implements MenuContribution {
       commandId: AiFocusedEditorCommands.TOGGLE_FOCUS_MODE.id,
       order: '0'
     });
+    // The chapter outline (headings + entities) lives in the standard
+    // Outline view; surface its toggle in the product menu.
+    menus.registerMenuAction(menuPath, {
+      commandId: 'outlineView:toggle',
+      label: 'Chapter Outline',
+      order: '0a'
+    });
+    // Per-folder workbench layout is restored from local storage; a stale
+    // folder can hide newer views (e.g. AI Chat). Give writers the built-in
+    // reset right in the product menu.
+    menus.registerMenuAction(menuPath, {
+      commandId: 'reset.layout',
+      label: 'Reset Workbench Layout (This Folder)',
+      order: 'z9'
+    });
 
     menus.registerMenuAction(menuPath, {
       commandId: AiFocusedEditorCommands.SUGGEST_COREFERENCE.id
