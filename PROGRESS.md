@@ -1,6 +1,6 @@
 # AI Focused Editor Progress
 
-Updated: 2026-07-10 (wave 8 — forms, footnotes, viewers)
+Updated: 2026-07-10 (wave 9 — endpoints/aliases, author agents)
 
 This file tracks implementation progress against `spec.md`. It records verified repository state, not planned intent.
 
@@ -145,9 +145,19 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **Chat mentions & provenance & outline** (wave 7 finale): `#chapter/#entity/#entities/#sources/#outline` variables; history records carry bounded messages/tools/response; Outline shows heading hierarchy with per-section entities.
 - Tests: 221 across 18 files; feature map in `.llm-wiki` refreshed (55 commands, 6 modules).
 
+## Wave 9 — Connection model & author AI (owner intake, shipped)
+
+- **Endpoints + aliases (v1 parity, deeper)**: `aiFocusedEditor.ai.endpoints` (channels: provider/transport/URL/command/env + **timeWindows** availability like `1-5 09:00-18:00`, overnight ranges supported, malformed → fail-open with warning) and `aiFocusedEditor.ai.aliases` (chains of `endpoint → model` legs, exactly the v1 `chain` semantics). `activeAlias` is the user default (v1 never shipped one). Resolution ladder: aliases → profiles → legacy keys, unchanged consumer APIs; unavailable/disabled endpoints are skipped with reasons surfaced.
+- **Live rotation**: `Switch AI Alias...` and `Switch AI Endpoint...` QuickPicks (availability badges); picking an endpoint pins it (`pinnedEndpoint`) and reorders chains to prefer it; status bar shows `alias · endpoint` with a pin marker.
+- **Verify-on-configure**: the endpoint edit form test-connects the DRAFT (no save/activation needed); saving a new endpoint auto-verifies non-blocking.
+- **v1 JSON import**: `Import ai-editor v1 Settings...` reads `rag-endpoints.json`/`rag-aliases.json` with exact field fallbacks (`apiKey|token`, `url|endpoint`, `provider||'openai'`); keys land in the user-scope map.
+- **Author-defined prompts & agents**: `custom-modes.yaml` gains `context: selection|word|chapter|chat`, `menu`, `apply: replace|insert|chat`, `agent`, `icon`. `menu:true` modes appear as dynamic entries in an "AI Modes" editor context submenu with context-aware enablement (selection/word-under-cursor/chapter); replace/insert deliver Change Set diffs; chat modes route via ChatService (prefixed `@agent` when applicable). `agent:true` modes register as chat @agents with hot re-registration on yaml edits (add/edit/remove — no reload). Sample gains `rewrite-dialogue` and `lore-keeper`.
+- Tests: 277 across 21 files (time windows, alias resolution incl. v1 parity, mode field parsing, word-at-offset).
+
 ## Backlog (queued)
 
 1. Dedicated LSP for incremental text validation (supersedes the backend-RPC validation path).
 2. Drop the git fork when a platform-compatible `@theia/git` ships; exercise the fork on the electron target.
 3. PDF text extraction for the §5.4 source analyzer.
 4. EPUB footnote rendering (currently GFM source passes through).
+5. Refresh the llm-wiki feature map after wave 9 (endpoints/aliases, rotation commands, dynamic AI Modes menu, author agents).
