@@ -2065,3 +2065,148 @@
 .afe-excerpts-editor-help {
   margin: 6px 0;
 }
+
+/* ---------- welcome page (startup landing) ---------- */
+
+.afe-welcome {
+  overflow: auto;
+  height: 100%;
+  box-sizing: border-box;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size1);
+  background: var(--theia-editor-background);
+}
+
+.afe-welcome-body {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 40px 32px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  outline: none;
+}
+
+.afe-welcome-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.afe-welcome-title {
+  margin: 0;
+  font-size: 2em;
+  font-weight: 600;
+}
+
+.afe-welcome-tagline {
+  margin: 0;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size2, 1.1em);
+}
+
+.afe-welcome-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.afe-welcome-section-title {
+  margin: 0;
+  font-size: var(--theia-ui-font-size1);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-welcome-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.afe-welcome-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 220px;
+  padding: 6px 12px;
+  text-align: left;
+}
+
+.afe-welcome-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.afe-welcome-action-icon {
+  font-size: 1.1em;
+}
+
+.afe-welcome-recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.afe-welcome-recent-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--theia-foreground);
+  cursor: pointer;
+  text-align: left;
+}
+
+.afe-welcome-recent-row:hover {
+  background: var(--theia-list-hoverBackground, rgba(128, 128, 128, 0.12));
+}
+
+.afe-welcome-recent-row:focus-visible {
+  outline: 1px solid var(--theia-focusBorder);
+  outline-offset: -1px;
+}
+
+.afe-welcome-recent-name {
+  color: var(--theia-textLink-foreground);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.afe-welcome-recent-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.afe-welcome-footer {
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+}
+
+.afe-welcome-startup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--theia-descriptionForeground);
+  cursor: pointer;
+}
+
+.afe-welcome-startup input {
+  width: auto;
+}

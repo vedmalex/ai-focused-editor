@@ -97,6 +97,9 @@
     },
     {
       "frontend": "lib/browser/book-doctor-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/welcome-frontend-module"
     }
   ]
 }

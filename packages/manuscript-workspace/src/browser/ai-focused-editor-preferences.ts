@@ -19,6 +19,7 @@ export const AI_FOCUSED_EDITOR_AI_ALIASES = 'aiFocusedEditor.ai.aliases';
 export const AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS = 'aiFocusedEditor.ai.activeAlias';
 export const AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT = 'aiFocusedEditor.ai.pinnedEndpoint';
 export const AI_FOCUSED_EDITOR_PREVIEW_SHOW_TAG_CHIPS = 'aiFocusedEditor.preview.showTagChips';
+export const AI_FOCUSED_EDITOR_WELCOME_SHOW_ON_STARTUP = 'aiFocusedEditor.welcome.showOnStartup';
 
 export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
   title: 'AI Focused Editor',
@@ -165,6 +166,11 @@ export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
       type: 'boolean',
       default: true,
       description: 'Show the semantic tag chips row at the top of the Semantic Preview. Turn this off for a plain-Markdown reading view.'
+    },
+    [AI_FOCUSED_EDITOR_WELCOME_SHOW_ON_STARTUP]: {
+      type: 'boolean',
+      default: true,
+      description: 'Show the AI Focused Editor welcome page on startup when no files are open. Turn this off to start straight in the editor.'
     }
   }
 };
