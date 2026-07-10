@@ -91,6 +91,9 @@
     },
     {
       "frontend": "lib/browser/bundled-color-themes-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/book-build-wizard-frontend-module"
     }
   ]
 }

@@ -181,7 +181,7 @@ export default {
     assert_build_menu_entries: action(`
       await openMenu('Manuscript');
       await hoverMenuItem('Build');
-      const required = ['Build Manuscript Markdown', 'Build Manuscript HTML', 'Build Manuscript EPUB', 'Build Manuscript PDF', 'Open Last Manuscript Build'];
+      const required = ['Build Book...', 'Build Manuscript Markdown', 'Build Manuscript HTML', 'Build Manuscript EPUB', 'Build Manuscript PDF', 'Open Last Manuscript Build'];
       const texts = menuItems().map(el => el.textContent.trim());
       const missing = required.filter(entry => !texts.some(text => text.includes(entry)));
       if (missing.length > 0) {
