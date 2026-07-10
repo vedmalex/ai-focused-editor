@@ -7,6 +7,7 @@ import { Disposable, DisposableCollection } from '@theia/core/lib/common';
 import { Markdown } from '@theia/core/lib/browser/markdown-rendering/markdown';
 import { MarkdownRenderer } from '@theia/core/lib/browser/markdown-rendering/markdown-renderer';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import type { ExtractableWidget } from '@theia/core/lib/browser/widgets/extractable-widget';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import type { TextEditor } from '@theia/editor/lib/browser/editor';
 import {
@@ -17,9 +18,13 @@ import {
 import React from '@theia/core/shared/react';
 
 @injectable()
-export class SemanticMarkdownPreviewWidget extends ReactWidget {
+export class SemanticMarkdownPreviewWidget extends ReactWidget implements ExtractableWidget {
   static readonly ID = 'ai-focused-editor.semantic-markdown.preview';
   static readonly LABEL = 'Semantic Preview';
+
+  /** FR-021: the preview can move to its own secondary window (writer-side reading surface). */
+  isExtractable = true;
+  secondaryWindow: Window | undefined = undefined;
 
   @inject(EditorManager)
   protected readonly editorManager!: EditorManager;

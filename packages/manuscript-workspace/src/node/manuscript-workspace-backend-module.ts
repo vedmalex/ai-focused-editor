@@ -2,35 +2,108 @@ import { BackendApplicationContribution } from '@theia/core/lib/node';
 import { injectable, ContainerModule } from '@theia/core/shared/inversify';
 import { ConnectionHandler } from '@theia/core/lib/common/messaging/handler';
 import { RpcConnectionHandler } from '@theia/core/lib/common/messaging/proxy-factory';
+import { TaskRunnerContribution } from '@theia/task/lib/node/task-runner';
 import {
+  AiModeRegistryBackendService,
+  AiModeRegistryBackendServicePath,
   BookBuildService,
   BookBuildServicePath,
+  GitStatusService,
+  GitStatusServicePath,
   LocalAiConnectionService,
-  LocalAiConnectionServicePath
+  LocalAiConnectionServicePath,
+  LocalAiStreamClient,
+  ManuscriptWorkspaceBackendService,
+  ManuscriptWorkspaceBackendServicePath,
+  NarrativeEntityBackendService,
+  NarrativeEntityBackendServicePath,
+  NarrativeGraphBackendService,
+  NarrativeGraphBackendServicePath,
+  SourceLibraryBackendService,
+  SourceLibraryBackendServicePath,
+  YamlSchemaValidator
 } from '../common';
 import { NodeBookBuildService } from './node-book-build-service';
+import { NodeNarrativeGraphService } from './node-narrative-graph-service';
+import { NodeGitStatusService } from './node-git-status-service';
 import { NodeLocalAiConnectionService } from './node-local-ai-connection-service';
+import { NodeManuscriptWorkspaceService } from './node-manuscript-workspace-service';
+import {
+  NodeAiModeRegistryService,
+  NodeNarrativeEntityService,
+  NodeSourceLibraryService
+} from './node-domain-knowledge-service';
+import {
+  NodeBookBuildTaskRunner,
+  NodeBookBuildTaskRunnerContribution
+} from './node-book-build-task-runner';
 
 @injectable()
 export class ManuscriptWorkspaceBackendContribution implements BackendApplicationContribution {
-  onStart(): void {
-    // Backend service registration will live here once workspace scanning moves off the frontend.
-  }
+  onStart(): void {}
 }
 
 export default new ContainerModule(bind => {
   bind(NodeLocalAiConnectionService).toSelf().inSingletonScope();
   bind(LocalAiConnectionService).toService(NodeLocalAiConnectionService);
+  bind(NodeGitStatusService).toSelf().inSingletonScope();
+  bind(GitStatusService).toService(NodeGitStatusService);
   bind(NodeBookBuildService).toSelf().inSingletonScope();
   bind(BookBuildService).toService(NodeBookBuildService);
+  bind(NodeBookBuildTaskRunner).toSelf().inSingletonScope();
+  bind(NodeBookBuildTaskRunnerContribution).toSelf().inSingletonScope();
+  bind(TaskRunnerContribution).toService(NodeBookBuildTaskRunnerContribution);
+  bind(YamlSchemaValidator).toSelf().inSingletonScope();
+  bind(NodeManuscriptWorkspaceService).toSelf().inSingletonScope();
+  bind(ManuscriptWorkspaceBackendService).toService(NodeManuscriptWorkspaceService);
+  bind(NodeNarrativeEntityService).toSelf().inSingletonScope();
+  bind(NarrativeEntityBackendService).toService(NodeNarrativeEntityService);
+  bind(NodeSourceLibraryService).toSelf().inSingletonScope();
+  bind(SourceLibraryBackendService).toService(NodeSourceLibraryService);
+  bind(NodeAiModeRegistryService).toSelf().inSingletonScope();
+  bind(AiModeRegistryBackendService).toService(NodeAiModeRegistryService);
+  bind(NodeNarrativeGraphService).toSelf().inSingletonScope();
+  bind(NarrativeGraphBackendService).toService(NodeNarrativeGraphService);
   bind(ConnectionHandler).toDynamicValue(ctx =>
-    new RpcConnectionHandler(LocalAiConnectionServicePath, () =>
-      ctx.container.get(LocalAiConnectionService)
-    )
+    new RpcConnectionHandler<LocalAiStreamClient>(LocalAiConnectionServicePath, client => {
+      const service = ctx.container.get<NodeLocalAiConnectionService>(NodeLocalAiConnectionService);
+      service.addClient(client);
+      return service;
+    })
   ).inSingletonScope();
   bind(ConnectionHandler).toDynamicValue(ctx =>
     new RpcConnectionHandler(BookBuildServicePath, () =>
       ctx.container.get(BookBuildService)
+    )
+  ).inSingletonScope();
+  bind(ConnectionHandler).toDynamicValue(ctx =>
+    new RpcConnectionHandler(GitStatusServicePath, () =>
+      ctx.container.get(GitStatusService)
+    )
+  ).inSingletonScope();
+  bind(ConnectionHandler).toDynamicValue(ctx =>
+    new RpcConnectionHandler(ManuscriptWorkspaceBackendServicePath, () =>
+      ctx.container.get(ManuscriptWorkspaceBackendService)
+    )
+  ).inSingletonScope();
+  bind(ConnectionHandler).toDynamicValue(ctx =>
+    new RpcConnectionHandler(NarrativeEntityBackendServicePath, () =>
+      ctx.container.get(NarrativeEntityBackendService)
+    )
+  ).inSingletonScope();
+  bind(ConnectionHandler).toDynamicValue(ctx =>
+    new RpcConnectionHandler(SourceLibraryBackendServicePath, () =>
+      ctx.container.get(SourceLibraryBackendService)
+    )
+  ).inSingletonScope();
+  bind(ConnectionHandler).toDynamicValue(ctx =>
+    new RpcConnectionHandler(AiModeRegistryBackendServicePath, () =>
+      ctx.container.get(AiModeRegistryBackendService)
+    )
+  ).inSingletonScope();
+  bind(ConnectionHandler).toDynamicValue(ctx =>
+    new RpcConnectionHandler(NarrativeGraphBackendServicePath, () =>
+      ctx.container.get(NarrativeGraphBackendService)
     )
   ).inSingletonScope();
   bind(BackendApplicationContribution).to(ManuscriptWorkspaceBackendContribution).inSingletonScope();

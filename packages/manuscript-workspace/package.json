@@ -13,20 +13,28 @@
   "main": "lib/common/index.js",
   "typings": "lib/common/index.d.ts",
   "dependencies": {
+    "@ai-focused-editor/book-export": "0.1.0",
     "@ai-focused-editor/semantic-markdown": "workspace:*",
-    "@vedmalex/ai-connect": "0.9.0",
     "@theia/ai-chat": "1.73.1",
     "@theia/ai-core": "1.73.1",
     "@theia/core": "1.73.1",
     "@theia/editor": "1.73.1",
     "@theia/filesystem": "1.73.1",
     "@theia/markers": "1.73.1",
+    "@theia/monaco-editor-core": "1.108.201",
+    "@theia/output": "1.73.1",
+    "@theia/process": "1.73.1",
+    "@theia/task": "1.73.1",
     "@theia/workspace": "1.73.1",
+    "@vedmalex/ai-connect": "0.9.0",
     "ajv": "8.20.0",
+    "markdown-it": "^14.3.0",
     "yaml": "2.9.0"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.0.10",
+    "reflect-metadata": "0.2.2",
     "typescript": "~5.8.3"
   },
   "scripts": {
@@ -38,6 +46,18 @@
     {
       "frontend": "lib/browser/manuscript-workspace-frontend-module",
       "backend": "lib/node/manuscript-workspace-backend-module"
+    },
+    {
+      "frontend": "lib/browser/entity-editor-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/knowledge-generation-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/narrative-graph-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/semantic-history-frontend-module"
     }
   ]
 }

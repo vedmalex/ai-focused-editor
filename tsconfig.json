@@ -1,0 +1,7 @@
+{
+  "// note": "Root config so the Bun transpiler (bun test) emits legacy decorators for Theia/inversify code. Package builds use their own tsconfig files.",
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  }
+}

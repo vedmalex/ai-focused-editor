@@ -1,116 +1,129 @@
 # AI Focused Editor Progress
 
-Updated: 2026-07-09
+Updated: 2026-07-10 (wave 6 — hardening)
 
 This file tracks implementation progress against `spec.md`. It records verified repository state, not planned intent.
 
 ## Current Implementation Level
 
-- Overall product vision: 10-14%.
-- First Theia MVP: 94-97% architecture foundation, 90-93% user-facing workflow.
-- Current phase: Phase 1 architecture spike.
+- Overall product vision: 18-22%.
+- First Theia MVP: architecture foundation complete; user-facing writing loop functional (tree editing, semantic editing, AI actions, build/export) with known gaps listed under "In Progress".
+- Current phase: Phase 2-3 (semantic editing + AI service layer), Phase 1 spike complete.
+- Audit trail: multi-agent spec-compliance audit findings live in `.plan/audit-findings.json`; export reuse plan in `.plan/telegraph-publisher-reuse.md`.
 
 ## Completed
 
-- Bun workspace root with `bun.lock` and `@types/bun`.
-- Browser Theia application under `apps/browser`.
-- First-party Theia extension package under `packages/manuscript-workspace`.
-- Theia infrastructure packages wired for editor, Monaco, navigator, preferences, markers, file search, and Theia AI chat.
-- Domain command contribution points:
-  - `AI Focused Editor: Validate Manuscript Workspace`
-  - `AI Focused Editor: Improve Selected Text`
-  - `AI Focused Editor: Check Manuscript Consistency`
-- `@vedmalex/ai-connect` service boundary for browser-safe `api` transport.
-- Browser-safe `api` transport through `createBrowserClient`.
-- Backend/local adapter for `acp` / `cli` / `server` transports through Theia JSON-RPC and `createLocalClient`.
-- Shared ai-connect config builder used by browser and backend adapters.
-- Preference-backed MVP AI profile settings under `aiFocusedEditor.ai.*`.
-- AI profile preference service shared by AI commands and model config UI.
-- AI Model Config view showing provider/model/transport/endpoint/API-key readiness without exposing secrets.
-- `AI Focused Editor: Verify AI Profile` command using `AiConnectionService`.
-- `AI Focused Editor: Improve Selected Text` wired to Theia editor selection and `AiConnectionService`.
-- `ManuscriptWorkspaceService` domain scanner using Theia `WorkspaceService` and `FileService`.
-- `manifest.yaml` content order mapped into a service-level snapshot.
-- Manifest-backed manuscript tree view using Theia Tree infrastructure.
+### Platform foundation
+- Bun workspace root with `bun.lock`, `@types/bun`, and a root `tsconfig.json` so `bun test` emits legacy decorators for Theia/inversify code.
+- Browser Theia application under `apps/browser`; Electron application under `apps/electron` (shared Theia editor/Monaco/workbench infrastructure, native module rebuild via Bun scripts, `@theia/ffmpeg` build, `electron-rebuild` C++20 patch).
+- First-party extension `packages/manuscript-workspace` plus standalone parser package `packages/semantic-markdown`.
+- Theia infrastructure packages wired: editor, Monaco, navigator, preferences, markers, file search, tasks/terminal, SCM surfaces (`@theia/scm`, `@theia/scm-extra` — note: no git provider package is wired yet, so SCM views are present but not functional), Theia AI chat + chat UI.
+- Writer-friendly app defaults in both targets: autosave (`files.autoSave: afterDelay`), `files.exclude` for `build/`, `.llm-wiki/`, `.git/`.
+- Extension stylesheet (`src/browser/style/index.css`) covers all custom widgets and semantic tag decorations; no imperative `document.head` style injection remains.
+
+### Product menu, commands, UX shell
+- Top-level product menu **Manuscript** registered under `MAIN_MENU_BAR` (shared `AiFocusedEditorMenus` paths; the previous detached `['ai-focused-editor']` root never rendered). **The whole submenu tree is registered exactly once** in `ManuscriptWorkspaceMenuContribution` — repeated `registerSubmenu` calls for the same path create duplicate menu-bar entries in the current Theia menu model (this bug shipped briefly as 5× "Manuscript"); all other contributions only add `registerMenuAction`s. Guarded by the AFE-02 UI flow scenario.
+- All product commands use `category: 'AI Focused Editor'` with human labels.
+- Keybindings: Improve Selected (`ctrlcmd+alt+i`), Validate Workspace (`ctrlcmd+alt+v`), Toggle Focus Mode (`ctrlcmd+alt+f`).
+- **Focus Mode** command collapses/restores left/right/bottom panels around the editor (spec §2 Primary Workbench Modes).
+- Writer-first default layout: manuscript tree view opens on fresh layout initialization.
+
+### Manuscript workspace and tree (FR-003, FR-004)
+- Backend `NodeManuscriptWorkspaceService` (JSON-RPC) scans the workspace, maps `manifest.yaml` order to the service snapshot, validates YAML schemas and semantic Markdown off the UI thread.
+- **Manifest write path**: `moveManuscriptEntry` (reorder within/between folder entries, physical file relocation on parent change, conflict-safe: refuses overwrite), `setManuscriptBuildInclusion` (`include: false` round-trip), `createManuscriptChapter` (unicode-aware slug filenames, `# Title` seed content). Manifest edits go through the YAML document API, preserving comments/formatting of untouched entries.
+- Manuscript tree widget: **drag & drop** (drop on folder = append inside, drop on file = insert before, drop on empty = append to root; visual drop-target highlight), context menu commands (New Chapter, Move Up/Down, Include/Exclude in Book Build, Refresh), excluded nodes render dimmed with an "excluded from build" detail.
+- Tree auto-refreshes (debounced) on `manifest.yaml`/`content/` file change events.
+- Duplicate manifest paths produce a workspace warning diagnostic and unique tree-node ids (no silent node collisions).
 - Manuscript tree nodes open files through Theia `OpenerService`.
-- Standalone `@ai-focused-editor/semantic-markdown` parser package for semantic inline tags.
-- Parser coverage for `[[char:id|label]]`, `[[term:id|label]]`, and other extensible tag kinds with LSP-compatible ranges.
-- Minimal editor decorations for semantic Markdown tags through Theia editor `deltaDecorations`.
-- Semantic tag hover text through Theia editor decoration hover messages.
-- Semantic Markdown preview widget using Theia `MarkdownRenderer`.
-- Preview refreshes from the current Markdown editor and document change events.
-- Preview transform renders semantic tags as readable Markdown labels while preserving the source file format.
-- Manuscript AI context assembler for manifest content, diagnostics, character/term entities, and source directory summary.
-- Theia AI variable contribution for `#manuscript` as a context variable in the existing Theia AI pipeline.
-- `AI Focused Editor: Copy Manuscript AI Context` command for inspecting the assembled chat context.
-- Append-only AI history service writing JSONL under `ai/chat/`.
-- Append-only context snapshot logging under `ai/context-snapshots/`.
-- `Improve Selected`, AI profile verification, and copy-context flows record best-effort history without blocking command UX.
-- `AI Focused Editor: Validate Manuscript Workspace` command connected to the scanner and Theia messages.
-- Workspace validation findings published to Theia Problems/markers.
-- Sample colocated manuscript workspace under `examples/sample-book`.
-- Electron Theia application under `apps/electron`.
-- Electron target reuses Theia editor/Monaco/workbench infrastructure instead of duplicating desktop shell code.
-- Electron native module rebuild wired through Bun scripts with explicit Theia native module list.
-- Electron build-time `@theia/ffmpeg` native addon build wired through `node-gyp`.
-- Bun patch recorded for `electron-rebuild@3.2.9` so Electron 39 native rebuilds use C++20.
-- Theia SCM surface packages wired through `@theia/scm` and `@theia/scm-extra`.
-- Backend `BookBuildService` exposed through Theia JSON-RPC.
-- Manifest-driven Markdown export that reads `metadata.yaml`, respects `manifest.yaml` order and `include: false`, generates a TOC, and writes `build/book.md`.
-- Build diagnostics prevent export writes when fatal manifest/content errors are present.
-- `AI Focused Editor: Build Manuscript Markdown`, `Open Last Manuscript Build`, and `Copy Last Build Path` commands.
-- Sample workspace build output path ignored as generated artifact via `.gitignore`.
-- `NarrativeEntityService` boundary for YAML-backed character and term entities.
-- Knowledge Cards Theia view showing character/term cards with labels, summaries, aliases, YAML paths, and open-file actions.
-- Knowledge menu commands for opening and refreshing entity cards.
-- Sample character entity data expanded with summaries and an Arjuna card.
-- Semantic Markdown quick actions for wrapping selected text as character, term, or artifact tags.
-- Semantic Markdown tag summary copy command for the active editor.
-- Semantic Markdown quick actions contributed to the AI Focused Editor menu and editor context menu.
-- Semantic Preview now shows detected semantic tags as a compact chip summary before rendered Markdown.
-- `AiModeRegistry` boundary for project AI modes stored in `ai/prompts/custom-modes.yaml`.
-- Project AI mode commands for showing, copying, and opening workspace AI mode definitions.
-- `Improve Selected` now uses project AI mode `improve-selection` when present, with builtin fallback when absent.
-- Sample workspace includes `ai/prompts/custom-modes.yaml` with `improve-selection` and semantic-tag explanation modes.
-- Semantic Markdown parser exposes diagnostics for malformed/unclosed `[[kind:id|label]]` tags.
-- Workspace validation now scans Markdown files from the manifest and publishes semantic Markdown diagnostics through Theia Problems/markers with source ranges.
-- Semantic Markdown normalization command for domain-specific tag formatting without replacing Theia's generic formatter.
-- Parser tests cover semantic diagnostics and normalization.
-- Theia `@theia/ai-chat-ui` wired into browser and Electron app targets.
-- `AiConnectTheiaLanguageModel` registers `@vedmalex/ai-connect` as a Theia `LanguageModel`.
-- Theia AI requests map through the existing `AiConnectionService` and preference-backed ai-connect profile.
-- Theia AI language model requests record best-effort append-only chat history.
-- `Manuscript` custom chat agent registered through Theia `CustomAgentFactory` and backed by the ai-connect language model.
-- AI Model Config view now includes an editable form for provider, model, transport, transport/profile IDs, endpoint, and API key.
-- AI profile edits are saved through Theia preferences in folder scope when a workspace root is available.
-- Existing API keys are not echoed into the UI; blank API key input keeps the configured secret.
-- AI Debug Theia view for inspecting configured provider/model/transport, project AI modes, active editor selection, and assembled manuscript context.
-- AI Debug commands for opening, refreshing, and copying a prompt/context/provider snapshot.
-- Verified:
-  - `bun install`
-  - `bun test packages/semantic-markdown/src/semantic-markdown.test.ts`
-  - `bun run build`
-  - `bun run start` smoke startup
-  - `bun run build:electron`
-  - Direct `BookBuildService` Node smoke against `examples/sample-book`
+- Sample workspace `examples/sample-book` exercises nested parts (`content/part-01/`), an `include: false` draft, semantic tags in all chapters, character/term/artifact usage.
 
-## In Progress / Theia-Native Refactoring
+### Semantic Markdown (FR-005, FR-018)
+- Parser package with LSP-compatible ranges, diagnostics for malformed/unclosed tags, normalization; covered by bun tests.
+- Editor decorations with per-kind styling and hover text; decoration re-parse is **debounced** (150ms) instead of running on every keystroke.
+- **Semantic tag autocompletion** (`[[` / `[[kind:` triggers): suggests entities from the YAML knowledge base with label snippets, plus bare-kind scaffolds (char/term/artifact/location).
+- Semantic Markdown preview widget (Theia `MarkdownRenderer`), tag chip summary, live refresh from the active editor; **extractable to a secondary window** (FR-021) via the standard Theia control on the view.
+- Quick actions (wrap selection as char/term/artifact, copy tag summary, normalize tags) in the product menu and editor context menu.
+- `DocumentSymbolProvider` populates Theia Outline with semantic tags.
+- Workspace validation publishes manifest/entity/semantic diagnostics to Problems/markers with source ranges (runs in backend).
 
-- **[Refactor]** Port `Improve Selected` to use Theia AI **Change Sets** instead of manual `editor.replaceText` and clipboard injection.
-- **[Refactor]** Remove custom `NodeGitHistoryService` and UI contributions. Enable and configure built-in `@theia/git` and `@theia/scm` for workspace branch/diff capabilities.
-- **[Refactor]** Move YAML and Semantic Markdown parsing/validation (`YamlSchemaValidator`) out of the UI thread (Frontend) into a Backend service or dedicated LSP (Language Server).
-- **[Refactor]** Integrate `BookBuildService` with Theia's Task API (`@theia/task`) to run background builds and output logs to the native Output panel.
-- **[Feature]** Register key project AI modes from `custom-modes.yaml` as Theia AI `PromptFragment`s.
-- **[Feature]** Implement `DocumentSymbolProvider` so semantic tags automatically populate the Theia Outline View.
+### AI integration (FR-008, FR-009, FR-012, FR-013)
+- `@vedmalex/ai-connect` service boundary: browser-safe `api` transport via `createBrowserClient`; backend adapter for `acp`/`cli`/`server` transports via JSON-RPC + `createLocalClient`; shared config builder in `common/ai-connect-config.ts` (v1 `aiConnect.js` parity, incl. `getLocalProxyEndpointDefaults` for 127.0.0.1:8045 and `getAiConnectEndpointModelProbeUrl`).
+- **Model discovery** through the service boundary (`discoverModels` on both browser and backend clients).
+- AI Model Config view: provider **catalog dropdown** (from `listTextProviderCatalog`) with custom-provider fallback, transport dropdown per provider, "Use Local Proxy" defaults button, "Discover Models" button with click-to-use model list and model datalist.
+- API key handling: required only for the `api` transport (acp/cli/server authorize через OAuth/CLI, как в v1); keys are saved to **User scope** so they never land in workspace files; existing keys are never echoed back into the form.
+- **Multi-profile registry (FR-013 full)**: named profiles ("aliases") in `aiFocusedEditor.ai.profiles` (workspace scope, no secrets), active-profile selection, ordered **failover chain** (active first, then enabled profiles in list order), per-profile `allowedModels` shortlist fed into the ai-connect account config, per-profile API keys in a user-scope map. Legacy single-profile keys keep working and migrate on first save. `ModelProviderRegistry` symbol is bound to the implementation.
+- **Failover in action**: chat requests (Theia `LanguageModel`) retry the next profile in the chain when a profile fails before emitting any output; `Improve Selected` and `Check Manuscript Consistency` run through `generateWithFailover` with an aggregate error when every profile fails (covered by bun tests).
+- **Streaming on every transport**: api-transport profiles stream in-browser; acp/cli/server profiles stream through a backend JSON-RPC push channel (`startStream`/`cancelStream` + client callbacks keyed by streamId) with cancellation propagated to the backend AbortController.
+- **Tools / Function Calling (spec §3.5)**: Theia AI `ToolRequest`s map to ai-connect `clientTools` — the ai-connect client runs the tool loop and invokes Theia tool handlers in-process (api transport; tools are stripped before crossing the RPC boundary since functions cannot serialize).
+- **Manuscript agent tools**: `manuscript_find_entities`, `manuscript_list_chapters`, `manuscript_get_chapter` registered as `ToolProvider`s and referenced from the agent prompt (`~{tool_id}`), so the chat agent inspects the project instead of guessing.
+- **FR-010 — coreference suggestions**: `Suggest Coreference Tags` (main + editor context menu) sends the entity roster (ids, labels, aliases, epithets) with the chapter, receives a fully tagged document, and delivers it as a **Change Set** diff for accept/reject; deviation guard discards responses that shrink/grow the text too much; `coreference-tags` project AI mode in the sample.
+- Model Config view manages profiles: list with active-profile radio, **drag-and-drop reordering** (FR-020) plus ↑/↓ buttons for the failover order, clone/delete/new, label + allowed-models fields, discovery results with one-click "use" and "+allow"; the status bar shows the active profile label and chain size.
+- `AiConnectTheiaLanguageModel` registered through `LanguageModelProvider`; `Manuscript` chat agent via `CustomAgentFactory`; `#manuscript` context variable via `AIVariableContribution`; project AI modes sync to Theia `PromptService` as prompt fragments/slash commands.
+- **Improve Selected**: creates a Change Set file element, attaches it to the active chat session's **native Change Set review UI** (Accept/Reject in the chat view), opens the diff preview, and is available from the editor context menu.
+- **Check Manuscript Consistency**: real AI-backed check — assembles manuscript context, requests structured JSON findings (project AI mode `consistency-check` when present), publishes them to Problems/markers per file with its own marker owner.
+- AI Debug view (provider/transport/modes/selection/context inspection) and copy-context command.
+- **FR-014 deep — Request Log browser** in AI Debug: day/kind selectors over the append-only JSONL history (`ai/chat/`, `ai/context-snapshots/`), entries newest-first with kind badges + provider/model, expandable pretty-printed payloads, per-entry Copy, Open JSONL; defensive pure JSONL parser with tests.
+- **Source document AI analysis (§5.4)**: `Analyze Source Document...` picks a text source under `sources/`, extracts excerpts + citation candidates through the failover chain (project mode `analyze-source` or strict-JSON fallback), appends excerpts to `sources/excerpts.jsonl` (id continuation per file slug) and merges citations into `citations.yaml` (comment-preserving, id dedupe with skip report), refreshes the view, logs history.
+- Append-only JSONL history under `ai/chat/` and `ai/context-snapshots/`; appends are serialized through a queue to avoid interleaved read-modify-write within the session.
+
+### Knowledge and sources (FR-006, FR-025, FR-015 thin)
+- **Rich entity model**: characters/terms plus first-class **artifacts and locations** (`entities/artifacts/`, `entities/locations/`), with `epithets`, `backstory`, `arc`, `speechPatterns`, `notes` fields, YAML schemas for all four kinds, richer Knowledge Cards rendering (collapsible backstory/speech/notes), enriched sample entities (Krishna/Arjuna cards, Gandiva, Kurukshetra).
+- Entity knowledge flows into the editor: tag hovers show summary/aliases/epithets; `[[` autocompletion offers all four entity kinds with distinct icons.
+- **Form-based entity editor (FR-025)**: entity YAML files open in a React form editor by default (id, label, aliases, epithets, summary, backstory, arc, speech patterns, notes) that rewrites only its own keys via the YAML document API — comments and unknown keys survive; inline schema validation; raw YAML stays reachable via "Open With..." and an explicit command. Shipped as a second `theiaExtensions` frontend module.
+- **FR-015 deep — sources**: `sources/excerpts.jsonl` is indexed (defensive per-line parsing with warning diagnostics); the Sources view groups Files/Citations/Excerpts with counts; citations carrying a resolvable `path` and excerpts with `targetPath`/`targetLine` are clickable and reveal the exact line; `[@cite:id]` references in chapters are editor links to the cited source; `Attach Source File...` copies a picked file into `sources/documents|images/`.
+- **FR-007 — Narrative Map view**: chapter timeline (entity chips × counts per chapter in manifest order, excluded chapters dimmed), artifact ownership chains (`ownership:` list in artifact YAML with schema validation, e.g. varuna → agni → arjuna), and a dependency-free SVG relations graph (co-occurrence edges weighted by shared chapters, top-20 cap with truncation note).
+- Entity/source/ai-mode YAML parsing runs in the **backend** (`node-domain-knowledge-service.ts` behind three JSON-RPC services); browser services are thin RPC delegates with identical snapshot/diagnostic shapes (spec §9 backend-offload rule).
+- **FR-011 — summaries, plans, author questions**: `Summarize Current Chapter`, `Generate Scene Plan for Current Chapter`, `Generate Author Questions for Current Chapter` (Knowledge submenu) run through the AI failover chain with strict-JSON prompts (project AI modes `summarize-chapter`/`plan-scenes`/`author-questions` or builtin fallbacks), write provenance-carrying YAML to `knowledge/summaries|plans|questions/<slug>.yaml`, open the result, and log history. Tolerant JSON coercion (fenced/prose-wrapped JSON accepted; unparseable → `raw:` + warning) is a pure tested helper.
+
+### Build and export (FR-016 slice)
+- Backend `BookBuildService` (JSON-RPC): manifest-driven Markdown, HTML, and **EPUB** export (`build/book.md` / `build/book.html` / `build/book.epub`), metadata title page, TOC, `include: false` gating, diagnostics gate for fatal errors.
+- **`packages/book-export`**: self-contained EPUB 3 core extracted from the owner's `telegraph-publisher` library (EpubGenerator with nested NCX TOC, markdown AST converter, AnchorGenerator, dependency-free ZIP writer with Node fallback; provenance headers in extracted files). Anchor convention unified: `slugifyBase`/`createSlugger` live in `book-export` and drive Markdown/HTML/EPUB anchors identically (Cyrillic-safe). Nested manifest folders become nested NCX navPoints; semantic tags are stripped to labels before conversion.
+- **Cross-chapter links in EPUB**: local `.md` links resolve to `chapter-N.html#slug` anchors (shared slug convention); links to excluded/unknown files degrade to plain text (no dead hrefs); external/mailto/data links untouched. **Cover image** via `cover:` in metadata.yaml (manifest `cover-image` property, cover page first in spine, EPUB2 meta; missing cover → non-blocking warning). CLI reports EPUB size in bytes.
+- **PDF export**: `build/book.pdf` renders the canonical `book.html` through puppeteer-core + a system Chrome/Chromium (probed paths + `CHROME_PATH` override; single clear diagnostic when absent, no stack traces). a4/a5 page presets with book print CSS. `Build Manuscript PDF` command, Build menu entry, task-provider entry, CLI `--format pdf`. puppeteer-core is lazy-required so the backend bundle stays clean; known note: direct RPC `buildPdf` in a packaged app depends on puppeteer-core resolvability (the shipped task/CLI path resolves it correctly).
+- `Build Manuscript EPUB` command, Build menu entry, task-provider entry, and CLI `--format epub`.
+- **Unicode-aware anchors** (`slugifyBase`/`createSlugger`: Cyrillic/CJK preserved, dedupe `-2/-3`), **nested part hierarchy** in both outputs (folder headings, indented Markdown TOC, nested HTML TOC/sections), semantic-Markdown syntax warnings included in build diagnostics (non-blocking), natural numeric ordering for the no-manifest fallback scan.
+- Theia Task integration: contributed task type, frontend `TaskProvider` (Markdown is the single default build task), backend task runner, compiled Node CLI that prints real per-file diagnostics on failure; task lifecycle mirrored to the Output channel.
+- Build commands: Build Manuscript Markdown/HTML, Open Last Build, Copy Last Build Path.
+
+### Tests and verification
+- Test suites (153 tests): semantic-markdown parser; knowledge-generation JSON coercion + unicode slugs; PDF generator (chrome discovery, diagnostic message, real render when Chrome present); narrative graph (timeline order, co-occurrence, ownership incl. malformed → diagnostic); semantic history (git log parsing, renames, entity derivation, limits); source excerpts (valid/malformed/missing); AI history JSONL parsing (ordering, limits, malformed lines); source-analysis coercion (fenced JSON, id continuation, citation dedupe); `ai-connect-config`; **`ai-failover`** (success/failover/aggregate error/empty chain); book-build (unicode slugs, nested TOC, include gating, numeric ordering, semantic diagnostics, EPUB pipeline incl. NCX nesting, tag stripping, link rewriting, cover); EPUB generator (zip structure both strategies, nested NCX, unicode anchors, link classification); manuscript manifest mutations; domain-knowledge backend services (entity/citation/ai-mode parsing incl. rich fields and artifact/location kinds).
+- `bun run test` / `bun run verify` (tests + browser build + electron build) and `bun run test:ui` (Playwright browser smoke: workbench boot, command registration, view refresh, validation notification) — all passing as of this update.
+- **UI flow pack** (`bun run test:ui:flows`, playwright-cli via the flow-scenario-builder collector): `scripts/ui-flows/afe-flow-pack.mjs` — 6 scenarios (shell boot; menu integrity incl. no duplicate Manuscript/Knowledge/Build entries; manuscript tree contents; open chapter + semantic preview; Model Config view; Build menu entries), artifacts (screenshots, assert.json, report.md) in `output/playwright/flow-scenarios/`. 6/6 passing. Interactions use pointer events (Lumino 2).
+- Verified in this update:
+  - `bun test packages` (153 pass)
+  - `bun run verify` (tests + browser/node/electron builds, 0 errors)
+  - `bun run test:ui` (Playwright browser smoke)
+  - CLI smoke: `--format epub` → valid `build/book.epub` with cover and rewritten cross-chapter links (`unzip -t` clean); `--format pdf` → valid `%PDF-1.4` (150 KB) via system Chrome
+
+### Knowledge base
+- Project llm-wiki at `.llm-wiki/` with official Theia Platform docs (8 sources: composing apps, authoring extensions, Theia AI, services/contributions, architecture, extensions vs plugins, preferences, platform overview) and 10 cross-source concept pages mapped to this codebase.
+- **Application feature map** at `.llm-wiki/pages/ai-focused-editor-feature-map.md`: code-verified reference of all 42 commands (menus/keybindings), 9 widgets, the menu tree, 8 JSON-RPC service pairs, AI stack, workspace conventions, export pipelines, and the test inventory.
+
+### Git indicator and semantic history
+- **Git status-bar indicator**: read-only branch + dirty count + ahead/behind, refreshed on file events (debounced) and a 15s poll, via a backend `GitStatusService` (execFile `git`, no repo mutations — commits stay manual per spec §5.6). Note: `@theia/git` is version-stalled at 1.60.x and incompatible with platform 1.73, so the interactive SCM provider remains deferred until upstream catches up.
+- **FR-017 — Semantic History view**: recent commits touching `entities/`, `knowledge/`, `manifest.yaml`, `metadata.yaml` (single `git log --name-status --find-renames` call, defensive parsing, rename-aware) rendered as commit rows with per-entity change chips (`kind:id`, add/modify/delete/rename accents; clicking opens the current entity file). Knowledge submenu entry; empty states for non-repo/no-history.
+
+## In Progress / Known Gaps
+
+- **LanguageModel**: `response_format`/reasoning parts still unmapped; tool calls run inside the ai-connect loop rather than surfacing as Theia tool-call UI parts.
+- **Context assembler**: `ManuscriptAiContextAssembler` still assembles context in the frontend (entity/source/ai-mode parsing itself now runs in the backend); moving assembly server-side is optional polish.
+- **History durability**: JSONL append is session-serialized but still a frontend read-modify-write; a backend atomic append is the target.
+- **SCM**: `@theia/scm` surfaces are wired without a git provider; status-bar git indicator absent.
+- **[Review]** Whether backend workspace diagnostics should become a dedicated LSP for incremental validation.
 
 ## Not Implemented Yet
 
-- Source library/citations as post-MVP feature slice.
+- Interactive git SCM provider (blocked on upstream `@theia/git` catching up with the platform 1.73).
+- PDF analysis of attached sources (the §5.4 analyzer handles text-like documents; PDFs need an extraction step first).
+- LSP extraction of workspace diagnostics (current backend-RPC validation is functionally equivalent; an LSP would add incremental validation — still a [Review] item).
 
-## Next MVP Slice
+## Feature Request Matrix coverage
 
-1. Add source library/citations as post-MVP feature slice.
-2. Add packaging/startup polish for desktop/cloud variants.
-3. Add deterministic UI flow tests for core commands.
-4. Add deeper build/export targets beyond Markdown.
-5. Form-based Entity Editors (Custom Editors API) для визуального редактирования карточек сущностей (FR-025, Backlog).
+All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemented: FR-001–018, FR-020, FR-021, FR-023, FR-025 (+ EPUB/PDF export beyond the matrix). FR-019 is covered in substance (settings widget, clone/cancel flows, stable ordering) without a dedicated modal-UX pass. FR-017's interactive-SCM half waits on upstream `@theia/git`; FR-024 is provenance-only.
+
+## Next Slices
+
+1. Revisit `@theia/git` when a platform-compatible release ships (interactive SCM + diff views).
+2. PDF text extraction for the §5.4 source analyzer.
+3. Optional LSP for incremental workspace validation ([Review]).
+4. Product hardening (spec Phase 5): more UI simulation coverage (drag/drop scenarios), desktop/cloud packaging polish.
