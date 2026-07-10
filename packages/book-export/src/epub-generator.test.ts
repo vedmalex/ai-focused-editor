@@ -1,7 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { EpubGenerator, slugifyBase, type EpubNavPoint } from './index';
+import {
+  EpubGenerator,
+  processInlineMarkdown,
+  slugifyBase,
+  type EpubNavPoint,
+  type TelegraphNode
+} from './index';
 
 const SCRATCH =
   '/private/tmp/claude-501/-Users-vedmalex-work-ai-editor-3/8a15f000-cd38-4649-8fe4-b479e61f41c1/scratchpad/epub-test';
@@ -207,6 +213,91 @@ describe('EpubGenerator cross-chapter link rewriting (in-memory flow)', () => {
     // The rewritten anchor matches the target heading id emitted in chapter B.
     const chapterTwo = unzipEntry(outputPath, 'OEBPS/chapter-2.html');
     expect(chapterTwo).toContain(`id="${slugifyBase('Target Heading')}"`);
+  });
+});
+
+describe('processInlineMarkdown', () => {
+  test('converts an inline run into strong/em/link/text nodes', () => {
+    const nodes = processInlineMarkdown('A **key** point, see [home](https://example.com).');
+    // Bold and link survive as structured nodes so note bodies match book grammar.
+    const strong = nodes.find(node => typeof node !== 'string' && node.tag === 'strong');
+    expect(strong).toBeDefined();
+    const link = nodes.find(node => typeof node !== 'string' && node.tag === 'a');
+    expect(link && typeof link !== 'string' && link.attrs?.href).toBe('https://example.com');
+    // Plain runs stay as string children.
+    expect(nodes.some(node => typeof node === 'string' && node.startsWith('A '))).toBe(true);
+  });
+});
+
+describe('EpubGenerator transformNodes hook', () => {
+  test('applies a caller transform (footnote-shaped) that survives to the chapter XHTML', async () => {
+    const outputPath = join(SCRATCH, 'transform.epub');
+    const generator = new EpubGenerator({
+      outputPath,
+      title: 'Transform Manuscript',
+      author: 'Test Author',
+      language: 'en',
+      identifier: 'urn:test:transform',
+      zipStrategy: 'manual'
+    });
+
+    // A transform that appends a footnote-style Notes section built from the
+    // exported inline converter, mirroring how the manuscript backend renders
+    // EPUB footnotes.
+    const notes: TelegraphNode = {
+      tag: 'section',
+      attrs: { class: 'afe-footnotes' },
+      children: [
+        { tag: 'h2', children: ['Notes'] },
+        {
+          tag: 'ol',
+          children: [
+            {
+              tag: 'li',
+              attrs: { id: 'chapter-a-fn-1' },
+              children: [
+                ...processInlineMarkdown('A **key** distinction.'),
+                ' ',
+                { tag: 'a', attrs: { class: 'afe-footnote-backref', href: '#chapter-a-fnref-1' }, children: ['↩'] }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
+    generator.addChapterFromContent({
+      title: 'Chapter A',
+      content: '# Chapter A\n\nBody of chapter A.\n',
+      transformNodes: nodes0 => [...nodes0, notes]
+    });
+    await generator.generate();
+
+    const chapterHtml = unzipEntry(outputPath, 'OEBPS/chapter-1.html');
+    expect(chapterHtml).toContain('<section class="afe-footnotes">');
+    expect(chapterHtml).toContain('<li id="chapter-a-fn-1">');
+    expect(chapterHtml).toContain('A <strong>key</strong> distinction.');
+    // In-page back-link anchors are rewritten with the shared slug convention and
+    // stay resolvable within the same chapter file.
+    expect(chapterHtml).toContain(`href="#${slugifyBase('chapter-a-fnref-1')}"`);
+  });
+
+  test('omitting transformNodes leaves the converted chapter unchanged', async () => {
+    const outputPath = join(SCRATCH, 'no-transform.epub');
+    const generator = new EpubGenerator({
+      outputPath,
+      title: 'Plain Manuscript',
+      author: 'Test Author',
+      language: 'en',
+      identifier: 'urn:test:no-transform',
+      zipStrategy: 'manual'
+    });
+    generator.addChapterFromContent({ title: 'Chapter A', content: '# Chapter A\n\nPlain body.\n' });
+    await generator.generate();
+
+    const chapterHtml = unzipEntry(outputPath, 'OEBPS/chapter-1.html');
+    expect(chapterHtml).toContain('Plain body.');
+    expect(chapterHtml).not.toContain('afe-footnotes');
   });
 });
 

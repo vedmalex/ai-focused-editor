@@ -30,6 +30,7 @@
     "@vedmalex/ai-connect": "0.9.0",
     "ajv": "8.20.0",
     "markdown-it": "^14.3.0",
+    "unpdf": "1.6.2",
     "yaml": "2.9.0"
   },
   "devDependencies": {
@@ -71,6 +72,9 @@
     },
     {
       "frontend": "lib/browser/ai-rotation-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/live-validation-frontend-module"
     }
   ]
 }

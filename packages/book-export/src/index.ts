@@ -10,7 +10,7 @@ export { EpubGenerator } from './EpubGenerator';
 export type { EpubNavPoint } from './EpubGenerator';
 export { AnchorGenerator } from './AnchorGenerator';
 export type { HeadingInfo } from './AnchorGenerator';
-export { convertMarkdownToTelegraphNodes } from './markdownConverter';
+export { convertMarkdownToTelegraphNodes, processInlineMarkdown } from './markdownConverter';
 export type { TelegraphNode } from './telegraph-node';
 export { slugifyBase, createSlugger } from './slug';
 export {

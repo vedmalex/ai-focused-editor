@@ -110,6 +110,14 @@ export class EpubGenerator {
 		content: string;
 		sourcePath?: string;
 		generateToc?: boolean;
+		/**
+		 * Optional post-conversion transform over the chapter's TelegraphNode tree,
+		 * applied before the chapter is stored. The manuscript backend uses it to
+		 * turn footnote reference sentinels into inline `<sup>` nodes and to append
+		 * the end-of-chapter "Notes" section — footnote grammar the base Markdown
+		 * converter does not know about. Returning the input unchanged is a no-op.
+		 */
+		transformNodes?: (nodes: TelegraphNode[]) => TelegraphNode[];
 	}): string {
 		const chapterTitle = options.title;
 
@@ -132,10 +140,12 @@ export class EpubGenerator {
 			target: "epub",
 		});
 
+		const finalNodes = options.transformNodes ? options.transformNodes(nodes) : nodes;
+
 		const chapterId = `chapter-${this.chapters.length + 1}`;
 		this.chapters.push({
 			title: chapterTitle,
-			content: nodes,
+			content: finalNodes,
 			id: chapterId,
 			sourcePath: options.sourcePath ? resolve(options.sourcePath) : "",
 			headings,

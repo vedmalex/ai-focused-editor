@@ -12,10 +12,11 @@ import {
   EpubGenerator,
   createSlugger,
   findChromePath,
+  processInlineMarkdown,
   renderHtmlToPdf,
   slugifyBase
 } from '@ai-focused-editor/book-export';
-import type { EpubNavPoint } from '@ai-focused-editor/book-export';
+import type { EpubNavPoint, TelegraphNode } from '@ai-focused-editor/book-export';
 import MarkdownIt from 'markdown-it';
 import { parse } from 'yaml';
 import type {
@@ -272,7 +273,11 @@ export class NodeBookBuildService implements BookBuildService {
     });
     generator.setChapterPathMap(chapterPathMap);
 
-    const navTree = this.buildEpubNavTree(renderTree, texts, generator);
+    // Footnote anchor ids are prefixed with a per-chapter slug (deduped across the
+    // book) so `[^N]` references and their Notes entries stay unique inside each
+    // chapter's XHTML file, mirroring the HTML export's chapter-slug prefixing.
+    const footnoteSlugger = createSlugger();
+    const navTree = this.buildEpubNavTree(renderTree, texts, generator, footnoteSlugger);
     generator.setNavTree(navTree);
 
     await fs.mkdir(dirname(outputPath), { recursive: true });
@@ -359,20 +364,24 @@ export class NodeBookBuildService implements BookBuildService {
   protected buildEpubNavTree(
     nodes: BuildNode[],
     texts: Map<string, string>,
-    generator: EpubGenerator
+    generator: EpubGenerator,
+    footnoteSlugger: (title: string) => string
   ): EpubNavPoint[] {
     const navPoints: EpubNavPoint[] = [];
     for (const node of nodes) {
       if (node.kind === 'folder') {
         navPoints.push({
           title: node.title,
-          children: this.buildEpubNavTree(node.children, texts, generator)
+          children: this.buildEpubNavTree(node.children, texts, generator, footnoteSlugger)
         });
       } else {
         const rawText = texts.get(node.path) ?? '';
+        const anchorPrefix = footnoteSlugger(node.title);
+        const prepared = this.prepareEpubChapterContent(this.renderSemanticLabels(rawText), anchorPrefix);
         const chapterId = generator.addChapterFromContent({
           title: node.title,
-          content: this.renderSemanticLabels(rawText),
+          content: prepared.content,
+          transformNodes: prepared.transformNodes,
           // Absolute source path lets the generator resolve this chapter's local
           // `.md` links against its real on-disk location before rewriting them.
           sourcePath: node.absolutePath
@@ -381,6 +390,128 @@ export class NodeBookBuildService implements BookBuildService {
       }
     }
     return navPoints;
+  }
+
+  /**
+   * Pre-process one chapter's Markdown for EPUB footnote rendering.
+   *
+   * The EPUB path converts Markdown into a TelegraphNode AST that only serializes
+   * known tags, so `[^N]` references and `[^N]:` definitions would otherwise pass
+   * through as literal text. We strip the definition lines, swap each reference for
+   * a private-use sentinel (which survives the AST conversion untouched), and hand
+   * back a `transformNodes` post-pass that turns the sentinels into inline `<sup>`
+   * anchor nodes and appends an end-of-chapter "Notes" ordered list with back-links
+   * — the same shape the HTML export emits. Chapters without footnotes are returned
+   * unchanged so their conversion path is untouched.
+   */
+  protected prepareEpubChapterContent(
+    markdown: string,
+    anchorPrefix: string
+  ): { content: string; transformNodes?: (nodes: TelegraphNode[]) => TelegraphNode[] } {
+    const footnotes = parseFootnotes(markdown);
+    if (footnotes.definitions.length === 0 && footnotes.references.length === 0) {
+      return { content: markdown };
+    }
+
+    const definitionLines = new Set(footnotes.definitions.map(definition => definition.line));
+    const body = markdown
+      .split('\n')
+      .filter((_, index) => !definitionLines.has(index))
+      .join('\n');
+    const withSentinels = body.replace(/\[\^([^\]\s]+)\]/g, (raw, id: string) => {
+      const number = footnotes.numbers.get(id);
+      return number ? `${number}` : raw;
+    });
+
+    const transformNodes = (nodes: TelegraphNode[]): TelegraphNode[] => {
+      const withRefs = nodes.map(node => this.replaceFootnoteSentinelsInNode(node, anchorPrefix));
+      const notes = this.buildEpubFootnoteNotes(footnotes, anchorPrefix);
+      return notes ? [...withRefs, notes] : withRefs;
+    };
+
+    return { content: withSentinels, transformNodes };
+  }
+
+  /** Recursively swap footnote-reference sentinels in a node's text children for `<sup>` nodes. */
+  protected replaceFootnoteSentinelsInNode(node: TelegraphNode, anchorPrefix: string): TelegraphNode {
+    if (!node.children || node.children.length === 0) {
+      return node;
+    }
+    const children: (string | TelegraphNode)[] = [];
+    for (const child of node.children) {
+      if (typeof child === 'string') {
+        children.push(...this.splitFootnoteSentinels(child, anchorPrefix));
+      } else {
+        children.push(this.replaceFootnoteSentinelsInNode(child, anchorPrefix));
+      }
+    }
+    return { ...node, children };
+  }
+
+  /** Split a text run on `N` sentinels, emitting inline footnote `<sup>` nodes. */
+  protected splitFootnoteSentinels(text: string, anchorPrefix: string): (string | TelegraphNode)[] {
+    if (!text.includes('')) {
+      return [text];
+    }
+    const parts: (string | TelegraphNode)[] = [];
+    const pattern = /(\d+)/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(text.slice(lastIndex, match.index));
+      }
+      const number = Number(match[1]);
+      parts.push({
+        tag: 'sup',
+        attrs: { class: 'afe-footnote-ref', id: `${anchorPrefix}-fnref-${number}` },
+        children: [{ tag: 'a', attrs: { href: `#${anchorPrefix}-fn-${number}` }, children: [`[${number}]`] }]
+      });
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < text.length) {
+      parts.push(text.slice(lastIndex));
+    }
+    return parts;
+  }
+
+  /**
+   * Build the end-of-chapter "Notes" section (`<section class="afe-footnotes">` →
+   * `<ol>` of `<li>` items with back-links) as TelegraphNodes. Definition bodies are
+   * rendered with the shared inline Markdown grammar. Returns undefined when there
+   * are no definitions to list.
+   */
+  protected buildEpubFootnoteNotes(footnotes: FootnoteDocument, anchorPrefix: string): TelegraphNode | undefined {
+    const referencedIds = new Set(footnotes.references.map(reference => reference.id));
+    const seen = new Set<string>();
+    const items: TelegraphNode[] = [];
+    for (const definition of footnotes.definitions) {
+      if (seen.has(definition.id)) {
+        continue;
+      }
+      seen.add(definition.id);
+      const number = footnotes.numbers.get(definition.id) ?? seen.size;
+      const children: (string | TelegraphNode)[] = [...processInlineMarkdown(definition.text)];
+      if (referencedIds.has(definition.id)) {
+        children.push(' ', {
+          tag: 'a',
+          attrs: { class: 'afe-footnote-backref', href: `#${anchorPrefix}-fnref-${number}` },
+          children: ['↩']
+        });
+      }
+      items.push({ tag: 'li', attrs: { id: `${anchorPrefix}-fn-${number}` }, children });
+    }
+    if (items.length === 0) {
+      return undefined;
+    }
+    return {
+      tag: 'section',
+      attrs: { class: 'afe-footnotes' },
+      children: [
+        { tag: 'h2', children: ['Notes'] },
+        { tag: 'ol', children: items }
+      ]
+    };
   }
 
   /**

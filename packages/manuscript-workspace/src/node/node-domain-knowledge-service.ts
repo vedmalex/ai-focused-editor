@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import { isAllowedMaterialFile } from '../common/author-materials';
-import { isAbsolute, join, relative, resolve, sep } from 'path';
+import { extname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import { injectable } from '@theia/core/shared/inversify';
 import { parse } from 'yaml';
@@ -21,6 +21,7 @@ import {
   SourceLibraryBackendService,
   SourceLibraryItem,
   SourceLibrarySnapshot,
+  SourceTextExtraction,
   WorkspaceDiagnostic
 } from '../common';
 
@@ -152,6 +153,36 @@ function toWorkspaceSourcePath(source: string): string | undefined {
     return normalized;
   }
   return `sources/${normalized}`;
+}
+
+/** Minimal structural surface of the `unpdf` functions used for text extraction. */
+interface UnpdfModule {
+  getDocumentProxy(data: Uint8Array): Promise<unknown>;
+  extractText(
+    pdf: unknown,
+    options?: { mergePages?: boolean }
+  ): Promise<{ totalPages: number; text: string | string[] }>;
+}
+
+/**
+ * Extract the merged plain text of a PDF via `unpdf` (a small, serverless-friendly
+ * pdf.js build).
+ *
+ * `unpdf` is resolved lazily through a runtime-assembled specifier so the esbuild
+ * backend bundler never pulls it (it bundles pdf.js and is bundler-hostile) into
+ * the graph — it is loaded from node_modules only when a PDF is actually analyzed,
+ * mirroring the puppeteer-core lazy-require guard in the PDF exporter. `unpdf`
+ * ships a CommonJS entry (`./dist/index.cjs`) so a plain `require` resolves it in
+ * the tsc-CJS backend and under the bun test runner alike.
+ */
+async function extractPdfText(absolutePath: string): Promise<string> {
+  const moduleName = ['un', 'pdf'].join('');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const unpdf = require(moduleName) as UnpdfModule;
+  const buffer = await fs.readFile(absolutePath);
+  const pdf = await unpdf.getDocumentProxy(new Uint8Array(buffer));
+  const { text } = await unpdf.extractText(pdf, { mergePages: true });
+  return Array.isArray(text) ? text.join('\n') : text;
 }
 
 function asLineNumber(value: unknown): number | undefined {
@@ -316,6 +347,54 @@ export class NodeSourceLibraryService implements SourceLibraryBackendService {
 
   refresh(rootUri?: string): Promise<SourceLibrarySnapshot> {
     return this.getSnapshot(rootUri);
+  }
+
+  /**
+   * Extract the plain text of a workspace source document (spec §5.4). PDFs are
+   * parsed with `unpdf`; other files are read as UTF-8 so the method is a general
+   * "give me this source as text" primitive for the analyzer. The path is resolved
+   * inside the workspace root and every failure mode (escape, missing file,
+   * image-only PDF, parser error) is reported as `ok: false` rather than throwing,
+   * so the frontend can warn gracefully.
+   */
+  async extractSourceText(rootUri: string, path: string): Promise<SourceTextExtraction> {
+    if (!rootUri) {
+      return { ok: false, detail: 'Open a manuscript workspace before extracting source text.' };
+    }
+    if (typeof path !== 'string' || path.trim().length === 0) {
+      return { ok: false, detail: 'No source path was provided.' };
+    }
+
+    const rootPath = toRootPath(rootUri);
+    const absolutePath = resolve(rootPath, path);
+    const relativePath = relative(rootPath, absolutePath);
+    if (relativePath.startsWith('..') || isAbsolute(relativePath)) {
+      return { ok: false, detail: `Path escapes the workspace root: ${path}` };
+    }
+
+    const stat = await statIfExists(absolutePath);
+    if (!stat?.isFile()) {
+      return { ok: false, detail: `Source file not found: ${path}` };
+    }
+
+    try {
+      if (extname(absolutePath).toLowerCase() === '.pdf') {
+        const text = await extractPdfText(absolutePath);
+        if (text.trim().length === 0) {
+          return {
+            ok: false,
+            detail: `No extractable text found in ${path} (it may be a scanned or image-only PDF).`
+          };
+        }
+        return { ok: true, text };
+      }
+      return { ok: true, text: await fs.readFile(absolutePath, 'utf8') };
+    } catch (error) {
+      return {
+        ok: false,
+        detail: `Could not extract text from ${path}: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
   }
 
   protected async scan(rootPath: string): Promise<SourceLibrarySnapshot> {

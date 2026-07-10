@@ -25,8 +25,10 @@ import {
   AiConnectionService,
   AiModeRegistry,
   generateWithFailover,
+  SourceLibraryBackendService,
   SourceLibraryService,
-  SourceLibrarySnapshot
+  SourceLibrarySnapshot,
+  SourceTextExtraction
 } from '../common';
 import { slugifyChapter } from '../common/knowledge-generation';
 import {
@@ -79,8 +81,11 @@ const IMAGE_EXTENSIONS = new Set([
   'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'tif', 'tiff', 'ico', 'avif'
 ]);
 
-/** Text-like source documents the "Analyze Source Document" command can read (spec §5.4). */
+/** Text-like source documents the "Analyze Source Document" command can read directly (spec §5.4). */
 const TEXT_SOURCE_EXTENSIONS = new Set(['md', 'txt', 'markdown']);
+
+/** Binary documents the analyzer extracts text from server-side before analysis (spec §5.4). */
+const PDF_SOURCE_EXTENSIONS = new Set(['pdf']);
 
 /** AiMode id looked up in the project's `custom-modes.yaml` for source analysis. */
 const ANALYZE_SOURCE_MODE_ID = 'analyze-source';
@@ -104,7 +109,7 @@ const BUILTIN_ANALYZE_SOURCE_PROMPT = [
 const CITATION_LINK_PATTERN = /\[@cite:([^\]\s]+)\]/g;
 const SNAPSHOT_CACHE_TTL_MS = 5000;
 
-/** A text-like source document discovered under `sources/`. */
+/** An analyzable source document discovered under `sources/`. */
 interface TextSourceFile {
   /** Last path segment, e.g. `gita-notes.md`. */
   name: string;
@@ -112,6 +117,8 @@ interface TextSourceFile {
   path: string;
   /** Absolute file URI string. */
   uri: string;
+  /** True for `.pdf` sources whose text is extracted server-side before analysis. */
+  isPdf: boolean;
 }
 
 interface SourceQuickPickItem extends QuickPickItem {
@@ -134,6 +141,9 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
 
   @inject(SourceLibraryService)
   protected readonly sourceLibrary!: SourceLibraryService;
+
+  @inject(SourceLibraryBackendService)
+  protected readonly sourceLibraryBackend!: SourceLibraryBackendService;
 
   @inject(QuickInputService)
   protected readonly quickInput!: QuickInputService;
@@ -278,12 +288,16 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
     const sourcesDir = root.resolve('sources');
     const candidates = await this.collectTextSources(sourcesDir, root);
     if (candidates.length === 0) {
-      this.messageService.warn('No text source documents (.md, .txt, .markdown) found under sources/.');
+      this.messageService.warn('No analyzable source documents (.md, .txt, .markdown, .pdf) found under sources/.');
       return;
     }
 
     const picked = await this.quickInput.showQuickPick<SourceQuickPickItem>(
-      candidates.map(source => ({ label: source.path, description: source.name, source })),
+      candidates.map(source => ({
+        label: source.path,
+        description: source.isPdf ? `${source.name} (PDF)` : source.name,
+        source
+      })),
       {
         title: 'Analyze Source Document',
         placeholder: 'Select a source document to extract excerpts and citations from'
@@ -302,13 +316,30 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
     }
 
     let content: string;
-    try {
-      content = (await this.fileService.read(new URI(sourceFile.uri))).value;
-    } catch (error) {
-      this.messageService.error(
-        `Could not read ${sourceFile.path}: ${error instanceof Error ? error.message : String(error)}`
-      );
-      return;
+    if (sourceFile.isPdf) {
+      // PDFs cannot be read as text in the browser; extract server-side (spec §5.4).
+      let extraction: SourceTextExtraction;
+      try {
+        extraction = await this.sourceLibraryBackend.extractSourceText(root.toString(), sourceFile.path);
+      } catch (error) {
+        extraction = { ok: false, detail: error instanceof Error ? error.message : String(error) };
+      }
+      if (!extraction.ok || extraction.text === undefined) {
+        this.messageService.warn(
+          `Could not extract text from ${sourceFile.path}: ${extraction.detail ?? 'no extractable text found.'}`
+        );
+        return;
+      }
+      content = extraction.text;
+    } else {
+      try {
+        content = (await this.fileService.read(new URI(sourceFile.uri))).value;
+      } catch (error) {
+        this.messageService.error(
+          `Could not read ${sourceFile.path}: ${error instanceof Error ? error.message : String(error)}`
+        );
+        return;
+      }
     }
 
     const truncated = content.length > ANALYZE_SOURCE_CHAR_LIMIT;
@@ -557,12 +588,13 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
     for (const child of stat.children ?? []) {
       if (child.isDirectory) {
         await this.walkTextSources(child.resource, root, results, depth + 1);
-      } else if (this.isTextSource(child.name)) {
+      } else if (this.isTextSource(child.name) || this.isPdfSource(child.name)) {
         const relative = root.relative(child.resource);
         results.push({
           name: child.name,
           path: relative ? relative.toString() : child.resource.path.toString(),
-          uri: child.resource.toString()
+          uri: child.resource.toString(),
+          isPdf: this.isPdfSource(child.name)
         });
       }
     }
@@ -571,6 +603,11 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
   protected isTextSource(fileName: string): boolean {
     const dot = fileName.lastIndexOf('.');
     return dot >= 0 && TEXT_SOURCE_EXTENSIONS.has(fileName.slice(dot + 1).toLowerCase());
+  }
+
+  protected isPdfSource(fileName: string): boolean {
+    const dot = fileName.lastIndexOf('.');
+    return dot >= 0 && PDF_SOURCE_EXTENSIONS.has(fileName.slice(dot + 1).toLowerCase());
   }
 
   protected stripExtension(fileName: string): string {

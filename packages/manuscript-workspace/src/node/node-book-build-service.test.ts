@@ -514,6 +514,86 @@ describe('EPUB export', () => {
     const chapterTwo = unzipEntry(result.outputPath, 'OEBPS/chapter-2.html');
     expect(chapterTwo).toContain(`href="chapter-1.html#${slugifyBase('The Field')}"`);
   });
+
+  test('renders footnote references as sup anchors and a per-chapter Notes list', async () => {
+    const rootPath = await createWorkspace('epub-footnotes', {
+      'metadata.yaml': ['title: Footnote Book', 'language: en', 'author: Test Author', ''].join('\n'),
+      'manifest.yaml': [
+        'version: 1',
+        'content:',
+        '  - path: content/chapter-01.md',
+        '    title: Chapter One',
+        '  - path: content/chapter-02.md',
+        '    title: Chapter Two',
+        ''
+      ].join('\n'),
+      'content/chapter-01.md': [
+        '# Chapter One',
+        '',
+        'Duty does not bend to grief.[^1] Action does not cling to fruit.[^2]',
+        '',
+        '[^1]: See the second chapter for the full teaching.',
+        '[^2]: A **key** distinction.',
+        ''
+      ].join('\n'),
+      'content/chapter-02.md': [
+        '# Chapter Two',
+        '',
+        'The teaching begins here.[^1]',
+        '',
+        '[^1]: Only one note in this chapter.',
+        ''
+      ].join('\n')
+    });
+
+    const result = await service.buildEpub({ rootUri: rootPath });
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+
+    // The archive is structurally sound (mimetype-first ZIP, valid entries).
+    const verify = Bun.spawnSync(['unzip', '-t', result.outputPath]);
+    expect(verify.exitCode).toBe(0);
+    expect(verify.stdout.toString()).toContain('No errors detected');
+
+    const chapterOne = unzipEntry(result.outputPath, 'OEBPS/chapter-1.html');
+    // Inline references become superscript links into this chapter's note anchors.
+    expect(chapterOne).toContain('<sup class="afe-footnote-ref" id="chapter-one-fnref-1">');
+    expect(chapterOne).toContain('<a href="#chapter-one-fn-1">[1]</a>');
+    expect(chapterOne).toContain('<a href="#chapter-one-fn-2">[2]</a>');
+    // End-of-chapter Notes list with unique ids and back-links.
+    expect(chapterOne).toContain('<section class="afe-footnotes">');
+    expect(chapterOne).toContain('<h2>Notes</h2>');
+    expect(chapterOne).toContain('<li id="chapter-one-fn-1">See the second chapter for the full teaching.');
+    // Inline Markdown inside a note is still rendered.
+    expect(chapterOne).toContain('A <strong>key</strong> distinction.');
+    expect(chapterOne).toContain('<a class="afe-footnote-backref" href="#chapter-one-fnref-1">↩</a>');
+    // The raw footnote syntax must not leak into the chapter XHTML.
+    expect(chapterOne).not.toContain('[^1]');
+    expect(chapterOne).not.toContain('[^2]');
+
+    // Ids are namespaced by each chapter's own slug, so numbering can safely reset
+    // per chapter file without colliding across chapters.
+    const chapterTwo = unzipEntry(result.outputPath, 'OEBPS/chapter-2.html');
+    expect(chapterTwo).toContain('<sup class="afe-footnote-ref" id="chapter-two-fnref-1">');
+    expect(chapterTwo).toContain('<li id="chapter-two-fn-1">Only one note in this chapter.');
+    expect(chapterTwo).not.toContain('chapter-one-fn');
+    expect(chapterTwo).not.toContain('[^1]');
+  });
+
+  test('leaves EPUB chapters without footnotes untouched', async () => {
+    const rootPath = await createWorkspace('epub-footnotes-none', {
+      'metadata.yaml': ['title: Plain Book', 'language: en', ''].join('\n'),
+      'manifest.yaml': ['version: 1', 'content:', '  - path: content/chapter-01.md', '    title: Chapter One', ''].join('\n'),
+      'content/chapter-01.md': '# Chapter One\n\nJust prose, no notes.\n'
+    });
+
+    const result = await service.buildEpub({ rootUri: rootPath });
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+
+    const chapterOne = unzipEntry(result.outputPath, 'OEBPS/chapter-1.html');
+    expect(chapterOne).toContain('Just prose, no notes.');
+    expect(chapterOne).not.toContain('afe-footnotes');
+    expect(chapterOne).not.toContain('afe-footnote-ref');
+  });
 });
 
 describe('EPUB cover image', () => {

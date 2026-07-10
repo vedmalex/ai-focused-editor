@@ -54,6 +54,19 @@ export interface SourceLibrarySnapshot {
   diagnostics: WorkspaceDiagnostic[];
 }
 
+/**
+ * Result of a server-side source-text extraction (spec §5.4). Extraction never
+ * throws across the RPC boundary: a failure surfaces as `ok: false` with a
+ * human-readable `detail` so the analyzer can warn without crashing.
+ */
+export interface SourceTextExtraction {
+  ok: boolean;
+  /** Extracted plain text (present when `ok` is true). */
+  text?: string;
+  /** Human-readable reason when `ok` is false (missing file, unsupported, no text, ...). */
+  detail?: string;
+}
+
 export interface SourceLibraryService {
   getSnapshot(): Promise<SourceLibrarySnapshot>;
   refresh(): Promise<SourceLibrarySnapshot>;
@@ -62,4 +75,11 @@ export interface SourceLibraryService {
 export interface SourceLibraryBackendService {
   getSnapshot(rootUri?: string): Promise<SourceLibrarySnapshot>;
   refresh(rootUri?: string): Promise<SourceLibrarySnapshot>;
+  /**
+   * Extract the plain text of a source document under the workspace root so the
+   * §5.4 analyzer can feed non-plain-text formats (e.g. PDF) into the AI flow.
+   * `path` is workspace-relative; extraction is best-effort and reports failure
+   * via `SourceTextExtraction.ok === false` rather than rejecting.
+   */
+  extractSourceText(rootUri: string, path: string): Promise<SourceTextExtraction>;
 }

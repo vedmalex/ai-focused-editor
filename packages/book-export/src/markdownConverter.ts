@@ -946,7 +946,13 @@ export function convertMarkdownToTelegraphNodes(
 	);
 }
 
-function processInlineMarkdown(text: string): (string | TelegraphNode)[] {
+/**
+ * Convert an inline Markdown run (bold/italic/code/links/images/strikethrough)
+ * into TelegraphNode children. Exported so other exporters (e.g. the EPUB
+ * footnote "Notes" builder in the manuscript backend) render note bodies with the
+ * exact same inline grammar as the rest of the book, instead of re-parsing them.
+ */
+export function processInlineMarkdown(text: string): (string | TelegraphNode)[] {
 	const result: (string | TelegraphNode)[] = [];
 	let currentIndex = 0;
 
