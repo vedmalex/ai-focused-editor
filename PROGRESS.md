@@ -212,6 +212,17 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **Manuscript view toolbar** now: New Chapter (+), Refresh, Build Book (rocket), Book Properties (book), Book Doctor (pulse).
 - Flow AFE-09 guards the Manuscript menu entries and toolbar icons; suite: 486 tests across 27 files; `verify:full` green (browser + electron smokes, 9/9 UI flows).
 
+## Wave 17 — Images in the preview (shipped)
+
+- **Relative images render in the Semantic Preview**: targets resolve against the document dir (workspace-escape guard shared with link navigation), files inline as `data:` URIs with an mtime-keyed cache and 10MB/40MB caps; async swap-in guarded by a generation token (no flicker loops). Root-cause note: DOMPurify was never the blocker — markdown-it's `validateLink` whitelists only raster `data:image/*`, so raster goes through the string pipeline while SVG uses a sentinel + post-render DOM patch. Pure helpers in `common/preview-images.ts` (33 tests); sample chapter shows the cover; AFE-04 asserts a real `data:image/` img in the preview.
+
+## Wave 18 — MVP cleanup: no legacy AI profiles, Cyrillic slugs (shipped)
+
+- **Legacy single-profile AI mode removed** (owner: «мы на MVP, легаси нет»): the flat `aiFocusedEditor.ai.*` keys (provider/model/transport/profileId/endpointUrl/apiKey) are gone along with the synthetic `default` profile and the `Legacy AI Profiles` section. Empty profiles now mean an explicit not-configured state: status bar shows `AI: not configured` (click opens Model Config), the widget offers a friendly empty state. The v1 endpoints/aliases JSON import stays — that compatibility is a feature, not legacy.
+- **Cyrillic transliteration in the canonical slug generator** (`createSemanticEntityId`): «проверка» → `proverka`, «Война и мир» → `voina-i-mir` for entity files, knowledge notes, citation ids, semantic tags and new-book folder names; hash fallback remains for uncovered scripts (CJK). Heading anchors intentionally untouched (their generator keeps Cyrillic, existing `#глава-1` links keep matching).
+- Electron smoke: launch retries with main-process output capture + backoff; `verify:full` runs the electron smoke before the Playwright browser chain (back-to-back launches after a heavy Playwright run were the observed flake).
+- Tests: 533 across 29 files; browser smoke + 9/9 UI flows green.
+
 ## Backlog (queued)
 
 1. Full LSP transport if live validation ever needs cross-file incremental analysis (current backend-RPC path covers the active-document case).
