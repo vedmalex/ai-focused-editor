@@ -189,6 +189,7 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **Shared id contract** in `common/entity-creation.ts`: one slug/hash generator for tag ids and file names (mirrors the semantic-tag id algorithm), yaml scaffolds, unique-path suffixing, selection→name/summary heuristics; 28 tests.
 - Flow AFE-07 guards the section context menus (right-click via pointer events; asserts `New Character...`/`New Location...` present and `New Chapter...` absent); `closeMenus` hardened to actually dismiss Lumino context menus.
 - Tests: 410 across 24 files; `verify:full` green (browser + electron smokes, 7/7 UI flows).
+- **Follow-up (context keys)**: section gating moved from command `isVisible` (which the menu bar honors too) to `when` clauses on the context-menu actions, driven by the `afeManuscriptSection` context key tracking tree selection — the menu bar never hides create commands / `New Chapter...` regardless of tree selection; flow AFE-08 guards it.
 
 ## Backlog (queued)
 
