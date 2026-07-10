@@ -3,6 +3,7 @@ import {
   open,
   OpenerService
 } from '@theia/core/lib/browser';
+import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { EditorOpenerOptions } from '@theia/editor/lib/browser/editor-manager';
 import {
@@ -29,6 +30,9 @@ export class SourceLibraryWidget extends ReactWidget {
 
   @inject(OpenerService)
   protected readonly openerService!: OpenerService;
+
+  @inject(ClipboardService)
+  protected readonly clipboardService!: ClipboardService;
 
   protected snapshot: SourceLibrarySnapshot | undefined;
 
@@ -143,8 +147,29 @@ export class SourceLibraryWidget extends ReactWidget {
       title,
       React.createElement('code', undefined, citation.id),
       citation.source ? React.createElement('span', undefined, ` source: ${citation.source}`) : undefined,
+      this.renderCopyButton(citation.title, 'Copy citation title'),
       citation.note ? React.createElement('p', undefined, citation.note) : undefined
     );
+  }
+
+  /** Inline "Copy" affordance so a citation/excerpt can be extracted with one click. */
+  protected renderCopyButton(text: string, title: string): React.ReactNode {
+    return React.createElement(
+      'button',
+      {
+        className: 'theia-button secondary afe-source-library-copy',
+        title,
+        onClick: (event: React.MouseEvent) => {
+          event.preventDefault();
+          void this.copyText(text);
+        }
+      },
+      'Copy'
+    );
+  }
+
+  protected async copyText(text: string): Promise<void> {
+    await this.clipboardService.writeText(text);
   }
 
   protected renderExcerpts(excerpts: SourceExcerpt[]): React.ReactNode {
@@ -187,6 +212,7 @@ export class SourceLibraryWidget extends ReactWidget {
       sourceLabel
         ? React.createElement('span', { className: 'afe-source-library-excerpt-source' }, ` — ${sourceLabel}`)
         : undefined,
+      this.renderCopyButton(excerpt.text, 'Copy excerpt text'),
       excerpt.note ? React.createElement('p', undefined, excerpt.note) : undefined
     );
   }

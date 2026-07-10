@@ -36,6 +36,10 @@ export interface ExcerptRecord {
   sourcePath: string;
   text: string;
   note?: string;
+  /** Workspace-relative manuscript file this excerpt links back to. */
+  targetPath?: string;
+  /** 1-based line revealed when the Sources view opens the target file. */
+  targetLine?: number;
 }
 
 /** Slug/path/continuation options for {@link buildExcerptRecords}. */
@@ -173,6 +177,100 @@ export function countSlugOccurrences(existingIds: Iterable<string>, slug: string
     }
   }
   return count;
+}
+
+/**
+ * Derive a citation id slug from the leading words of a selection. Ports the
+ * unicode-aware chapter slug (lowercase, keep any Unicode letters/digits,
+ * collapse other runs to a single hyphen) so any script (Cyrillic, Devanagari,
+ * …) survives. Falls back to `citation` when the text yields no usable
+ * characters.
+ */
+export function citationSlugFromText(text: string, wordCount = 6): string {
+  const words = String(text ?? '')
+    .trim()
+    .split(/\s+/)
+    .filter(word => word.length > 0)
+    .slice(0, Math.max(1, wordCount))
+    .join(' ');
+  const slug = words
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'citation';
+}
+
+/**
+ * Derive a concise citation title from a selection: whitespace collapsed and
+ * truncated to `maxLength` characters (ellipsis appended when clipped).
+ */
+export function citationTitleFromText(text: string, maxLength = 60): string {
+  const normalized = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`;
+}
+
+/**
+ * Ensure a citation id is unique against ids already present. Returns the
+ * candidate unchanged when free, otherwise appends `-2`, `-3`, … until unique
+ * (so writers get a suggested, collision-free id).
+ */
+export function dedupeCitationId(candidate: string, existingIds: Iterable<string>): string {
+  const taken = new Set<string>();
+  for (const id of existingIds) {
+    if (typeof id === 'string' && id) {
+      taken.add(id);
+    }
+  }
+  const base = candidate || 'citation';
+  if (!taken.has(base)) {
+    return base;
+  }
+  for (let counter = 2; counter < 10000; counter++) {
+    const next = `${base}-${counter}`;
+    if (!taken.has(next)) {
+      return next;
+    }
+  }
+  return `${base}-${Date.now()}`;
+}
+
+/** Where a saved editor selection came from, for {@link buildSelectionExcerptRecord}. */
+export interface SelectionCitationInput {
+  /** The deduped citation id; the excerpt id is `<citationId>-excerpt`. */
+  citationId: string;
+  /** Workspace-relative path of the editor the selection came from. */
+  sourcePath: string;
+  /** The selected text. */
+  text: string;
+  /** Optional author note. */
+  note?: string;
+  /** 1-based line of the selection start, revealed on click-to-open. */
+  targetLine: number;
+}
+
+/**
+ * Build the `sources/excerpts.jsonl` record for a saved editor selection. The
+ * `sourcePath` doubles as `targetPath` so the Sources view can reveal the
+ * originating line (click-to-open, spec §5.4).
+ */
+export function buildSelectionExcerptRecord(input: SelectionCitationInput): ExcerptRecord {
+  const record: ExcerptRecord = {
+    id: `${input.citationId}-excerpt`,
+    sourcePath: input.sourcePath,
+    text: input.text,
+    targetPath: input.sourcePath
+  };
+  const note = input.note?.trim();
+  if (note) {
+    record.note = note;
+  }
+  if (Number.isFinite(input.targetLine) && input.targetLine > 0) {
+    record.targetLine = Math.floor(input.targetLine);
+  }
+  return record;
 }
 
 function pickArray(value: unknown, key: 'excerpts' | 'citations'): unknown[] | undefined {

@@ -13,6 +13,8 @@ import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-con
 import { FileDialogService } from '@theia/filesystem/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
+import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
+import { EDITOR_CONTEXT_MENU, EditorContextMenu } from '@theia/editor/lib/browser/editor-menu';
 import * as monaco from '@theia/monaco-editor-core';
 import { Document, isSeq, parseDocument, YAMLSeq } from 'yaml';
 import { SourceLibraryWidget } from './source-library-widget';
@@ -30,8 +32,12 @@ import { slugifyChapter } from '../common/knowledge-generation';
 import {
   AnalyzedCitation,
   buildExcerptRecords,
+  buildSelectionExcerptRecord,
+  citationSlugFromText,
+  citationTitleFromText,
   coerceSourceAnalysis,
   countSlugOccurrences,
+  dedupeCitationId,
   dedupeCitations,
   ExcerptRecord
 } from '../common/source-analysis';
@@ -60,6 +66,12 @@ export namespace SourceLibraryCommands {
   export const ANALYZE: Command = {
     id: 'ai-focused-editor.sources.analyze',
     label: 'AI Focused Editor: Analyze Source Document...'
+  };
+
+  export const SAVE_SELECTION_AS_CITATION: Command = {
+    id: 'ai-focused-editor.sources.saveSelectionAsCitation',
+    category: 'AI Focused Editor',
+    label: 'Save Selection as Citation...'
   };
 }
 
@@ -138,6 +150,9 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
   @inject(AiHistoryService)
   protected readonly aiHistory!: AiHistoryService;
 
+  @inject(EditorManager)
+  protected readonly editorManager!: EditorManager;
+
   protected readonly toDispose = new DisposableCollection();
   protected linkProviderRegistered = false;
   protected cachedSnapshot: SourceLibrarySnapshot | undefined;
@@ -169,6 +184,9 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
     commands.registerCommand(SourceLibraryCommands.ANALYZE, {
       execute: () => this.analyzeSource()
     });
+    commands.registerCommand(SourceLibraryCommands.SAVE_SELECTION_AS_CITATION, {
+      execute: () => this.saveSelectionAsCitation()
+    });
     // `registerCommands` runs once at frontend startup, so it is a conflict-free
     // place to wire the citation link provider without touching the module.
     this.registerCitationLinkProvider();
@@ -188,6 +206,17 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
     });
     menus.registerMenuAction(menuPath, {
       commandId: SourceLibraryCommands.ANALYZE.id
+    });
+    menus.registerMenuAction(menuPath, {
+      commandId: SourceLibraryCommands.SAVE_SELECTION_AS_CITATION.id
+    });
+    // Writer-facing action: offer "Save Selection as Citation" right where the
+    // text lives, grouped with the other editor AI modification actions (spec
+    // FR-009 placement mirrored from the manuscript workspace contribution).
+    const editorMenuPath = [...EDITOR_CONTEXT_MENU, ...EditorContextMenu.MODIFICATION];
+    menus.registerMenuAction(editorMenuPath, {
+      commandId: SourceLibraryCommands.SAVE_SELECTION_AS_CITATION.id,
+      order: 'z3'
     });
   }
 
@@ -383,6 +412,126 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
     } finally {
       progress.cancel();
     }
+  }
+
+  /**
+   * "Выбрать текст и сказать сохрани в цитату": take the active editor's
+   * selection, ask for a citation id (prefilled from the leading words and
+   * auto-deduped) plus an optional note, then persist BOTH an excerpt line to
+   * `sources/excerpts.jsonl` (linked back to the manuscript line) and a citation
+   * entry merged into `sources/citations.yaml`. The excerpt/citation then surface
+   * in the Sources view with click-to-open so they can be "извлечь потом".
+   */
+  protected async saveSelectionAsCitation(): Promise<void> {
+    const root = await this.getRoot();
+    if (!root) {
+      this.messageService.warn('Open a manuscript workspace before saving a citation.');
+      return;
+    }
+
+    const editor = (this.editorManager.currentEditor ?? this.editorManager.activeEditor)?.editor;
+    if (!editor) {
+      this.messageService.warn('Open a text editor and select text before saving a citation.');
+      return;
+    }
+
+    const selection = editor.selection;
+    const selectedText = editor.document.getText(selection);
+    if (!selectedText.trim()) {
+      this.messageService.warn('Select text in the active editor before saving a citation.');
+      return;
+    }
+
+    const documentUri = editor.uri.toString();
+    const relative = root.relative(editor.uri);
+    const sourcePath = relative ? relative.toString() : editor.uri.path.toString();
+
+    // Fresh snapshot so the suggested id and dedupe reflect what is on disk.
+    const snapshot = await this.sourceLibrary.getSnapshot();
+    const existingIds = snapshot.citations.map(citation => citation.id);
+    const suggestedId = dedupeCitationId(citationSlugFromText(selectedText), existingIds);
+
+    const rawId = await this.quickInput.input({
+      title: 'Save Selection as Citation',
+      prompt: 'Citation id (url-safe slug)',
+      value: suggestedId,
+      validateInput: async value => {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          return 'Citation id cannot be empty.';
+        }
+        if (existingIds.includes(trimmed)) {
+          return `A citation with id "${trimmed}" already exists.`;
+        }
+        return undefined;
+      }
+    });
+    if (rawId === undefined) {
+      return;
+    }
+    const citationId = dedupeCitationId(rawId.trim(), existingIds);
+
+    const rawNote = await this.quickInput.input({
+      title: 'Save Selection as Citation',
+      prompt: 'Optional note (press Enter to skip, Esc to cancel)',
+      placeHolder: 'why this passage matters'
+    });
+    if (rawNote === undefined) {
+      return;
+    }
+    const note = rawNote.trim() || undefined;
+
+    const sourcesDir = root.resolve('sources');
+    await this.ensureFolder(sourcesDir);
+
+    try {
+      const excerptRecord = buildSelectionExcerptRecord({
+        citationId,
+        sourcePath,
+        text: selectedText,
+        note,
+        targetLine: selection.start.line + 1
+      });
+      await this.appendExcerpts(sourcesDir, [excerptRecord]);
+
+      const citation: AnalyzedCitation = {
+        id: citationId,
+        title: citationTitleFromText(selectedText),
+        source: sourcePath
+      };
+      if (note) {
+        citation.note = note;
+      }
+      await this.mergeCitations(sourcesDir, [citation]);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.messageService.error(`Could not save citation: ${detail}`);
+      await this.tryAppendChatEvent({
+        kind: 'ai-command-error',
+        command: SourceLibraryCommands.SAVE_SELECTION_AS_CITATION.id,
+        documentUri,
+        data: { citationId, sourcePath, error: detail }
+      });
+      return;
+    }
+
+    this.invalidateSnapshot();
+    const widget = await this.openView({ activate: false, reveal: true });
+    await widget.refresh();
+    this.messageService.info(`Saved citation "${citationId}".`);
+
+    await this.tryAppendChatEvent({
+      kind: 'citation-saved',
+      command: SourceLibraryCommands.SAVE_SELECTION_AS_CITATION.id,
+      documentUri,
+      data: {
+        citationId,
+        sourcePath,
+        targetLine: selection.start.line + 1,
+        hasNote: Boolean(note),
+        textLength: selectedText.length
+      }
+    });
   }
 
   /**

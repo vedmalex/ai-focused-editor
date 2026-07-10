@@ -1,8 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildExcerptRecords,
+  buildSelectionExcerptRecord,
+  citationSlugFromText,
+  citationTitleFromText,
   coerceSourceAnalysis,
   countSlugOccurrences,
+  dedupeCitationId,
   dedupeCitations,
   normalizeCitations,
   normalizeExcerpts
@@ -129,6 +133,87 @@ describe('countSlugOccurrences', () => {
     expect(countSlugOccurrences(ids, 'gita-notes')).toBe(2);
     expect(countSlugOccurrences(ids, 'other')).toBe(1);
     expect(countSlugOccurrences(ids, 'missing')).toBe(0);
+  });
+});
+
+describe('citationSlugFromText', () => {
+  test('slugifies the first words of a selection', () => {
+    expect(citationSlugFromText('Duty that does not bend to grief; action that clings.'))
+      .toBe('duty-that-does-not-bend-to');
+  });
+
+  test('honours a custom word count', () => {
+    expect(citationSlugFromText('The field of decision and its consequences', 3))
+      .toBe('the-field-of');
+  });
+
+  test('keeps unicode letters (Cyrillic)', () => {
+    expect(citationSlugFromText('Глава первая начало пути', 2)).toBe('глава-первая');
+  });
+
+  test('falls back to citation when nothing usable remains', () => {
+    expect(citationSlugFromText('   ***  ')).toBe('citation');
+    expect(citationSlugFromText('')).toBe('citation');
+  });
+});
+
+describe('citationTitleFromText', () => {
+  test('collapses whitespace and keeps short text intact', () => {
+    expect(citationTitleFromText('  A short\n  quotable line.  ')).toBe('A short quotable line.');
+  });
+
+  test('truncates long text with an ellipsis', () => {
+    const title = citationTitleFromText('x'.repeat(80), 60);
+    expect(title.length).toBe(60);
+    expect(title.endsWith('…')).toBe(true);
+  });
+});
+
+describe('dedupeCitationId', () => {
+  test('returns the candidate unchanged when free', () => {
+    expect(dedupeCitationId('duty-that-does-not-bend', ['other'])).toBe('duty-that-does-not-bend');
+  });
+
+  test('appends an incrementing suffix on collision', () => {
+    expect(dedupeCitationId('duty', ['duty'])).toBe('duty-2');
+    expect(dedupeCitationId('duty', ['duty', 'duty-2', 'duty-3'])).toBe('duty-4');
+  });
+
+  test('falls back to citation for an empty candidate', () => {
+    expect(dedupeCitationId('', [])).toBe('citation');
+  });
+});
+
+describe('buildSelectionExcerptRecord', () => {
+  test('derives the excerpt id and links the manuscript line', () => {
+    expect(buildSelectionExcerptRecord({
+      citationId: 'duty-that-does-not-bend',
+      sourcePath: 'content/chapter-01.md',
+      text: 'Duty that does not bend to grief.',
+      note: '  from the battlefield  ',
+      targetLine: 9
+    })).toEqual({
+      id: 'duty-that-does-not-bend-excerpt',
+      sourcePath: 'content/chapter-01.md',
+      text: 'Duty that does not bend to grief.',
+      targetPath: 'content/chapter-01.md',
+      note: 'from the battlefield',
+      targetLine: 9
+    });
+  });
+
+  test('omits the note and target line when absent or non-positive', () => {
+    expect(buildSelectionExcerptRecord({
+      citationId: 'c1',
+      sourcePath: 'content/a.md',
+      text: 'Line.',
+      targetLine: 0
+    })).toEqual({
+      id: 'c1-excerpt',
+      sourcePath: 'content/a.md',
+      text: 'Line.',
+      targetPath: 'content/a.md'
+    });
   });
 });
 
