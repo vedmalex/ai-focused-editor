@@ -155,6 +155,10 @@ export interface ManifestRow {
   depth: number;
   /** Whether the entry has nested children (a folder/part). */
   hasChildren: boolean;
+  /** Path of the parent folder entry; undefined for top-level rows. */
+  parentPath?: string;
+  /** Index among the siblings of the same parent (manifest order). */
+  siblingIndex: number;
 }
 
 /**
@@ -178,7 +182,8 @@ export function flattenManifestRows(value: unknown): ManifestRow[] {
       ? value.content
       : [];
   const rows: ManifestRow[] = [];
-  const walk = (items: unknown[], depth: number): void => {
+  const walk = (items: unknown[], depth: number, parentPath: string | undefined): void => {
+    let siblingIndex = 0;
     for (const item of items) {
       if (!isRecord(item)) {
         continue;
@@ -194,14 +199,17 @@ export function flattenManifestRows(value: unknown): ManifestRow[] {
         // Absent `include` means included; only excluded entries carry `false`.
         include: item.include !== false,
         depth,
-        hasChildren: children.length > 0
+        hasChildren: children.length > 0,
+        parentPath,
+        siblingIndex
       });
+      siblingIndex += 1;
       if (children.length > 0) {
-        walk(children, depth + 1);
+        walk(children, depth + 1, path);
       }
     }
   };
-  walk(content, 0);
+  walk(content, 0, undefined);
   return rows;
 }
 

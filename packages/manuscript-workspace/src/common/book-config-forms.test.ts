@@ -149,10 +149,30 @@ describe('flattenManifestRows', () => {
     expect(rows.find(r => r.path === 'content/part-01/chapter-03.md')?.include).toBe(false);
   });
 
+  test('tracks parent paths and sibling indexes for nested rows', () => {
+    const rows = flattenManifestRows({
+      content: [
+        { path: 'content/a.md' },
+        { path: 'content/part', children: [
+          { path: 'content/part/b.md' },
+          { path: 'content/part/c.md' }
+        ] },
+        { path: 'content/d.md' }
+      ]
+    });
+    expect(rows.map(row => [row.path, row.parentPath, row.siblingIndex])).toEqual([
+      ['content/a.md', undefined, 0],
+      ['content/part', undefined, 1],
+      ['content/part/b.md', 'content/part', 0],
+      ['content/part/c.md', 'content/part', 1],
+      ['content/d.md', undefined, 2]
+    ]);
+  });
+
   test('accepts a bare content array', () => {
     const rows = flattenManifestRows([{ path: 'a.md', title: 'A' }]);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toEqual({ path: 'a.md', title: 'A', include: true, depth: 0, hasChildren: false });
+    expect(rows[0]).toEqual({ path: 'a.md', title: 'A', include: true, depth: 0, hasChildren: false, parentPath: undefined, siblingIndex: 0 });
   });
 
   test('skips entries without a path', () => {

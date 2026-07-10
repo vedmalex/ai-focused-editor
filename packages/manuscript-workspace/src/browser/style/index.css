@@ -1538,3 +1538,21 @@
   border: 1px dashed var(--theia-descriptionForeground);
   cursor: help;
 }
+
+/* ---------- manifest form drag handle ---------- */
+
+.afe-form-editor-tree-row {
+  cursor: grab;
+}
+
+.afe-form-editor-drag-handle {
+  color: var(--theia-descriptionForeground);
+  margin-right: 4px;
+  cursor: grab;
+}
+
+.afe-form-editor-tree-row.afe-drop-target {
+  outline: 1px solid var(--theia-focusBorder);
+  outline-offset: -1px;
+  background: var(--theia-list-dropBackground, rgba(128, 128, 255, 0.12));
+}

@@ -9,6 +9,8 @@ import {
 } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
 import { Document, isMap, isSeq, parseDocument, YAMLSeq } from 'yaml';
+import type { ManuscriptWorkspaceService as ManuscriptWorkspaceServiceType } from '../common';
+import { ManuscriptWorkspaceService } from '../common';
 import {
   flattenManifestRows,
   includeFlagToYaml,
@@ -27,9 +29,10 @@ interface RowBaseline {
  * Form-based editor for the workspace-root `manifest.yaml` (Wave-8). Presents
  * the content tree as an indented list: titles are editable and the build
  * `include` flag is a checkbox. Reordering, moves, and adding chapters stay in
- * the manuscript navigator tree (backend mutations own ordering) — this form
- * only edits titles and inclusion. Save applies through the `yaml` Document API
- * so comments and entry order survive a round-trip.
+ * the manuscript navigator tree or DRAG & DROP right here — both routes go
+ * through the same backend manifest mutation, so the file, the tree, and this
+ * form stay consistent. Save applies through the `yaml` Document API so
+ * comments and entry order survive a round-trip.
  */
 @injectable()
 export class ManifestEditorWidget extends ReactWidget implements Navigatable {
@@ -42,7 +45,12 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
   @inject(MessageService)
   protected readonly messageService!: MessageService;
 
+  @inject(ManuscriptWorkspaceService)
+  protected readonly manuscriptWorkspace!: ManuscriptWorkspaceServiceType;
+
   protected uri!: URI;
+  protected dragPath: string | undefined;
+  protected watcherInstalled = false;
   protected document: Document | undefined;
   protected rows: ManifestRow[] = [];
   protected baseline = new Map<string, RowBaseline>();
@@ -58,6 +66,16 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
     this.title.iconClass = 'fa fa-list-ol';
     this.title.closable = true;
     this.addClass('afe-form-editor-widget');
+    if (!this.watcherInstalled) {
+      this.watcherInstalled = true;
+      // Tree moves rewrite manifest.yaml on disk; reflect them live while the
+      // form has no unsaved edits.
+      this.toDispose.push(this.fileService.onDidFilesChange(event => {
+        if (!this.dirty && event.changes.some(change => change.resource.toString() === this.uri.toString())) {
+          void this.load();
+        }
+      }));
+    }
     void this.load();
   }
 
@@ -205,7 +223,7 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
       React.createElement(
         'p',
         { className: 'afe-form-editor-help' },
-        'Edit chapter titles and the build "include" flag here. To reorder entries, move them, or add a new chapter, use the manuscript navigator tree (it owns ordering via backend mutations).'
+        'Edit titles and the build "include" flag here; drag rows to reorder or nest them (drop on a part to move inside it). Adding chapters stays in the manuscript navigator tree.'
       ),
       this.parseError
         ? React.createElement(
@@ -244,6 +262,34 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
     );
   }
 
+  /**
+   * Drag & drop reorder routed through the SAME backend manifest mutation the
+   * navigator tree uses: drop on a part/folder row moves the entry inside it,
+   * drop on a file row inserts before that row within its parent.
+   */
+  protected async moveRow(target: ManifestRow): Promise<void> {
+    const sourcePath = this.dragPath;
+    this.dragPath = undefined;
+    if (!sourcePath || sourcePath === target.path) {
+      return;
+    }
+    if (this.dirty) {
+      this.messageService.warn('Save or reload the manifest before reordering rows.');
+      return;
+    }
+
+    const moveTarget = target.hasChildren
+      ? { parentPath: target.path, index: Number.MAX_SAFE_INTEGER }
+      : { parentPath: target.parentPath, index: target.siblingIndex };
+
+    const result = await this.manuscriptWorkspace.moveEntry(sourcePath, moveTarget);
+    if (!result.ok) {
+      this.messageService.warn(`Move failed: ${result.message ?? 'unknown error'}`);
+      return;
+    }
+    await this.load();
+  }
+
   protected renderProblems(problems: FormProblem[]): React.ReactNode {
     if (problems.length === 0) {
       return undefined;
@@ -265,8 +311,31 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
       {
         key: `${row.path}:${index}`,
         className: `afe-form-editor-tree-row${row.hasChildren ? ' has-children' : ''}`,
-        style: { marginLeft: `${row.depth * 20}px` }
+        style: { marginLeft: `${row.depth * 20}px` },
+        draggable: true,
+        onDragStart: (event: React.DragEvent) => {
+          this.dragPath = row.path;
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', row.path);
+        },
+        onDragOver: (event: React.DragEvent) => {
+          if (this.dragPath && this.dragPath !== row.path) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+            (event.currentTarget as HTMLElement).classList.add('afe-drop-target');
+          }
+        },
+        onDragLeave: (event: React.DragEvent) => {
+          (event.currentTarget as HTMLElement).classList.remove('afe-drop-target');
+        },
+        onDrop: (event: React.DragEvent) => {
+          (event.currentTarget as HTMLElement).classList.remove('afe-drop-target');
+          event.preventDefault();
+          void this.moveRow(row);
+        },
+        onDragEnd: () => { this.dragPath = undefined; }
       },
+      React.createElement('span', { className: 'afe-form-editor-drag-handle codicon codicon-gripper', title: 'Drag to reorder' }),
       React.createElement(
         'label',
         { className: 'afe-form-editor-include', title: 'Include in build' },
