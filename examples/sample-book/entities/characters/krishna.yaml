@@ -3,4 +3,16 @@ name: Krishna
 aliases:
   - Govinda
   - Madhava
+epithets:
+  - Slayer of Madhu
+  - Lord of Yoga
+  - Charioteer of Arjuna
 summary: Divine guide and speaker whose counsel frames the chapter.
+backstory: >-
+  Cousin, friend, and charioteer to Arjuna, Krishna takes the reins on the field
+  and turns a moment of collapse into a discourse on duty.
+arc: Moves from patient charioteer to revealer of the highest teaching.
+speechPatterns:
+  - Answers a question with a wider principle
+  - Addresses Arjuna by his epithets to steady him
+notes: Primary speaker; his voice should stay calm and expansive.

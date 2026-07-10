@@ -1,0 +1,13 @@
+# Location card for the battlefield that frames the dialogue.
+id: kurukshetra
+name: Kurukshetra
+aliases:
+  - The field of dharma
+  - Dharmakshetra
+epithets:
+  - Field of righteousness
+summary: The sacred plain where the two armies array and the dialogue unfolds.
+backstory: >-
+  A plain long associated with sacrifice and duty, chosen as the ground on which
+  the rival kin must finally meet.
+notes: Establishes the setting for chapter-01; referenced as the moral stage of the book.

@@ -1,6 +1,13 @@
 version: 1
 content:
   - path: content/chapter-01.md
-    title: Chapter 1
-    include: true
-
+    title: Chapter 1 — The Field of Decision
+  - path: content/part-01
+    title: Part One — The Dialogue
+    children:
+      - path: content/part-01/chapter-02.md
+        title: Chapter 2 — The Teaching Begins
+      - path: content/part-01/chapter-03.md
+        title: Chapter 3 — The Bow Is Raised Again
+  - path: content/notes-draft.md
+    title: Draft Notes

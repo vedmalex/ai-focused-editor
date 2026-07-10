@@ -1,0 +1,26 @@
+# Artifact card for Arjuna's celestial bow.
+id: gandiva
+name: Gandiva
+aliases:
+  - The great bow
+epithets:
+  - Bow of Indra
+  - Terror of the Kaurava host
+summary: The divine bow wielded by Arjuna, emblem of his martial duty.
+backstory: >-
+  Forged for the gods and passed through Varuna to Arjuna, Gandiva sounds like
+  thunder when drawn and never tires its bearer across the longest battle.
+arc: Lowered in despair at the opening of the dialogue, then raised again once
+  Arjuna resolves to act.
+notes: Appears in chapter-01 and part-01/chapter-03 as a barometer of Arjuna's resolve.
+ownership:
+  - owner: varuna
+    to: The age of the gods
+    note: Lord of the waters guards the celestial bow before it reaches mortals.
+  - owner: agni
+    from: The age of the gods
+    to: The burning of Khandava
+    note: Handed to the fire god to arm a warrior worthy of the deed.
+  - owner: arjuna
+    from: The burning of Khandava
+    note: Bestowed on Arjuna; becomes the emblem of his martial duty ever after.

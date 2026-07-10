@@ -3,4 +3,15 @@ name: Arjuna
 aliases:
   - Partha
   - Dhananjaya
+epithets:
+  - Best of the Bharatas
+  - Wielder of Gandiva
 summary: Warrior-disciple whose questions create the central dialogue.
+backstory: >-
+  The finest archer of his generation, Arjuna faces his own kin across the field
+  and is unmanned by grief before the first arrow flies.
+arc: Falls from confident warrior into despair, then is led back toward resolve.
+speechPatterns:
+  - Voices doubt through concrete, physical detail
+  - Presses Krishna with earnest, repeated questions
+notes: Point-of-view anchor for the opening chapters; carries Gandiva.

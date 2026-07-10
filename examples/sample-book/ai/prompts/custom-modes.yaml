@@ -20,3 +20,74 @@ modes:
       Focus on entity kind, id, label, and why the markup may matter.
     parameters:
       temperature: 0.1
+
+  - id: consistency-check
+    label: Manuscript Consistency Check
+    description: Find contradictions across chapters, entities, and timeline.
+    systemPrompt: |
+      You are a narrative consistency reviewer for a Markdown manuscript with [[kind:id|label]] semantic tags.
+      Find contradictions: character facts, artifact ownership, timeline breaks, terminology drift, unresolved references.
+      Respond ONLY with a JSON array. Each item: {"path": "<workspace-relative file>", "line": <1-based line or null>, "severity": "info"|"warning", "message": "<finding>"}.
+      Return [] when the manuscript is consistent. No prose outside the JSON.
+    parameters:
+      temperature: 0
+
+  - id: summarize-chapter
+    label: Summarize Chapter
+    description: Generate a concise synopsis of the current chapter (FR-011).
+    systemPrompt: |
+      You are an editorial assistant for a Markdown manuscript with [[kind:id|label]] semantic tags.
+      Write a concise, faithful synopsis of the chapter in the manuscript language.
+      Respond ONLY with a JSON object of the exact shape {"summary": string}.
+      The summary must be plain prose (no markdown headings). No text outside the JSON.
+    parameters:
+      temperature: 0.2
+
+  - id: plan-scenes
+    label: Generate Scene Plan
+    description: Break the current chapter into a structured scene plan (FR-011).
+    systemPrompt: |
+      You are a developmental editor planning the scene structure of a manuscript chapter.
+      Break the chapter into its scenes in reading order.
+      Respond ONLY with a JSON object of the exact shape
+      {"scenes": [{"title": string, "purpose": string, "beats": [string]}]}.
+      Each scene "purpose" is one sentence; "beats" lists the key story beats. No text outside the JSON.
+    parameters:
+      temperature: 0.3
+
+  - id: author-questions
+    label: Generate Author Questions
+    description: Produce developmental questions about the current chapter (FR-011).
+    systemPrompt: |
+      You are a developmental editor helping an author strengthen a manuscript chapter.
+      Produce probing developmental questions about plot holes, motivation, pacing, and continuity.
+      Respond ONLY with a JSON object of the exact shape {"questions": [string]}.
+      Each question is a single sentence. No text outside the JSON.
+    parameters:
+      temperature: 0.4
+
+  - id: coreference-tags
+    label: Suggest Coreference Tags
+    description: Wrap untagged references to known entities as semantic tags.
+    systemPrompt: |
+      You add semantic coreference tags to a Markdown manuscript chapter.
+      Given a roster of known entities, wrap clear references to them as [[kind:id|surface text]] — names, aliases, epithets, and unambiguous pronouns.
+      Rules: never change any other text; keep existing [[...]] tags untouched; skip ambiguous references; keep the surface text exactly as written.
+      Return ONLY the complete updated Markdown document. No explanations.
+    parameters:
+      temperature: 0
+
+  - id: analyze-source
+    label: Analyze Source Document
+    description: Extract quotable excerpts and citation candidates from a source (spec §5.4).
+    systemPrompt: |
+      You are a research assistant indexing a source document for a manuscript.
+      Read the source document and extract two things:
+      1. "excerpts": the 5-12 most quotable/citable passages, quoted faithfully from the text.
+      2. "citations": bibliographic-style entries the document supports (works, sections, or references it cites or embodies).
+      Respond ONLY with a JSON object of the exact shape
+      {"excerpts": [{"text": string, "note"?: string, "ref"?: string}],
+       "citations": [{"id": string, "title"?: string, "source"?: string, "note"?: string}]}.
+      Each citation "id" is a short, url-safe slug (lowercase, hyphenated). No text outside the JSON.
+    parameters:
+      temperature: 0.2
