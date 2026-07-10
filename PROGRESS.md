@@ -198,6 +198,20 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **Electron smoke de-flaked**: the stale-instance sweep now waits until the old process is really gone (pgrep poll, up to 5s) and the launch retries once — the single-instance lock race killed the first window when the smoke ran right after other Playwright/Theia activity.
 - Tests: 433 across 25 files; `verify:full` green (browser + electron smokes, 8/8 UI flows).
 
+## Wave 15 — Book at hand: properties, publish wizard (shipped)
+
+- **Book properties from the manuscript view**: `Edit Book Metadata...`/`Edit Manifest...` in the tree context menu (manuscript scope) + a Book Properties toolbar button on the view title bar.
+- **`Build Book...` publish wizard**: two-step QuickInput flow (multi-select formats EPUB/PDF/HTML/Markdown with output paths → confirm step showing the book title/author with Back), sequential builds through the BookBuildService RPC with per-format progress; failures don't stop remaining formats; completion notification offers `Open <format>` / `Copy Paths`. Rocket toolbar button; first item of the Build menu and the tree `2_book` context group; AFE-06 guards the menu entry.
+- **`common/book-scaffold.ts`**: the canonical workspace structure as data — 19 required/recommended entries with yaml seeds compatible with the form editors, `NewBookOptions` threading title/author/language into manifest/metadata/chapter seeds (34 tests).
+
+## Wave 16 — Doctor, welcome page, toolbar (shipped)
+
+- **Book Doctor** (`Book Doctor...`, pulse toolbar button, menu + tree context entries): checks the scaffold against disk, manifest entries pointing at missing chapter files (fixable — seeded creation), content files absent from the manifest (informational), blank metadata title/author, citations.yaml/excerpts.jsonl parse errors. Multi-select fix picker (fixables preselected, findings shown as an informational section); creates parents-first, never deletes or overwrites. Pure check assembly in `common/book-doctor.ts` (19 tests).
+- **Welcome start page**: auto-opens when no files are open (once per session, `aiFocusedEditor.welcome.showOnStartup` preference, default on; `Welcome` command/menu entry any time). Start actions (Create New Book / Open Folder / Book Doctor), recent workspaces, footer checkbox bound to the preference.
+- **`New Book...` wizard**: title → author → language (ru/en/other) → parent folder + validated folder name (slug prefill) → creates the full scaffold via `book-scaffold` and opens the new workspace.
+- **Manuscript view toolbar** now: New Chapter (+), Refresh, Build Book (rocket), Book Properties (book), Book Doctor (pulse).
+- Flow AFE-09 guards the Manuscript menu entries and toolbar icons; suite: 486 tests across 27 files; `verify:full` green (browser + electron smokes, 9/9 UI flows).
+
 ## Backlog (queued)
 
 1. Full LSP transport if live validation ever needs cross-file incremental analysis (current backend-RPC path covers the active-document case).
