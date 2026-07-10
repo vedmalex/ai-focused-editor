@@ -2,6 +2,7 @@
   "private": true,
   "name": "@ai-focused-editor/electron",
   "version": "0.1.0",
+  "main": "lib/backend/electron-main.js",
   "dependencies": {
     "@ai-focused-editor/git": "0.1.0",
     "@ai-focused-editor/manuscript-workspace": "workspace:*",
