@@ -1,6 +1,7 @@
 import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 import { MessageService } from '@theia/core/lib/common';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { open, OpenerService } from '@theia/core/lib/browser';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import {
   inject,
@@ -18,6 +19,11 @@ import {
 } from './ai-profile-preference-service';
 import { AiModeRegistry } from '../common';
 import { ManuscriptAiContextAssembler } from './manuscript-ai-context-assembler';
+import {
+  AiHistoryKind,
+  AiHistoryRecord,
+  AiHistoryService
+} from './ai-history-service';
 
 interface AiDebugSnapshot {
   profile: AiProfileStatus;
@@ -29,8 +35,22 @@ interface AiDebugSnapshot {
   manuscriptContext: string;
 }
 
+interface AiHistoryLogState {
+  kind: AiHistoryKind;
+  days: string[];
+  selectedDay?: string;
+  entries: AiHistoryRecord[];
+  loading: boolean;
+}
+
 const MAX_CONTEXT_PREVIEW = 12000;
 const MAX_SELECTION_PREVIEW = 500;
+const HISTORY_LOG_LIMIT = 100;
+
+const HISTORY_KIND_LABELS: Array<{ kind: AiHistoryKind; label: string }> = [
+  { kind: 'chat', label: 'Chat requests' },
+  { kind: 'context-snapshots', label: 'Context snapshots' }
+];
 
 @injectable()
 export class AiDebugWidget extends ReactWidget {
@@ -55,7 +75,20 @@ export class AiDebugWidget extends ReactWidget {
   @inject(MessageService)
   protected readonly messages!: MessageService;
 
+  @inject(AiHistoryService)
+  protected readonly aiHistory!: AiHistoryService;
+
+  @inject(OpenerService)
+  protected readonly openerService!: OpenerService;
+
   protected snapshot: AiDebugSnapshot | undefined;
+
+  protected logState: AiHistoryLogState = {
+    kind: 'chat',
+    days: [],
+    entries: [],
+    loading: false
+  };
 
   @postConstruct()
   protected init(): void {
@@ -66,6 +99,7 @@ export class AiDebugWidget extends ReactWidget {
     this.title.closable = true;
     this.addClass('afe-ai-debug-widget');
     void this.refresh();
+    void this.refreshLog();
   }
 
   async refresh(): Promise<void> {
@@ -99,6 +133,67 @@ export class AiDebugWidget extends ReactWidget {
     await this.messages.info('AI debug snapshot copied to clipboard.');
   }
 
+  async refreshLog(): Promise<void> {
+    this.logState = { ...this.logState, loading: true };
+    this.update();
+    const kind = this.logState.kind;
+    const days = await this.aiHistory.listHistoryDays(kind);
+    const selectedDay = days.includes(this.logState.selectedDay ?? '')
+      ? this.logState.selectedDay
+      : days[0];
+    const entries = selectedDay
+      ? await this.aiHistory.readHistoryEntries(kind, selectedDay, HISTORY_LOG_LIMIT)
+      : [];
+    // Guard against a kind switch that raced with this async load.
+    if (this.logState.kind !== kind) {
+      return;
+    }
+    this.logState = { kind, days, selectedDay, entries, loading: false };
+    this.update();
+  }
+
+  async selectLogKind(kind: AiHistoryKind): Promise<void> {
+    if (kind === this.logState.kind) {
+      return;
+    }
+    this.logState = { kind, days: [], selectedDay: undefined, entries: [], loading: false };
+    await this.refreshLog();
+  }
+
+  async selectLogDay(day: string): Promise<void> {
+    if (day === this.logState.selectedDay) {
+      return;
+    }
+    this.logState = { ...this.logState, selectedDay: day, loading: true };
+    this.update();
+    const kind = this.logState.kind;
+    const entries = await this.aiHistory.readHistoryEntries(kind, day, HISTORY_LOG_LIMIT);
+    if (this.logState.kind !== kind || this.logState.selectedDay !== day) {
+      return;
+    }
+    this.logState = { ...this.logState, entries, loading: false };
+    this.update();
+  }
+
+  async openLogFile(): Promise<void> {
+    const { kind, selectedDay } = this.logState;
+    if (!selectedDay) {
+      return;
+    }
+    const fileUri = await this.aiHistory.getHistoryDayUri(kind, selectedDay);
+    if (!fileUri) {
+      return;
+    }
+    await open(this.openerService, fileUri).catch(async () => {
+      await this.messages.warn('Could not open the history JSONL file.');
+    });
+  }
+
+  async copyLogEntry(record: AiHistoryRecord): Promise<void> {
+    await this.clipboard.writeText(JSON.stringify(record, undefined, 2));
+    await this.messages.info('AI history entry copied to clipboard.');
+  }
+
   protected render(): React.ReactNode {
     const snapshot = this.snapshot;
     if (!snapshot) {
@@ -127,8 +222,133 @@ export class AiDebugWidget extends ReactWidget {
       this.renderModes(snapshot.modes, snapshot.modeDiagnostics),
       this.renderActiveEditor(snapshot),
       React.createElement('h4', undefined, `Manuscript Context (${snapshot.manuscriptContext.length} chars)`),
-      React.createElement('pre', { className: 'afe-ai-debug-context' }, this.truncate(snapshot.manuscriptContext, MAX_CONTEXT_PREVIEW))
+      React.createElement('pre', { className: 'afe-ai-debug-context' }, this.truncate(snapshot.manuscriptContext, MAX_CONTEXT_PREVIEW)),
+      this.renderRequestLog()
     );
+  }
+
+  protected renderRequestLog(): React.ReactNode {
+    const { kind, days, selectedDay, entries, loading } = this.logState;
+    return React.createElement(
+      'details',
+      { className: 'afe-ai-debug-section afe-ai-debug-log', open: true },
+      React.createElement('summary', undefined, `Request Log (${entries.length})`),
+      React.createElement(
+        'div',
+        { className: 'afe-ai-debug-log-controls' },
+        React.createElement(
+          'select',
+          {
+            className: 'theia-select',
+            value: kind,
+            'aria-label': 'History log kind',
+            onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.selectLogKind(event.target.value as AiHistoryKind)
+          },
+          ...HISTORY_KIND_LABELS.map(entry => React.createElement('option', { key: entry.kind, value: entry.kind }, entry.label))
+        ),
+        days.length > 0
+          ? React.createElement(
+            'select',
+            {
+              className: 'theia-select',
+              value: selectedDay ?? '',
+              'aria-label': 'History log day',
+              onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.selectLogDay(event.target.value)
+            },
+            ...days.map(day => React.createElement('option', { key: day, value: day }, day))
+          )
+          : undefined,
+        React.createElement(
+          'button',
+          { className: 'theia-button', onClick: () => this.refreshLog() },
+          'Refresh'
+        ),
+        React.createElement(
+          'button',
+          {
+            className: 'theia-button',
+            disabled: !selectedDay,
+            onClick: () => this.openLogFile()
+          },
+          'Open JSONL'
+        )
+      ),
+      this.renderRequestLogBody(entries, loading)
+    );
+  }
+
+  protected renderRequestLogBody(entries: AiHistoryRecord[], loading: boolean): React.ReactNode {
+    if (loading && entries.length === 0) {
+      return React.createElement('p', { className: 'afe-ai-debug-log-empty' }, 'Loading history...');
+    }
+    if (this.logState.days.length === 0) {
+      return React.createElement('p', { className: 'afe-ai-debug-log-empty' }, 'AI actions will be logged here as you use AI features.');
+    }
+    if (entries.length === 0) {
+      return React.createElement('p', { className: 'afe-ai-debug-log-empty' }, 'No entries recorded for this day.');
+    }
+    return React.createElement(
+      'div',
+      { className: 'afe-ai-debug-log-entries' },
+      ...entries.map((entry, index) => this.renderRequestLogEntry(entry, index))
+    );
+  }
+
+  protected renderRequestLogEntry(record: AiHistoryRecord, index: number): React.ReactNode {
+    const route = this.extractRoute(record);
+    return React.createElement(
+      'details',
+      { className: 'afe-ai-debug-log-entry', key: `${record.timestamp ?? 'entry'}-${index}` },
+      React.createElement(
+        'summary',
+        { className: 'afe-ai-debug-log-summary' },
+        React.createElement('span', { className: 'afe-ai-debug-log-time' }, this.formatTime(record.timestamp)),
+        React.createElement('span', { className: 'afe-ai-debug-log-badge' }, record.kind || 'unknown'),
+        React.createElement('span', { className: 'afe-ai-debug-log-command' }, record.command || '(no command)'),
+        route
+          ? React.createElement('span', { className: 'afe-ai-debug-log-route' }, route)
+          : undefined,
+        React.createElement(
+          'button',
+          {
+            className: 'theia-button afe-ai-debug-log-copy',
+            onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void this.copyLogEntry(record);
+            }
+          },
+          'Copy'
+        )
+      ),
+      React.createElement('pre', { className: 'afe-ai-debug-log-json' }, JSON.stringify(record, undefined, 2))
+    );
+  }
+
+  protected extractRoute(record: AiHistoryRecord): string | undefined {
+    const route = record.data?.route;
+    if (typeof route !== 'object' || route === null) {
+      return undefined;
+    }
+    const routeRecord = route as Record<string, unknown>;
+    const provider = typeof routeRecord.provider === 'string' ? routeRecord.provider : undefined;
+    const model = typeof routeRecord.model === 'string' ? routeRecord.model : undefined;
+    if (!provider && !model) {
+      return undefined;
+    }
+    return [provider, model].filter(Boolean).join('/');
+  }
+
+  protected formatTime(timestamp?: string): string {
+    if (!timestamp) {
+      return '--:--:--';
+    }
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) {
+      return timestamp.slice(11, 19) || '--:--:--';
+    }
+    const pad = (value: number) => value.toString().padStart(2, '0');
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
   }
 
   protected renderProfile(profile: AiProfileStatus): React.ReactNode {
