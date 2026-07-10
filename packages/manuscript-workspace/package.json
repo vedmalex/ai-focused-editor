@@ -51,6 +51,9 @@
       "backend": "lib/node/manuscript-workspace-backend-module"
     },
     {
+      "frontend": "lib/browser/author-materials-create-frontend-module"
+    },
+    {
       "frontend": "lib/browser/entity-editor-frontend-module"
     },
     {

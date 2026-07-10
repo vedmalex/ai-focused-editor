@@ -9,8 +9,9 @@ import {
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import type { FrontendApplication, FrontendApplicationContribution } from '@theia/core/lib/browser';
+import type { TreeNode } from '@theia/core/lib/browser/tree';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
-import { ManuscriptTreeNode } from './manuscript-tree';
+import { AuthorMaterialsSectionTreeNode, ManuscriptTreeNode } from './manuscript-tree';
 import {
   AI_FOCUSED_EDITOR_MENU_LABEL,
   AiFocusedEditorMenus
@@ -110,8 +111,27 @@ export class ManuscriptTreeViewContribution extends AbstractViewContribution<Man
       isVisible: () => this.getSelectedManuscriptNode() !== undefined
     });
     commands.registerCommand(ManuscriptTreeCommands.NEW_CHAPTER, {
-      execute: () => this.createChapter()
+      execute: () => this.createChapter(),
+      // Chapter creation only applies to the Manuscript section. Hide it in the
+      // tree context menu on other sections (e.g. Characters), but keep it
+      // discoverable from the product menu bar: when nothing is selected the
+      // predicate stays true. `isEnabled` is intentionally left unrestricted so
+      // the menu-bar entry is never disabled by tree selection state.
+      isVisible: () => this.isChapterCreationVisible()
     });
+  }
+
+  /** Raw selected tree node (section/material/manuscript), unfiltered. */
+  protected getSelectedTreeNode(): TreeNode | undefined {
+    const widget = this.tryGetWidget();
+    return widget?.manuscriptModel.selectedNodes[0];
+  }
+
+  protected isChapterCreationVisible(): boolean {
+    const node = this.getSelectedTreeNode();
+    return node === undefined
+      || ManuscriptTreeNode.is(node)
+      || AuthorMaterialsSectionTreeNode.isManuscript(node);
   }
 
   override registerMenus(menus: MenuModelRegistry): void {
