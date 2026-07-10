@@ -182,6 +182,14 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **Duplicate git indicator removed**: our read-only status-bar contribution retired in favour of the fork's richer SCM status bar (Semantic History, Initialize Git Repository, Add to .gitignore untouched).
 - Tests: 357 across 22 files; `verify:full` green (browser + electron smokes, 6/6 UI flows).
 
+## Wave 13 — Artifact creation everywhere (shipped)
+
+- **Per-section create commands in the manuscript navigator**: right-clicking a section (or its items) offers exactly its own artifact — `New Character/Term/Artifact/Location...` (name prompt → YAML card → the form editor opens), `New Citation...` (comment-preserving append into `sources/citations.yaml`), `New Knowledge Note...` (category quick-pick), `Add Source File...` (multi-select file dialog copying into `sources/`). All are also discoverable from the Manuscript menu; `New Chapter...` no longer leaks into non-manuscript sections.
+- **Create entities from text**: editor selection context menu gains `Save Selection as New Character/Term/Artifact/Location...` — name prefilled from the selection, long selections become the card summary, short single-line selections are wrapped as the semantic tag with the new id; the card opens in the form editor. Missing `Wrap Selection as Location Tag` added (decorations/completion already knew the kind).
+- **Shared id contract** in `common/entity-creation.ts`: one slug/hash generator for tag ids and file names (mirrors the semantic-tag id algorithm), yaml scaffolds, unique-path suffixing, selection→name/summary heuristics; 28 tests.
+- Flow AFE-07 guards the section context menus (right-click via pointer events; asserts `New Character...`/`New Location...` present and `New Chapter...` absent); `closeMenus` hardened to actually dismiss Lumino context menus.
+- Tests: 410 across 24 files; `verify:full` green (browser + electron smokes, 7/7 UI flows).
+
 ## Backlog (queued)
 
 1. Full LSP transport if live validation ever needs cross-file incremental analysis (current backend-RPC path covers the active-document case).
