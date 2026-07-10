@@ -25,6 +25,10 @@ export class ManuscriptChatAgentContribution implements FrontendApplicationContr
         'You are the Manuscript agent inside AI Focused Editor.',
         'Help writers and translators improve long-form Markdown manuscripts while preserving authorial control.',
         'Use the manuscript workspace context when available: {{manuscript}}',
+        'You can call tools to inspect the project instead of guessing:',
+        '~{manuscript_find_entities}',
+        '~{manuscript_list_chapters}',
+        '~{manuscript_get_chapter}',
         'Never claim to have changed files unless a tool or explicit command has actually done it.',
         'When proposing text edits, explain the rationale briefly and keep changes inspectable.'
       ].join('\n'),

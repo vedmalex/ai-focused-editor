@@ -9,6 +9,16 @@ import type {
 
 const PROVIDER_CATALOG = Object.freeze(listTextProviderCatalog());
 const DEFAULT_TRANSPORT_KIND: AiTransportKind = 'api';
+const LOCAL_PROXY_BASE_URLS = Object.freeze({
+  openai: 'http://127.0.0.1:8045/v1',
+  anthropic: 'http://127.0.0.1:8045/v1',
+  gemini: 'http://127.0.0.1:8045/v1beta/models'
+});
+const LOCAL_PROXY_DEFAULT_MODELS = Object.freeze({
+  openai: 'gpt-oss-120b-medium',
+  anthropic: 'claude-sonnet-4-6',
+  gemini: 'gemini-3.1-pro-low'
+});
 const NON_CATALOG_CLI_ARGS = Object.freeze([
   '-p',
   '{prompt}',
@@ -101,6 +111,17 @@ function getAiConnectBootstrapModel(profile: AiConnectionProfile): string {
   return getTransportEntry(profile.provider, getAiConnectTransportId(profile))?.defaultModel || '';
 }
 
+function getAiConnectAccountModels(profile: AiConnectionProfile): string[] {
+  const models = [getAiConnectBootstrapModel(profile)];
+  for (const allowed of profile.allowedModels ?? []) {
+    const model = normalizeText(allowed);
+    if (model && !models.includes(model)) {
+      models.push(model);
+    }
+  }
+  return models;
+}
+
 export function getAiConnectTransportId(profile: AiConnectionProfile): string {
   const provider = normalizeText(profile.provider);
   const explicitTransportId = normalizeText(profile.transportId || profile.connectorType);
@@ -149,6 +170,77 @@ export function normalizeAiConnectEndpointUrl(provider: string, endpointUrl?: st
   return baseUrl;
 }
 
+export interface LocalProxyEndpointDefaults {
+  url: string;
+  model: string;
+  models: string[];
+}
+
+export function getLocalProxyEndpointDefaults(provider = 'openai'): LocalProxyEndpointDefaults {
+  const normalizedProvider = normalizeText(provider);
+  if (normalizedProvider === 'anthropic') {
+    return {
+      url: LOCAL_PROXY_BASE_URLS.anthropic,
+      model: LOCAL_PROXY_DEFAULT_MODELS.anthropic,
+      models: [LOCAL_PROXY_DEFAULT_MODELS.anthropic]
+    };
+  }
+  if (normalizedProvider === 'gemini') {
+    return {
+      url: LOCAL_PROXY_BASE_URLS.gemini,
+      model: LOCAL_PROXY_DEFAULT_MODELS.gemini,
+      models: ['gemini-3.1-pro-low', 'gemini-3-flash']
+    };
+  }
+  return {
+    url: LOCAL_PROXY_BASE_URLS.openai,
+    model: LOCAL_PROXY_DEFAULT_MODELS.openai,
+    models: [LOCAL_PROXY_DEFAULT_MODELS.openai]
+  };
+}
+
+export function getAiConnectEndpointModelProbeUrl(provider = '', endpointUrl = ''): string {
+  const normalizedProvider = normalizeText(provider);
+  const baseUrl = normalizeAiConnectEndpointUrl(normalizedProvider, endpointUrl);
+  if (!baseUrl) {
+    return '';
+  }
+  if (baseUrl.endsWith('/models')) {
+    return baseUrl;
+  }
+  return `${baseUrl}/models`;
+}
+
+export interface AiProviderCatalogTransport {
+  transportKind: AiTransportKind;
+  transportId: string;
+  transportLabel: string;
+  defaultModel: string;
+  defaultBaseUrl?: string;
+  defaultCommand?: string;
+}
+
+export interface AiProviderCatalogEntry {
+  providerId: string;
+  label: string;
+  transports: AiProviderCatalogTransport[];
+}
+
+export function getAiProviderCatalog(): AiProviderCatalogEntry[] {
+  return PROVIDER_CATALOG.map(entry => ({
+    providerId: entry.providerId,
+    label: entry.label,
+    transports: entry.transports.map(transport => ({
+      transportKind: transport.transportKind,
+      transportId: transport.transportId,
+      transportLabel: transport.transportLabel,
+      defaultModel: transport.defaultModel,
+      defaultBaseUrl: transport.defaultBaseUrl,
+      defaultCommand: transport.defaultCommand
+    }))
+  }));
+}
+
 export function buildAiConnectRouteSelector(profile: AiConnectionProfile): string {
   const provider = normalizeText(profile.provider);
   const accountId = normalizeText(profile.id) || `${provider}-default`;
@@ -191,7 +283,7 @@ function buildNonCatalogConfigInput(profile: AiConnectionProfile): AiConnectConf
           id: accountId,
           profile: accountId,
           transport,
-          models: [model],
+          models: getAiConnectAccountModels(profile),
           modelAllowlistMode: 'shortlist'
         }]
       }
@@ -243,7 +335,7 @@ export function buildAiConnectConfigInput(profile: AiConnectionProfile): AiConne
           id: accountId,
           profile: accountId,
           transport,
-          models: [model],
+          models: getAiConnectAccountModels(profile),
           ...(transportKind === 'api'
             ? {
                 credentials: [{

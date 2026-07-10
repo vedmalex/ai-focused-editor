@@ -2,10 +2,13 @@ import type {
   LanguageModel,
   LanguageModelMessage,
   LanguageModelResponse,
+  LanguageModelStreamResponsePart,
   TextMessage,
+  ToolRequest,
   UsageResponsePart,
   UserRequest
 } from '@theia/ai-core';
+import type { CancellationToken } from '@theia/core/lib/common/cancellation';
 import type {
   MessageInput,
   MessageRole,
@@ -13,7 +16,10 @@ import type {
 } from '@vedmalex/ai-connect';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import {
+  AiClientToolDefinition,
+  AiConnectionProfile,
   AiConnectionService,
+  AiGenerateRequest,
   AiGenerateResult
 } from '../common';
 import { AiHistoryService } from './ai-history-service';
@@ -41,15 +47,16 @@ export class AiConnectTheiaLanguageModel implements LanguageModel {
   @inject(AiHistoryService)
   protected readonly aiHistory!: AiHistoryService;
 
-  async request(request: UserRequest): Promise<LanguageModelResponse> {
-    const profile = await this.aiProfilePreferences.getConfiguredProfile();
-    if (!profile) {
-      throw new Error('AI Focused Editor ai-connect profile is incomplete. Configure provider, model, and API key in preferences.');
+  async request(request: UserRequest, cancellationToken?: CancellationToken): Promise<LanguageModelResponse> {
+    const chain = await this.aiProfilePreferences.getFailoverChain();
+    if (chain.length === 0) {
+      throw new Error('AI Focused Editor ai-connect profile is incomplete. Configure provider, model, and API key in the Model Config view.');
     }
 
-    const result = await this.aiConnection.generate(profile, {
+    const generateRequest: AiGenerateRequest = {
       messages: this.toAiConnectMessages(request.messages),
       parameters: request.settings,
+      clientTools: this.toClientTools(request.tools),
       logContext: {
         command: 'theia-ai-language-model-request',
         sessionId: request.sessionId,
@@ -57,14 +64,98 @@ export class AiConnectTheiaLanguageModel implements LanguageModel {
         agentId: request.agentId,
         promptVariantId: request.promptVariantId
       }
-    });
+    };
 
-    await this.tryAppendChatEvent(request, result);
+    const abortController = new AbortController();
+    const token = cancellationToken ?? request.cancellationToken;
+    if (token) {
+      if (token.isCancellationRequested) {
+        abortController.abort();
+      }
+      token.onCancellationRequested(() => abortController.abort());
+    }
 
     return {
-      text: result.text,
-      usage: this.toTheiaUsage(result.usage)
+      stream: this.streamResponseParts(chain, request, generateRequest, abortController.signal)
     };
+  }
+
+  /**
+   * FR-013 failover while streaming: profiles are tried in chain order; a
+   * failure is retried on the next profile only while nothing has been
+   * emitted yet (a half-streamed answer must not restart mid-response).
+   */
+  protected async *streamResponseParts(
+    chain: AiConnectionProfile[],
+    request: UserRequest,
+    generateRequest: AiGenerateRequest,
+    signal: AbortSignal
+  ): AsyncIterable<LanguageModelStreamResponsePart> {
+    const failures: string[] = [];
+    for (const [index, profile] of chain.entries()) {
+      let emitted = false;
+      try {
+        for await (const event of this.aiConnection.streamText(profile, generateRequest, { signal })) {
+          if (event.type === 'delta') {
+            if (event.text.length > 0) {
+              emitted = true;
+              yield { content: event.text };
+            }
+            continue;
+          }
+
+          await this.tryAppendChatEvent(request, event.result);
+          const usage = this.toTheiaUsage(event.result.usage);
+          if (usage) {
+            yield usage;
+          }
+        }
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push(`${profile.label ?? profile.id ?? profile.provider}: ${message}`);
+        const isLast = index === chain.length - 1;
+        if (emitted || signal.aborted || isLast) {
+          throw new Error(failures.length > 1
+            ? `All AI profiles failed. ${failures.join('; ')}`
+            : message);
+        }
+      }
+    }
+  }
+
+  /**
+   * Theia AI tools become ai-connect client tools (spec §3.5 Tools/Function
+   * Calling); the ai-connect client runs the tool loop and invokes the Theia
+   * tool handlers in-process. Only effective on api-transport profiles —
+   * tools are stripped before requests cross the JSON-RPC boundary.
+   */
+  protected toClientTools(tools?: ToolRequest[]): AiClientToolDefinition[] | undefined {
+    if (!tools || tools.length === 0) {
+      return undefined;
+    }
+    return tools.map(tool => ({
+      type: 'function' as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters as unknown as Record<string, unknown>
+      },
+      execute: async (args: Record<string, unknown>) => {
+        try {
+          const result = await tool.handler(JSON.stringify(args ?? {}));
+          if (typeof result === 'string') {
+            return result;
+          }
+          return { content: JSON.stringify(result ?? '') };
+        } catch (error) {
+          return {
+            content: error instanceof Error ? error.message : String(error),
+            isError: true
+          };
+        }
+      }
+    }));
   }
 
   protected toAiConnectMessages(messages: LanguageModelMessage[]): MessageInput[] {

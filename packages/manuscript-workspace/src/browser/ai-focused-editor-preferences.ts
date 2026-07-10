@@ -11,6 +11,9 @@ export const AI_FOCUSED_EDITOR_AI_ENDPOINT_URL = 'aiFocusedEditor.ai.endpointUrl
 export const AI_FOCUSED_EDITOR_AI_TRANSPORT_KIND = 'aiFocusedEditor.ai.transportKind';
 export const AI_FOCUSED_EDITOR_AI_TRANSPORT_ID = 'aiFocusedEditor.ai.transportId';
 export const AI_FOCUSED_EDITOR_AI_PROFILE_ID = 'aiFocusedEditor.ai.profileId';
+export const AI_FOCUSED_EDITOR_AI_PROFILES = 'aiFocusedEditor.ai.profiles';
+export const AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE = 'aiFocusedEditor.ai.activeProfile';
+export const AI_FOCUSED_EDITOR_AI_API_KEYS = 'aiFocusedEditor.ai.apiKeys';
 
 export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
   title: 'AI Focused Editor',
@@ -29,7 +32,7 @@ export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
     [AI_FOCUSED_EDITOR_AI_API_KEY]: {
       type: 'string',
       default: '',
-      description: 'API key for the configured provider. MVP browser mode stores this in Theia preferences.'
+      description: 'API key for the configured provider. Only needed for the api transport; store it in User scope (the Model Config view does this automatically) so it stays out of workspace files.'
     },
     [AI_FOCUSED_EDITOR_AI_ENDPOINT_URL]: {
       type: 'string',
@@ -51,6 +54,43 @@ export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
       type: 'string',
       default: '',
       description: 'Optional ai-connect account/profile id.'
+    },
+    [AI_FOCUSED_EDITOR_AI_PROFILES]: {
+      type: 'array',
+      default: [],
+      description: 'Named AI profiles (aliases). Each entry: id, label, provider, model, transportKind/transportId, endpointUrl, allowedModels, enabled. Secrets are never stored here. When empty, the single legacy aiFocusedEditor.ai.* keys apply.',
+      items: {
+        type: 'object',
+        required: ['id', 'provider', 'model'],
+        properties: {
+          id: { type: 'string' },
+          label: { type: 'string' },
+          provider: { type: 'string' },
+          model: { type: 'string' },
+          transportKind: { type: 'string' },
+          transportId: { type: 'string' },
+          profileId: { type: 'string' },
+          endpointUrl: { type: 'string' },
+          command: { type: 'string' },
+          authMethodId: { type: 'string' },
+          allowedModels: {
+            type: 'array',
+            items: { type: 'string' }
+          },
+          enabled: { type: 'boolean' }
+        }
+      }
+    },
+    [AI_FOCUSED_EDITOR_AI_ACTIVE_PROFILE]: {
+      type: 'string',
+      default: '',
+      description: 'Id of the active AI profile from aiFocusedEditor.ai.profiles. The failover chain is the active profile first, then the remaining enabled profiles in list order.'
+    },
+    [AI_FOCUSED_EDITOR_AI_API_KEYS]: {
+      type: 'object',
+      default: {},
+      additionalProperties: { type: 'string' },
+      description: 'API keys per profile id. Keep this in User scope (the Model Config view does this automatically) so secrets stay out of workspace files.'
     }
   }
 };
