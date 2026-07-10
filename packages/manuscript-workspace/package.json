@@ -94,6 +94,9 @@
     },
     {
       "frontend": "lib/browser/book-build-wizard-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/book-doctor-frontend-module"
     }
   ]
 }
