@@ -65,7 +65,6 @@ import { EntityCardsViewContribution } from './entity-cards-view-contribution';
 import { EntityCardsWidget } from './entity-cards-widget';
 import { AiProfileStatusBarContribution } from './ai-profile-status-bar-contribution';
 import { GitActionsContribution } from './git-actions-contribution';
-import { GitStatusBarContribution } from './git-status-bar-contribution';
 import { ManuscriptAiContextAssembler } from './manuscript-ai-context-assembler';
 import { ManuscriptContextVariableContribution } from './manuscript-context-variable-contribution';
 import { ManuscriptChatAgentContribution } from './manuscript-chat-agent-contribution';
@@ -156,8 +155,6 @@ export default new ContainerModule(bind => {
   bind(ModelProviderRegistry).toService(AiProfilePreferenceService);
   bind(AiProfileStatusBarContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(AiProfileStatusBarContribution);
-  bind(GitStatusBarContribution).toSelf().inSingletonScope();
-  bind(FrontendApplicationContribution).toService(GitStatusBarContribution);
   bind(GitActionsContribution).toSelf().inSingletonScope();
   bind(CommandContribution).toService(GitActionsContribution);
   bind(MenuContribution).toService(GitActionsContribution);
