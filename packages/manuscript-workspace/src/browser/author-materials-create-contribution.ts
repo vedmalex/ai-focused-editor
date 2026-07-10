@@ -10,7 +10,8 @@ import {
 } from '@theia/core/lib/common';
 import URI from '@theia/core/lib/common/uri';
 import { inject, injectable } from '@theia/core/shared/inversify';
-import { open, OpenerService, WidgetManager } from '@theia/core/lib/browser';
+import { FrontendApplicationContribution, open, OpenerService, WidgetManager } from '@theia/core/lib/browser';
+import { ContextKey, ContextKeyService } from '@theia/core/lib/browser/context-key-service';
 import type { TreeNode } from '@theia/core/lib/browser/tree';
 import { FileDialogService } from '@theia/filesystem/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
@@ -33,9 +34,11 @@ import {
 } from '../common/entity-creation';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import {
+  AFE_MANUSCRIPT_SECTION_CONTEXT_KEY,
   AuthorMaterialFolderTreeNode,
   AuthorMaterialsSectionTreeNode,
-  AuthorMaterialTreeNode
+  AuthorMaterialTreeNode,
+  ManuscriptTreeNode
 } from './manuscript-tree';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 
@@ -116,7 +119,8 @@ interface KnowledgeCategoryPick extends QuickPickItem {
  * UX in `source-library-view-contribution.ts`.
  */
 @injectable()
-export class AuthorMaterialsCreateContribution implements CommandContribution, MenuContribution {
+export class AuthorMaterialsCreateContribution
+  implements CommandContribution, MenuContribution, FrontendApplicationContribution {
   @inject(QuickInputService)
   protected readonly quickInput!: QuickInputService;
 
@@ -138,29 +142,85 @@ export class AuthorMaterialsCreateContribution implements CommandContribution, M
   @inject(FileDialogService)
   protected readonly fileDialogService!: FileDialogService;
 
+  @inject(ContextKeyService)
+  protected readonly contextKeyService!: ContextKeyService;
+
+  /** Tracks the manuscript tree selection; drives the create-action `when` clauses. */
+  protected sectionKey: ContextKey<string> | undefined;
+
+  /**
+   * Create the section context key and keep it in sync with the manuscript
+   * tree's selection. The tree widget may already exist (it opens on the
+   * writer-first startup layout) or be created later, so both are handled.
+   */
+  onStart(): void {
+    this.sectionKey = this.contextKeyService.createKey<string>(AFE_MANUSCRIPT_SECTION_CONTEXT_KEY, 'none');
+    for (const widget of this.widgetManager.getWidgets(ManuscriptTreeWidget.ID)) {
+      if (widget instanceof ManuscriptTreeWidget) {
+        this.trackTreeWidget(widget);
+      }
+    }
+    this.widgetManager.onDidCreateWidget(({ factoryId, widget }) => {
+      if (factoryId === ManuscriptTreeWidget.ID && widget instanceof ManuscriptTreeWidget) {
+        this.trackTreeWidget(widget);
+      }
+    });
+  }
+
+  /**
+   * Mirror one manuscript tree widget's selection into the section context key,
+   * resetting to `none` when the widget is disposed.
+   */
+  protected trackTreeWidget(widget: ManuscriptTreeWidget): void {
+    const model = widget.manuscriptModel;
+    const sync = () => this.sectionKey?.set(this.sectionKeyFor(model.selectedNodes[0]));
+    sync();
+    const selectionListener = model.onSelectionChanged(() => sync());
+    const disposeListener = widget.onDidDispose(() => {
+      selectionListener.dispose();
+      disposeListener.dispose();
+      this.sectionKey?.set('none');
+    });
+  }
+
+  /** Section context-key value for the current tree selection. */
+  protected sectionKeyFor(node: TreeNode | undefined): string {
+    if (node === undefined) {
+      return 'none';
+    }
+    if (ManuscriptTreeNode.is(node) || AuthorMaterialsSectionTreeNode.isManuscript(node)) {
+      return 'manuscript';
+    }
+    if (AuthorMaterialsSectionTreeNode.is(node)
+      || AuthorMaterialTreeNode.is(node)
+      || AuthorMaterialFolderTreeNode.is(node)) {
+      return node.sectionKind;
+    }
+    return 'none';
+  }
+
   registerCommands(commands: CommandRegistry): void {
+    // Section gating lives in the menu-action `when` clauses (registerMenus), not
+    // in command.isVisible: a hidden command also disappears from the product menu
+    // bar (DynamicMenuWidget honors command visibility), which is the bug this
+    // fixes. Commands stay always-visible; only `isEnabled` guards a workspace.
     for (const kind of CREATABLE_ENTITY_KINDS) {
-      const sectionKind = ENTITY_SECTION[kind];
       commands.registerCommand(ENTITY_COMMAND[kind], {
         execute: () => this.createEntity(kind),
-        isEnabled: () => this.hasWorkspace(),
-        isVisible: () => this.isSelectionInSection(sectionKind)
+        isEnabled: () => this.hasWorkspace()
       });
     }
     commands.registerCommand(AuthorMaterialsCommands.NEW_CITATION, {
       execute: () => this.createCitation(),
-      isEnabled: () => this.hasWorkspace(),
-      isVisible: () => this.isSelectionInSection('citations')
+      isEnabled: () => this.hasWorkspace()
     });
     commands.registerCommand(AuthorMaterialsCommands.NEW_KNOWLEDGE_NOTE, {
       execute: () => this.createKnowledgeNote(),
-      isEnabled: () => this.hasWorkspace(),
-      isVisible: () => this.isSelectionInSection('knowledge')
+      isEnabled: () => this.hasWorkspace()
     });
     commands.registerCommand(AuthorMaterialsCommands.ADD_SOURCE_FILE, {
       execute: () => this.addSourceFile(),
-      isEnabled: () => this.hasWorkspace(),
-      isVisible: () => this.isSelectionInSection('sources')
+      isEnabled: () => this.hasWorkspace()
     });
   }
 
@@ -173,21 +233,32 @@ export class AuthorMaterialsCreateContribution implements CommandContribution, M
     const mainGroup = [...AiFocusedEditorMenus.MAIN, '1a_create'];
 
     let order = 0;
-    for (const command of this.orderedCommands()) {
+    for (const { command, section } of this.orderedCreateActions()) {
       const orderKey = String(order);
-      menus.registerMenuAction(contextGroup, { commandId: command.id, order: orderKey });
+      // Tree context menu: section-gated via a `when` clause on the selection
+      // context key. Product menu bar: never gated, so every create action stays
+      // discoverable regardless of what (if anything) the tree has selected.
+      menus.registerMenuAction(contextGroup, {
+        commandId: command.id,
+        order: orderKey,
+        when: sectionWhenClause(section)
+      });
       menus.registerMenuAction(mainGroup, { commandId: command.id, order: orderKey });
       order++;
     }
   }
 
-  /** Stable creation order: entity kinds first, then citation, knowledge, source. */
-  protected orderedCommands(): Command[] {
+  /**
+   * Stable creation order (entity kinds first, then citation, knowledge, source)
+   * paired with the navigator section that gates each action in the tree context
+   * menu.
+   */
+  protected orderedCreateActions(): { command: Command; section: AuthorMaterialsSectionKind }[] {
     return [
-      ...CREATABLE_ENTITY_KINDS.map(kind => ENTITY_COMMAND[kind]),
-      AuthorMaterialsCommands.NEW_CITATION,
-      AuthorMaterialsCommands.NEW_KNOWLEDGE_NOTE,
-      AuthorMaterialsCommands.ADD_SOURCE_FILE
+      ...CREATABLE_ENTITY_KINDS.map(kind => ({ command: ENTITY_COMMAND[kind], section: ENTITY_SECTION[kind] })),
+      { command: AuthorMaterialsCommands.NEW_CITATION, section: 'citations' },
+      { command: AuthorMaterialsCommands.NEW_KNOWLEDGE_NOTE, section: 'knowledge' },
+      { command: AuthorMaterialsCommands.ADD_SOURCE_FILE, section: 'sources' }
     ];
   }
 
@@ -422,23 +493,6 @@ export class AuthorMaterialsCreateContribution implements CommandContribution, M
     await this.fileService.create(fileUri, document.toString(), { overwrite: true });
   }
 
-  /** True when the current tree selection targets `sectionKind` (or its descendants). */
-  protected isSelectionInSection(sectionKind: AuthorMaterialsSectionKind): boolean {
-    const node = this.getSelectedNode();
-    if (node === undefined) {
-      // No tree selection (e.g. product menu bar on a fresh workspace): keep the
-      // create action discoverable rather than hiding it. Right-clicking a tree
-      // node always selects it first, so the context menu stays section-specific.
-      return true;
-    }
-    return sectionMatches(node, sectionKind);
-  }
-
-  protected getSelectedNode(): TreeNode | undefined {
-    const widget = this.widgetManager.tryGetWidget<ManuscriptTreeWidget>(ManuscriptTreeWidget.ID);
-    return widget?.manuscriptModel.selectedNodes[0];
-  }
-
   protected async openAndRefresh(fileUri: URI): Promise<void> {
     try {
       await open(this.openerService, fileUri);
@@ -513,15 +567,11 @@ export class AuthorMaterialsCreateContribution implements CommandContribution, M
   }
 }
 
-function sectionMatches(node: TreeNode, sectionKind: AuthorMaterialsSectionKind): boolean {
-  if (AuthorMaterialsSectionTreeNode.is(node)) {
-    return node.sectionKind === sectionKind;
-  }
-  if (AuthorMaterialTreeNode.is(node)) {
-    return node.sectionKind === sectionKind;
-  }
-  if (AuthorMaterialFolderTreeNode.is(node)) {
-    return node.sectionKind === sectionKind;
-  }
-  return false;
+/**
+ * `when` clause keeping a create action visible in the tree context menu only
+ * when nothing is selected (`none`) or the matching section is selected.
+ */
+function sectionWhenClause(section: AuthorMaterialsSectionKind): string {
+  const key = AFE_MANUSCRIPT_SECTION_CONTEXT_KEY;
+  return `${key} == 'none' || ${key} == '${section}'`;
 }

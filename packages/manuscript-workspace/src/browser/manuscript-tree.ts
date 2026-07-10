@@ -4,6 +4,14 @@ import type { AuthorMaterialsSectionKind } from '../common/author-materials';
 
 export const MANUSCRIPT_TREE_ROOT_ID = 'ai-focused-editor.manuscript-tree.root';
 
+/**
+ * Context-key name tracking the manuscript tree's current selection
+ * (`none`, `manuscript`, or an author-materials {@link AuthorMaterialsSectionKind}).
+ * Menu `when` clauses read it to gate the per-section create actions in the tree
+ * context menu without also hiding them from the always-visible product menu bar.
+ */
+export const AFE_MANUSCRIPT_SECTION_CONTEXT_KEY = 'afeManuscriptSection';
+
 export interface ManuscriptTreeRootNode extends CompositeTreeNode {
   readonly id: typeof MANUSCRIPT_TREE_ROOT_ID;
   readonly name: 'Manuscript';

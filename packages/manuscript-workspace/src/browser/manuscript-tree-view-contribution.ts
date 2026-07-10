@@ -9,9 +9,8 @@ import {
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import type { FrontendApplication, FrontendApplicationContribution } from '@theia/core/lib/browser';
-import type { TreeNode } from '@theia/core/lib/browser/tree';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
-import { AuthorMaterialsSectionTreeNode, ManuscriptTreeNode } from './manuscript-tree';
+import { AFE_MANUSCRIPT_SECTION_CONTEXT_KEY, ManuscriptTreeNode } from './manuscript-tree';
 import {
   AI_FOCUSED_EDITOR_MENU_LABEL,
   AiFocusedEditorMenus
@@ -111,27 +110,11 @@ export class ManuscriptTreeViewContribution extends AbstractViewContribution<Man
       isVisible: () => this.getSelectedManuscriptNode() !== undefined
     });
     commands.registerCommand(ManuscriptTreeCommands.NEW_CHAPTER, {
-      execute: () => this.createChapter(),
-      // Chapter creation only applies to the Manuscript section. Hide it in the
-      // tree context menu on other sections (e.g. Characters), but keep it
-      // discoverable from the product menu bar: when nothing is selected the
-      // predicate stays true. `isEnabled` is intentionally left unrestricted so
-      // the menu-bar entry is never disabled by tree selection state.
-      isVisible: () => this.isChapterCreationVisible()
+      // Section gating is applied only to the tree context-menu action via a
+      // `when` clause (registerMenus); the command itself stays always-visible so
+      // the product menu-bar entry is never hidden by tree selection state.
+      execute: () => this.createChapter()
     });
-  }
-
-  /** Raw selected tree node (section/material/manuscript), unfiltered. */
-  protected getSelectedTreeNode(): TreeNode | undefined {
-    const widget = this.tryGetWidget();
-    return widget?.manuscriptModel.selectedNodes[0];
-  }
-
-  protected isChapterCreationVisible(): boolean {
-    const node = this.getSelectedTreeNode();
-    return node === undefined
-      || ManuscriptTreeNode.is(node)
-      || AuthorMaterialsSectionTreeNode.isManuscript(node);
   }
 
   override registerMenus(menus: MenuModelRegistry): void {
@@ -145,16 +128,22 @@ export class ManuscriptTreeViewContribution extends AbstractViewContribution<Man
       commandId: ManuscriptTreeCommands.NEW_CHAPTER.id,
       order: '1a'
     });
-    for (const [order, command] of [
-      ManuscriptTreeCommands.NEW_CHAPTER,
-      ManuscriptTreeCommands.MOVE_UP,
-      ManuscriptTreeCommands.MOVE_DOWN,
-      ManuscriptTreeCommands.TOGGLE_BUILD_INCLUSION,
-      ManuscriptTreeCommands.REFRESH
-    ].entries()) {
+    // NEW_CHAPTER is gated to the Manuscript section (or an empty selection) via a
+    // `when` clause on the section context key; MOVE_UP/MOVE_DOWN/TOGGLE keep their
+    // own manuscript-node `isVisible`, so only NEW_CHAPTER carries a `when` here.
+    const key = AFE_MANUSCRIPT_SECTION_CONTEXT_KEY;
+    const contextActions: { command: Command; when?: string }[] = [
+      { command: ManuscriptTreeCommands.NEW_CHAPTER, when: `${key} == 'none' || ${key} == 'manuscript'` },
+      { command: ManuscriptTreeCommands.MOVE_UP },
+      { command: ManuscriptTreeCommands.MOVE_DOWN },
+      { command: ManuscriptTreeCommands.TOGGLE_BUILD_INCLUSION },
+      { command: ManuscriptTreeCommands.REFRESH }
+    ];
+    for (const [order, { command, when }] of contextActions.entries()) {
       menus.registerMenuAction(ManuscriptTreeWidget.CONTEXT_MENU, {
         commandId: command.id,
-        order: String(order)
+        order: String(order),
+        ...(when ? { when } : {})
       });
     }
   }
