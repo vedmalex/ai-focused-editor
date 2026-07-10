@@ -114,6 +114,8 @@ export default {
       await waitForText('Part One', 45000);
       if (!treeNode('Chapter 1')) { throw new Error('Manuscript tree does not show Chapter 1'); }
       if (!treeNode('Draft Notes')) { throw new Error('Manuscript tree does not show the excluded Draft Notes node'); }
+      const iconCount = [...document.querySelectorAll('.afe-tree-icon.codicon')].filter(visible).length;
+      if (iconCount < 5) { throw new Error('Manuscript tree icons missing: only ' + iconCount + ' codicon icons rendered'); }
     `),
     open_chapter_and_preview: action(`
       await waitForText('Chapter 1', 45000);

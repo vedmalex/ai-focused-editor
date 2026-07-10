@@ -82,6 +82,19 @@ export class ManuscriptTreeWidget extends TreeWidget {
     return this.model as ManuscriptTreeModel;
   }
 
+  /**
+   * The base TreeWidget renders NO icon; surface the label-provider icons
+   * (codicons with per-kind accents) like FileTreeWidget does.
+   */
+  protected override renderIcon(node: TreeNode, _props: NodeProps): React.ReactNode {
+    const icon = this.toNodeIcon(node);
+    if (icon) {
+      return React.createElement('div', { className: `${icon} afe-tree-icon` });
+    }
+    // eslint-disable-next-line no-null/no-null
+    return null;
+  }
+
   protected override createNodeClassNames(node: TreeNode, props: NodeProps): string[] {
     const classNames = super.createNodeClassNames(node, props);
     if (ManuscriptTreeNode.is(node) && !node.manuscript.buildIncluded) {
