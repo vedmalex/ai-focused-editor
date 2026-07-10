@@ -172,6 +172,23 @@ export default {
       await openMenu('Manuscript');
       await clickMenuItem('Semantic Preview');
       await waitForText('semantic tag(s)', 20000);
+      // The preview inlines relative image sources (chapter-01.md's
+      // ![Cover](../cover.png)) as data: URIs, because the browser target cannot
+      // load file: URIs and there is no document base URI. Assert the resolved
+      // <img> appears (async file read + re-render, so retry) with a data:image/ src.
+      const previewImage = () => [...document.querySelectorAll('.afe-semantic-markdown-preview img')]
+        .filter(visible)
+        .find(img => (img.getAttribute('src') || '').startsWith('data:image/') || (img.src || '').startsWith('data:image/'));
+      let inlinedImg = previewImage();
+      for (let attempt = 0; attempt < 20 && !inlinedImg; attempt++) {
+        await sleep(500);
+        inlinedImg = previewImage();
+      }
+      if (!inlinedImg) {
+        const srcs = [...document.querySelectorAll('.afe-semantic-markdown-preview img')]
+          .map(img => (img.getAttribute('src') || '').slice(0, 24));
+        throw new Error('Preview did not render an inlined data:image/ <img> (img srcs: ' + JSON.stringify(srcs) + ')');
+      }
     `),
     open_model_config: action(`
       await openMenu('Manuscript');

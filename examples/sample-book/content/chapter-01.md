@@ -20,5 +20,7 @@ The bow is heavy, and so is the choice. The teaching that answers it
 For the translator's scratch notes, see the [draft notes](notes-draft.md) — kept out
 of the finished book. Background reading lives at [the project home](https://example.com).
 
+![Cover](../cover.png)
+
 [^1]: "Action that does not cling to its fruits" renders the phrase *nishkama karma* —
 the discipline of acting without attachment to the outcome.
