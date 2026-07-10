@@ -160,3 +160,15 @@ recommends:
 
 The fork is deliberately self-contained (one workspace package, three `package.json`
 touch-points, two root-script edits) so removal is mechanical.
+
+## Fork change: native locator replaced (2026-07-10)
+
+`find-git-repositories` (native addon) was removed. `theia rebuild:browser` /
+`rebuild:electron` flip native addons between the Node and Electron ABIs, so
+whichever app target was built second received an incompatible
+`findGitRepos.node` and the backend failed to boot. The repository locator in
+`src/node/git-locator/git-locator-impl.ts` now uses a bounded pure-JS
+directory walk (`.git` folder discovery, depth ≤ 6, dot/system dirs skipped)
+— identical behavior for writing workspaces, zero native code, both targets
+build in any order. When dropping this fork for upstream `@theia/git`, no
+special native handling remains to undo.

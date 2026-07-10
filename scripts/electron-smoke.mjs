@@ -14,6 +14,16 @@ const appDir = join(repoRoot, 'apps/electron');
 const mainJs = join(appDir, 'lib/backend/electron-main.js');
 const workspace = join(repoRoot, 'examples/sample-book');
 
+// A previous interrupted run can leave an instance holding the single-instance
+// lock, which makes a fresh launch exit(0) immediately — clear it first.
+try {
+  const { execSync } = await import('node:child_process');
+  execSync('pkill -f "apps/electron/lib/backend/electron-main.js" || true', { stdio: 'ignore', shell: '/bin/bash' });
+  await new Promise(resolve => setTimeout(resolve, 500));
+} catch {
+  // best effort
+}
+
 if (!existsSync(mainJs)) {
   console.error(`Electron bundle not found: ${mainJs}\nRun \`bun run build:electron\` first.`);
   process.exit(1);

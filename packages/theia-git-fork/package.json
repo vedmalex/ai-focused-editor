@@ -28,7 +28,6 @@
     "diff": "^5.2.0",
     "dugite-extra": "0.1.17",
     "find-git-exec": "^0.0.4",
-    "find-git-repositories": "^0.1.1",
     "luxon": "^2.4.0",
     "node-ssh": "^12.0.1",
     "octicons": "^7.1.0",
@@ -46,8 +45,7 @@
     "typescript": "~5.8.3"
   },
   "scripts": {
-    "build": "rm -rf lib && tsc && bun run build:native",
-    "build:native": "node scripts/ensure-native-git.mjs",
+    "build": "rm -rf lib && tsc",
     "clean": "rm -rf lib *.tsbuildinfo",
     "watch": "tsc -w"
   },
