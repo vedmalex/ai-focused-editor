@@ -54,6 +54,8 @@ export class EntityCardsWidget extends ReactWidget {
 
     const characters = snapshot.entities.filter(entity => entity.kind === 'character');
     const terms = snapshot.entities.filter(entity => entity.kind === 'term');
+    const artifacts = snapshot.entities.filter(entity => entity.kind === 'artifact');
+    const locations = snapshot.entities.filter(entity => entity.kind === 'location');
 
     return React.createElement(
       'div',
@@ -73,6 +75,8 @@ export class EntityCardsWidget extends ReactWidget {
       ),
       this.renderDiagnostics(snapshot),
       this.renderEntityGroup('Characters', 'character', characters),
+      this.renderEntityGroup('Artifacts', 'artifact', artifacts),
+      this.renderEntityGroup('Locations', 'location', locations),
       this.renderEntityGroup('Terms', 'term', terms)
     );
   }
@@ -116,6 +120,8 @@ export class EntityCardsWidget extends ReactWidget {
   }
 
   protected renderEntityCard(entity: NarrativeEntity): React.ReactNode {
+    const epithets = entity.epithets ?? [];
+    const speechPatterns = entity.speechPatterns ?? [];
     return React.createElement(
       'article',
       {
@@ -132,8 +138,32 @@ export class EntityCardsWidget extends ReactWidget {
       entity.aliases.length > 0
         ? React.createElement('div', { className: 'afe-entity-aliases' }, `Aliases: ${entity.aliases.join(', ')}`)
         : undefined,
+      epithets.length > 0
+        ? React.createElement('div', { className: 'afe-entity-epithets' }, `Epithets: ${epithets.join(', ')}`)
+        : undefined,
       entity.summary
         ? React.createElement('p', { className: 'afe-entity-summary' }, entity.summary)
+        : undefined,
+      entity.arc
+        ? React.createElement(
+          'div',
+          { className: 'afe-entity-arc' },
+          React.createElement('span', { className: 'afe-entity-field-label' }, 'Arc: '),
+          entity.arc
+        )
+        : undefined,
+      speechPatterns.length > 0
+        ? this.renderCollapsible('Speech patterns', React.createElement(
+          'ul',
+          { className: 'afe-entity-speech-list' },
+          ...speechPatterns.map((pattern, index) => React.createElement('li', { key: index }, pattern))
+        ))
+        : undefined,
+      entity.backstory
+        ? this.renderCollapsible('Backstory', React.createElement('p', { className: 'afe-entity-backstory' }, entity.backstory))
+        : undefined,
+      entity.notes
+        ? this.renderCollapsible('Notes', React.createElement('p', { className: 'afe-entity-notes' }, entity.notes))
         : undefined,
       React.createElement('code', { className: 'afe-entity-path' }, entity.path),
       React.createElement(
@@ -144,6 +174,19 @@ export class EntityCardsWidget extends ReactWidget {
         },
         'Open YAML'
       )
+    );
+  }
+
+  /**
+   * Keep long-form fields (backstory, speech patterns, notes) out of the way so
+   * the card stays scannable; writers expand only what they need.
+   */
+  protected renderCollapsible(label: string, body: React.ReactNode): React.ReactNode {
+    return React.createElement(
+      'details',
+      { className: 'afe-entity-details' },
+      React.createElement('summary', undefined, label),
+      body
     );
   }
 
