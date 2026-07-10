@@ -57,8 +57,25 @@ const HELPERS = `
     await sleep(600);
   };
   const closeMenus = async () => {
-    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    await sleep(200);
+    // Lumino menus listen for keydown on their own node (keyCode-based) and for
+    // document pointerdown outside the menu; body-level Escape alone is not
+    // enough for CONTEXT menus, and a stale open menu poisons later asserts —
+    // so retry until every menu item is really gone.
+    for (let attempt = 0; attempt < 5 && menuItems().length > 0; attempt++) {
+      for (const menu of document.querySelectorAll('.lm-Menu, .p-Menu')) {
+        menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+      }
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+      const away = { bubbles: true, cancelable: true, view: window, clientX: 2, clientY: 2, button: 0, buttons: 1, pointerId: 1, isPrimary: true };
+      if (typeof PointerEvent === 'function') {
+        document.body.dispatchEvent(new PointerEvent('pointerdown', away));
+      }
+      document.body.dispatchEvent(new MouseEvent('mousedown', away));
+      await sleep(200);
+    }
+    if (menuItems().length > 0) {
+      throw new Error('Could not close open menus (still visible: ' + menuItems().map(el => el.textContent.trim()).join(' | ') + ')');
+    }
   };
   const waitForText = async (text, timeoutMs = 20000) => {
     const start = Date.now();
@@ -70,13 +87,41 @@ const HELPERS = `
   };
   const treeNode = text => [...document.querySelectorAll('.theia-TreeNode')]
     .filter(visible).find(el => el.textContent.includes(text));
+  // Right-click: dispatch a pointerdown (button 2) followed by a contextmenu
+  // MouseEvent at the element's center — mirrors the mouse() helper's
+  // pointer+mouse dispatch pattern used to open Lumino menus.
+  const rightClick = el => {
+    const box = el.getBoundingClientRect();
+    const opts = {
+      bubbles: true, cancelable: true, view: window,
+      clientX: box.left + box.width / 2, clientY: box.top + box.height / 2,
+      button: 2, buttons: 2, pointerId: 1, isPrimary: true
+    };
+    if (typeof PointerEvent === 'function') {
+      el.dispatchEvent(new PointerEvent('pointerdown', opts));
+    }
+    el.dispatchEvent(new MouseEvent('contextmenu', opts));
+  };
+  const openTreeContextMenu = async node => {
+    await closeMenus();
+    mouse(node, 'mousedown');
+    mouse(node, 'mouseup');
+    await sleep(200);
+    for (let attempt = 0; attempt < 3 && menuItems().length === 0; attempt++) {
+      rightClick(node);
+      await sleep(400);
+    }
+    if (menuItems().length === 0) {
+      throw new Error('Context menu did not open for tree node: ' + node.textContent.trim());
+    }
+  };
 `;
 
 const action = body => ({ eval: `(async () => {${HELPERS}\n${body}\nreturn true; })()` });
 
 export default {
   version: '2.0.0',
-  description: 'AI Focused Editor workbench flow checks (menu integrity, tree, editor/preview, model config, build menu)',
+  description: 'AI Focused Editor workbench flow checks (menu integrity, tree, editor/preview, model config, build menu, tree create context menu)',
   viewports: {
     desktop: { width: 1440, height: 900 }
   },
@@ -143,6 +188,26 @@ export default {
         throw new Error('Build menu is missing: ' + missing.join(', ') + ' (visible: ' + texts.join(' | ') + ')');
       }
       await closeMenus();
+    `),
+    assert_tree_create_context_menu: action(`
+      await waitForText('Part One', 45000);
+      const assertSectionMenu = async (sectionLabel, expectedItem, forbiddenItems) => {
+        const node = treeNode(sectionLabel);
+        if (!node) { throw new Error('Tree section row not found: ' + sectionLabel); }
+        await openTreeContextMenu(node);
+        const texts = menuItems().map(el => el.textContent.trim());
+        if (!menuItem(expectedItem)) {
+          throw new Error('Expected context menu item "' + expectedItem + '" for section ' + sectionLabel + ' (visible: ' + texts.join(' | ') + ')');
+        }
+        for (const forbidden of forbiddenItems) {
+          if (menuItem(forbidden)) {
+            throw new Error('Unexpected context menu item "' + forbidden + '" present for section ' + sectionLabel + ' (visible: ' + texts.join(' | ') + ')');
+          }
+        }
+        await closeMenus();
+      };
+      await assertSectionMenu('Characters', 'New Character...', ['New Chapter...']);
+      await assertSectionMenu('Locations', 'New Location...', ['New Chapter...']);
     `)
   },
   scenarios: [
@@ -205,6 +270,16 @@ export default {
       action: 'assert_build_menu_entries',
       requiredText: [],
       screenshot: 'afe-06-build-menu.png'
+    },
+    {
+      id: 'AFE-07-TREE-CREATE-CONTEXT-MENU',
+      flowIds: ['AFE-07'],
+      profile: 'default',
+      path: '/',
+      viewport: 'desktop',
+      action: 'assert_tree_create_context_menu',
+      requiredText: [],
+      screenshot: 'afe-07-tree-create-context-menu.png'
     }
   ]
 };
