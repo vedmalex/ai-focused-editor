@@ -62,13 +62,18 @@ function pass(message) {
 // right after other Playwright/Theia activity.
 async function launchWithRetry() {
   let lastError;
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
     const candidate = await electron.launch({
       args: [mainJs, workspace],
       cwd: appDir,
       env: { ...process.env, NODE_ENV: 'development' },
       timeout: 120000
     });
+    // Buffer the main-process output so a dead-on-arrival window can be
+    // diagnosed (single-instance exit, backend crash, GPU init failure, ...).
+    const mainOutput = [];
+    candidate.process().stdout?.on('data', chunk => mainOutput.push(String(chunk)));
+    candidate.process().stderr?.on('data', chunk => mainOutput.push(String(chunk)));
     try {
       const window = await candidate.firstWindow({ timeout: 120000 });
       await window.waitForSelector('.theia-ApplicationShell', { timeout: 120000 });
@@ -76,8 +81,16 @@ async function launchWithRetry() {
     } catch (error) {
       lastError = error;
       console.log(`WARN electron launch attempt ${attempt} failed (${String(error).split('\n')[0]}); retrying...`);
+      const tail = mainOutput.join('').split('\n').filter(Boolean).slice(-15);
+      if (tail.length > 0) {
+        console.log('WARN electron main output tail:\n  ' + tail.join('\n  '));
+      }
       await candidate.close().catch(() => undefined);
       await clearStaleInstances();
+      // Give the OS a moment to release GPU/IPC resources before relaunching —
+      // back-to-back launches right after a heavy Playwright run are exactly
+      // the flaky case observed.
+      await new Promise(resolve => setTimeout(resolve, 3000));
     }
   }
   throw lastError;
