@@ -1,6 +1,8 @@
+export * from './ai-alias-resolution';
 export * from './ai-connection-protocol';
 export * from './ai-connect-config';
 export * from './ai-failover';
+export * from './ai-time-windows';
 export * from './ai-mode-protocol';
 export * from './book-build-protocol';
 export * from './entity-mentions';
@@ -11,4 +13,5 @@ export * from './model-provider-protocol';
 export * from './narrative-entity-protocol';
 export * from './narrative-graph-protocol';
 export * from './source-library-protocol';
+export * from './word-at-offset';
 export * from './yaml-schema-validator';

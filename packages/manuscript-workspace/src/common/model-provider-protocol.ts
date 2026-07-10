@@ -1,6 +1,39 @@
 import type { AiConnectionProfile } from './ai-connection-protocol';
+import type { AliasChainLeg } from './ai-alias-resolution';
 
 export const ModelProviderRegistry = Symbol('ModelProviderRegistry');
+
+/**
+ * UI view of an ENDPOINT (channel) row in the Model Config Endpoints list.
+ */
+export interface AiEndpointDescriptor {
+  id: string;
+  label: string;
+  provider: string;
+  transportKind: string;
+  endpointUrl?: string;
+  enabled: boolean;
+  hasApiKey: boolean;
+  /** Compact availability windows, if any. */
+  timeWindows: string[];
+  /** Whether the endpoint is available right now (time-window + enabled). */
+  availableNow: boolean;
+  /** True when time-window strings failed to parse (treated as always-on). */
+  windowWarning: boolean;
+}
+
+/**
+ * UI view of an ALIAS (chain) row in the Model Config Aliases list.
+ */
+export interface AiAliasDescriptor {
+  id: string;
+  label: string;
+  active: boolean;
+  enabled: boolean;
+  chain: AliasChainLeg[];
+  /** How many chain legs resolve to an available endpoint right now. */
+  availableLegs: number;
+}
 
 /**
  * A named, persistable AI profile (FR-013 "alias"). Secrets are NOT part of the
