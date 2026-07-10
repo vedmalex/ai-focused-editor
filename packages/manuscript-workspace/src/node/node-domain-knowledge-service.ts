@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import { isAllowedMaterialFile } from '../common/author-materials';
 import { isAbsolute, join, relative, resolve, sep } from 'path';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import { injectable } from '@theia/core/shared/inversify';
@@ -341,18 +342,62 @@ export class NodeSourceLibraryService implements SourceLibraryBackendService {
       return [];
     }
 
-    return (await fs.readdir(sourcePath, { withFileTypes: true }))
-      .filter(child => child.name !== 'citations.yaml' && child.name !== 'excerpts.jsonl')
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .map(child => {
-        const childPath = join(sourcePath, child.name);
-        return {
+    const items: SourceLibraryItem[] = [];
+    await this.collectSourceItems(rootPath, sourcePath, sourcePath, items);
+    return items;
+  }
+
+  /**
+   * Recursive listing (sources may be organised into folders). Only author
+   * material types survive (documents, images, structural yaml/json); dot
+   * files and dot directories are skipped; a directory is listed only when it
+   * contains surviving descendants. The index files (citations.yaml,
+   * excerpts.jsonl) at the sources root are managed separately.
+   */
+  protected async collectSourceItems(
+    rootPath: string,
+    sourcesRoot: string,
+    directoryPath: string,
+    out: SourceLibraryItem[]
+  ): Promise<void> {
+    const children = (await fs.readdir(directoryPath, { withFileTypes: true }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    for (const child of children) {
+      if (child.name.startsWith('.')) {
+        continue;
+      }
+      const childPath = join(directoryPath, child.name);
+      if (child.isDirectory()) {
+        const before = out.length;
+        const marker: SourceLibraryItem = {
           name: child.name,
           path: toWorkspacePath(rootPath, childPath),
           uri: FileUri.create(childPath).toString(),
-          type: child.isDirectory() ? 'directory' : 'file'
+          type: 'directory'
         };
+        out.push(marker);
+        await this.collectSourceItems(rootPath, sourcesRoot, childPath, out);
+        if (out.length === before + 1) {
+          out.splice(before, 1);
+        }
+        continue;
+      }
+      if (!child.isFile()) {
+        continue;
+      }
+      if (directoryPath === sourcesRoot && (child.name === 'citations.yaml' || child.name === 'excerpts.jsonl')) {
+        continue;
+      }
+      if (!isAllowedMaterialFile(child.name)) {
+        continue;
+      }
+      out.push({
+        name: child.name,
+        path: toWorkspacePath(rootPath, childPath),
+        uri: FileUri.create(childPath).toString(),
+        type: 'file'
       });
+    }
   }
 
   protected async readCitations(citationsPath: string, diagnostics: WorkspaceDiagnostic[]): Promise<CitationEntry[]> {

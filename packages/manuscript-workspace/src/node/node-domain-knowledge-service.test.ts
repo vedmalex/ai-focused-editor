@@ -196,7 +196,10 @@ describe('NodeSourceLibraryService', () => {
 
   test('lists source items excluding citations.yaml and parses citations', async () => {
     await fs.mkdir(join(root, 'sources/pdfs'), { recursive: true });
+    await fs.mkdir(join(root, 'sources/empty'), { recursive: true });
     await fs.writeFile(join(root, 'sources/notes.md'), 'notes');
+    await fs.writeFile(join(root, 'sources/pdfs/study.pdf'), 'pdf');
+    await fs.writeFile(join(root, 'sources/.gitignore'), 'build');
     await fs.writeFile(join(root, 'sources/citations.yaml'), [
       'citations:',
       '  - id: smith2020',
@@ -209,10 +212,14 @@ describe('NodeSourceLibraryService', () => {
     ].join('\n'));
 
     const snapshot = await service.getSnapshot(root);
-    expect(snapshot.items.map(item => item.name)).toEqual(['notes.md', 'pdfs']);
+    // Recursive listing: allowed files survive (nested included), dotfiles and
+    // empty directories are dropped, index files are managed separately.
+    expect(snapshot.items.map(item => item.name)).toEqual(['notes.md', 'pdfs', 'study.pdf']);
     const dir = snapshot.items.find(item => item.name === 'pdfs');
     expect(dir!.type).toBe('directory');
     expect(dir!.path).toBe('sources/pdfs');
+    const nested = snapshot.items.find(item => item.name === 'study.pdf');
+    expect(nested!.path).toBe('sources/pdfs/study.pdf');
 
     expect(snapshot.citations).toEqual([{
       id: 'smith2020',

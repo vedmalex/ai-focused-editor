@@ -52,6 +52,28 @@ const ENTITY_KIND_TO_SECTION: Record<NarrativeEntityKind, AuthorMaterialsSection
 /** File extensions surfaced under the Knowledge section (spec §4.1 `knowledge/`). */
 const KNOWLEDGE_EXTENSIONS = ['.yaml', '.yml', '.md'];
 
+/**
+ * File types an author works with (owner intake): documents, images, and
+ * structural yaml/json. Everything else — dotfiles (.gitignore, .DS_Store),
+ * build leftovers, binaries — stays out of the navigator and source listings.
+ */
+const ALLOWED_MATERIAL_EXTENSIONS = [
+  // documents
+  '.md', '.markdown', '.txt', '.pdf', '.doc', '.docx', '.odt', '.rtf', '.epub', '.html', '.htm',
+  // images
+  '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.tif', '.tiff', '.bmp',
+  // structural
+  '.yaml', '.yml', '.json', '.jsonl'
+];
+
+export function isAllowedMaterialFile(name: string): boolean {
+  if (!name || name.startsWith('.')) {
+    return false;
+  }
+  const lower = name.toLowerCase();
+  return ALLOWED_MATERIAL_EXTENSIONS.some(ext => lower.endsWith(ext));
+}
+
 /** A raw file discovered under `knowledge/**`, before extension filtering. */
 export interface KnowledgeFileEntry {
   /** Base file name, e.g. `world-rules.md`. */
@@ -82,6 +104,9 @@ export interface AuthorMaterialItem {
   description?: string;
   /** URI to open on activation; items without a URI are non-openable. */
   uri?: string;
+  /** Folders group nested files (sources/ and knowledge/ keep their layout). */
+  itemType?: 'file' | 'folder';
+  children?: AuthorMaterialItem[];
 }
 
 export interface AuthorMaterialsSection {
@@ -97,8 +122,98 @@ export interface AuthorMaterialsSection {
 
 /** True when the file name ends with a knowledge-surfaced extension. */
 export function isKnowledgeFile(name: string): boolean {
+  if (name.startsWith('.')) {
+    return false;
+  }
   const lower = name.toLowerCase();
   return KNOWLEDGE_EXTENSIONS.some(ext => lower.endsWith(ext));
+}
+
+/**
+ * Build a folder tree from flat workspace-relative file paths. `stripPrefix`
+ * (e.g. `sources/`) is removed before splitting into segments. Folders sort
+ * first, then files, each alphabetically; empty folders never appear because
+ * the tree is built purely from surviving files.
+ */
+export function buildMaterialFileTree(
+  files: { path: string; uri?: string }[],
+  stripPrefix: string
+): AuthorMaterialItem[] {
+  interface FolderAccumulator {
+    item: AuthorMaterialItem;
+    folders: Map<string, FolderAccumulator>;
+  }
+  const root: FolderAccumulator = {
+    item: { id: '', label: '', itemType: 'folder', children: [] },
+    folders: new Map()
+  };
+
+  for (const file of files) {
+    const relative = file.path.startsWith(stripPrefix) ? file.path.slice(stripPrefix.length) : file.path;
+    const segments = relative.split('/').filter(Boolean);
+    if (segments.length === 0) {
+      continue;
+    }
+    let cursor = root;
+    let accumulated = stripPrefix.replace(/\/+$/, '');
+    for (const segment of segments.slice(0, -1)) {
+      accumulated = accumulated ? `${accumulated}/${segment}` : segment;
+      let next = cursor.folders.get(segment);
+      if (!next) {
+        next = {
+          item: {
+            id: accumulated,
+            label: segment,
+            itemType: 'folder',
+            children: []
+          },
+          folders: new Map()
+        };
+        cursor.folders.set(segment, next);
+        cursor.item.children!.push(next.item);
+      }
+      cursor = next;
+    }
+    const name = segments[segments.length - 1];
+    cursor.item.children!.push({
+      id: file.path,
+      label: name,
+      description: file.path,
+      uri: file.uri,
+      itemType: 'file'
+    });
+  }
+
+  const sortTree = (items: AuthorMaterialItem[]): AuthorMaterialItem[] => {
+    items.sort((left, right) => {
+      const leftFolder = left.itemType === 'folder' ? 0 : 1;
+      const rightFolder = right.itemType === 'folder' ? 0 : 1;
+      if (leftFolder !== rightFolder) {
+        return leftFolder - rightFolder;
+      }
+      return left.label.localeCompare(right.label) || left.id.localeCompare(right.id);
+    });
+    for (const item of items) {
+      if (item.children) {
+        sortTree(item.children);
+      }
+    }
+    return items;
+  };
+  return sortTree(root.item.children!);
+}
+
+/** Count file leaves in a material tree. */
+export function countMaterialFiles(items: AuthorMaterialItem[]): number {
+  let total = 0;
+  for (const item of items) {
+    if (item.itemType === 'folder') {
+      total += countMaterialFiles(item.children ?? []);
+    } else {
+      total += 1;
+    }
+  }
+  return total;
 }
 
 /** Citation label falls back to the id when no human title is present. */
@@ -161,11 +276,11 @@ export function buildAuthorMaterialsSections(input: AuthorMaterialsInput): Autho
       }
       case 'sources': {
         const items = sourceItems(input.sources);
-        return makeSection('sources', items.length, items, false);
+        return makeSection('sources', countMaterialFiles(items), items, false);
       }
       case 'knowledge': {
         const items = knowledgeItems(input.knowledge);
-        return makeSection('knowledge', items.length, items, false);
+        return makeSection('knowledge', countMaterialFiles(items), items, false);
       }
     }
   });
@@ -213,27 +328,15 @@ function citationItems(
 }
 
 function sourceItems(items: SourceLibraryItem[]): AuthorMaterialItem[] {
-  return items
+  const files = items
     .filter(item => item.type === 'file')
-    .map(item => ({
-      id: item.path,
-      label: item.name,
-      description: item.path,
-      uri: item.uri
-    }))
-    .sort(byLabel);
+    .filter(item => isAllowedMaterialFile(item.name));
+  return buildMaterialFileTree(files, 'sources/');
 }
 
 function knowledgeItems(files: KnowledgeFileEntry[]): AuthorMaterialItem[] {
-  return files
-    .filter(file => isKnowledgeFile(file.name))
-    .map(file => ({
-      id: file.path,
-      label: file.name,
-      description: file.path,
-      uri: file.uri
-    }))
-    .sort(byLabel);
+  const allowed = files.filter(file => isKnowledgeFile(file.name));
+  return buildMaterialFileTree(allowed, 'knowledge/');
 }
 
 function byLabel(left: AuthorMaterialItem, right: AuthorMaterialItem): number {

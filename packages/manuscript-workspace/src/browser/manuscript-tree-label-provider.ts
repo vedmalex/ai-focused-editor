@@ -6,34 +6,41 @@ import type {
 } from '@theia/core/lib/browser/label-provider';
 import type { AuthorMaterialsSectionKind } from '../common/author-materials';
 import {
+  AuthorMaterialFolderTreeNode,
   AuthorMaterialsSectionTreeNode,
   AuthorMaterialTreeNode,
   ManuscriptTreeNode
 } from './manuscript-tree';
 
-/** Font Awesome 4 icons for section headers, consistent with `fa fa-book`. */
+/**
+ * Icon theme for the author navigator: codicons (shipped with the Theia/Monaco
+ * font) with a per-kind accent color applied through the afe-ico-* classes in
+ * style/index.css — so the tree reads at a glance and follows the theme.
+ */
 const SECTION_ICONS: Record<AuthorMaterialsSectionKind, string> = {
-  manuscript: 'fa fa-book',
-  characters: 'fa fa-user',
-  terms: 'fa fa-tag',
-  artifacts: 'fa fa-cube',
-  locations: 'fa fa-map-marker',
-  citations: 'fa fa-quote-right',
-  sources: 'fa fa-archive',
-  knowledge: 'fa fa-lightbulb-o'
+  manuscript: 'codicon codicon-book afe-ico-manuscript',
+  characters: 'codicon codicon-account afe-ico-characters',
+  terms: 'codicon codicon-symbol-key afe-ico-terms',
+  artifacts: 'codicon codicon-package afe-ico-artifacts',
+  locations: 'codicon codicon-location afe-ico-locations',
+  citations: 'codicon codicon-quote afe-ico-citations',
+  sources: 'codicon codicon-library afe-ico-sources',
+  knowledge: 'codicon codicon-lightbulb afe-ico-knowledge'
 };
 
-/** Leaf icons per material kind. */
 const MATERIAL_ICONS: Record<AuthorMaterialsSectionKind, string> = {
-  manuscript: 'fa fa-file-text-o',
-  characters: 'fa fa-user-o',
-  terms: 'fa fa-tag',
-  artifacts: 'fa fa-cube',
-  locations: 'fa fa-map-marker',
-  citations: 'fa fa-bookmark',
-  sources: 'fa fa-file-o',
-  knowledge: 'fa fa-lightbulb-o'
+  manuscript: 'codicon codicon-file afe-ico-manuscript',
+  characters: 'codicon codicon-person afe-ico-characters',
+  terms: 'codicon codicon-symbol-string afe-ico-terms',
+  artifacts: 'codicon codicon-symbol-misc afe-ico-artifacts',
+  locations: 'codicon codicon-milestone afe-ico-locations',
+  citations: 'codicon codicon-bookmark afe-ico-citations',
+  sources: 'codicon codicon-file afe-ico-sources',
+  knowledge: 'codicon codicon-note afe-ico-knowledge'
 };
+
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.tif', '.tiff', '.bmp'];
+const STRUCTURED_EXTENSIONS = ['.yaml', '.yml', '.json', '.jsonl'];
 
 @injectable()
 export class ManuscriptTreeLabelProvider implements LabelProviderContribution {
@@ -43,31 +50,59 @@ export class ManuscriptTreeLabelProvider implements LabelProviderContribution {
     return ManuscriptTreeNode.is(element)
       || AuthorMaterialsSectionTreeNode.is(element)
       || AuthorMaterialTreeNode.is(element)
+      || AuthorMaterialFolderTreeNode.is(element)
       ? 1000
       : 0;
   }
 
   getIcon(element: object): string | undefined {
     if (ManuscriptTreeNode.isFolder(element)) {
-      return 'fa fa-folder';
+      return 'codicon codicon-folder afe-ico-manuscript';
     }
     if (ManuscriptTreeNode.isFile(element)) {
-      return 'fa fa-file-text-o';
+      return 'codicon codicon-book afe-ico-manuscript';
     }
     if (AuthorMaterialsSectionTreeNode.is(element)) {
       return SECTION_ICONS[element.sectionKind];
     }
+    if (AuthorMaterialFolderTreeNode.is(element)) {
+      return `codicon codicon-folder afe-ico-${element.sectionKind}`;
+    }
     if (AuthorMaterialTreeNode.is(element)) {
-      return MATERIAL_ICONS[element.sectionKind];
+      return this.materialIcon(element);
     }
     return undefined;
+  }
+
+  /** Sources/knowledge files pick their icon by file type. */
+  protected materialIcon(element: AuthorMaterialTreeNode): string {
+    if (element.sectionKind === 'sources' || element.sectionKind === 'knowledge') {
+      const lower = element.name?.toLowerCase() ?? '';
+      const accent = `afe-ico-${element.sectionKind}`;
+      if (lower.endsWith('.md') || lower.endsWith('.markdown')) {
+        return `codicon codicon-markdown ${accent}`;
+      }
+      if (lower.endsWith('.pdf')) {
+        return `codicon codicon-file-pdf ${accent}`;
+      }
+      if (IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext))) {
+        return `codicon codicon-file-media ${accent}`;
+      }
+      if (STRUCTURED_EXTENSIONS.some(ext => lower.endsWith(ext))) {
+        return `codicon codicon-json ${accent}`;
+      }
+      return `codicon codicon-file ${accent}`;
+    }
+    return MATERIAL_ICONS[element.sectionKind];
   }
 
   getName(element: object): string | undefined {
     if (ManuscriptTreeNode.is(element)) {
       return element.manuscript.name;
     }
-    if (AuthorMaterialsSectionTreeNode.is(element) || AuthorMaterialTreeNode.is(element)) {
+    if (AuthorMaterialsSectionTreeNode.is(element)
+      || AuthorMaterialTreeNode.is(element)
+      || AuthorMaterialFolderTreeNode.is(element)) {
       return element.name;
     }
     return undefined;
@@ -80,7 +115,7 @@ export class ManuscriptTreeLabelProvider implements LabelProviderContribution {
     if (AuthorMaterialTreeNode.is(element)) {
       return element.description ?? element.name;
     }
-    if (AuthorMaterialsSectionTreeNode.is(element)) {
+    if (AuthorMaterialsSectionTreeNode.is(element) || AuthorMaterialFolderTreeNode.is(element)) {
       return element.name;
     }
     return undefined;
@@ -99,7 +134,8 @@ export class ManuscriptTreeLabelProvider implements LabelProviderContribution {
   affects(element: object, event: DidChangeLabelEvent): boolean {
     return (ManuscriptTreeNode.is(element)
       || AuthorMaterialsSectionTreeNode.is(element)
-      || AuthorMaterialTreeNode.is(element))
+      || AuthorMaterialTreeNode.is(element)
+      || AuthorMaterialFolderTreeNode.is(element))
       && event.affects(element);
   }
 }

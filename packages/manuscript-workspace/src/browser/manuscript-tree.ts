@@ -35,6 +35,15 @@ export interface AuthorMaterialTreeNode extends TreeNode {
   selected: boolean;
 }
 
+/** A folder grouping nested materials (sources/knowledge keep their layout). */
+export interface AuthorMaterialFolderTreeNode extends CompositeTreeNode {
+  readonly nodeType: 'material-folder';
+  readonly sectionKind: AuthorMaterialsSectionKind;
+  children: TreeNode[];
+  expanded: boolean;
+  selected: boolean;
+}
+
 export interface ManuscriptTreeNodeData {
   readonly manuscript: ManuscriptNode;
 }
@@ -82,5 +91,12 @@ export namespace AuthorMaterialTreeNode {
   export function is(node: unknown): node is AuthorMaterialTreeNode {
     return typeof node === 'object' && node !== null
       && (node as { nodeType?: unknown }).nodeType === 'material';
+  }
+}
+
+export namespace AuthorMaterialFolderTreeNode {
+  export function is(node: unknown): node is AuthorMaterialFolderTreeNode {
+    return typeof node === 'object' && node !== null
+      && (node as { nodeType?: unknown }).nodeType === 'material-folder';
   }
 }

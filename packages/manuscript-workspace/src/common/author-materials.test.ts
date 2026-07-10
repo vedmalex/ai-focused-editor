@@ -5,6 +5,7 @@ import {
   citationLabel,
   countManuscriptFiles,
   formatSectionLabel,
+  isAllowedMaterialFile,
   isKnowledgeFile,
   joinUri,
   type AuthorMaterialsInput
@@ -171,17 +172,55 @@ describe('knowledge filtering', () => {
     expect(isKnowledgeFile('README')).toBe(false);
   });
 
-  test('nested knowledge files survive filtering and sort by name', () => {
+  test('nested knowledge files keep their folder structure', () => {
     const sections = buildAuthorMaterialsSections(baseInput({
       knowledge: [
         { name: 'zeta.md', path: 'knowledge/zeta.md', uri: `${ROOT}/knowledge/zeta.md` },
         { name: 'alpha.yaml', path: 'knowledge/sub/alpha.yaml', uri: `${ROOT}/knowledge/sub/alpha.yaml` },
-        { name: 'skip.bin', path: 'knowledge/skip.bin', uri: `${ROOT}/knowledge/skip.bin` }
+        { name: 'skip.bin', path: 'knowledge/skip.bin', uri: `${ROOT}/knowledge/skip.bin` },
+        { name: '.gitignore', path: 'knowledge/.gitignore', uri: `${ROOT}/knowledge/.gitignore` }
       ]
     }));
     const knowledge = sections.find(section => section.kind === 'knowledge')!;
-    expect(knowledge.items.map(item => item.label)).toEqual(['alpha.yaml', 'zeta.md']);
-    expect(knowledge.items[0].description).toBe('knowledge/sub/alpha.yaml');
+    expect(knowledge.count).toBe(2);
+    // Folders sort first, then files.
+    expect(knowledge.items.map(item => item.label)).toEqual(['sub', 'zeta.md']);
+    expect(knowledge.items[0].itemType).toBe('folder');
+    expect(knowledge.items[0].children!.map(item => item.label)).toEqual(['alpha.yaml']);
+    expect(knowledge.items[0].children![0].description).toBe('knowledge/sub/alpha.yaml');
+  });
+});
+
+describe('allowed material types', () => {
+  test('accepts documents, images, and structural files; rejects dotfiles and binaries', () => {
+    expect(isAllowedMaterialFile('notes.md')).toBe(true);
+    expect(isAllowedMaterialFile('scan.PDF')).toBe(true);
+    expect(isAllowedMaterialFile('map.png')).toBe(true);
+    expect(isAllowedMaterialFile('data.jsonl')).toBe(true);
+    expect(isAllowedMaterialFile('meta.yaml')).toBe(true);
+    expect(isAllowedMaterialFile('.gitignore')).toBe(false);
+    expect(isAllowedMaterialFile('.DS_Store')).toBe(false);
+    expect(isAllowedMaterialFile('binary.exe')).toBe(false);
+    expect(isAllowedMaterialFile('archive.zip')).toBe(false);
+    expect(isAllowedMaterialFile('')).toBe(false);
+  });
+
+  test('sources keep nested folder structure and drop disallowed files', () => {
+    const sections = buildAuthorMaterialsSections(baseInput({
+      sources: [
+        { name: 'gita-notes.md', path: 'sources/documents/gita-notes.md', uri: `${ROOT}/sources/documents/gita-notes.md`, type: 'file' },
+        { name: 'map.png', path: 'sources/images/maps/map.png', uri: `${ROOT}/sources/images/maps/map.png`, type: 'file' },
+        { name: '.gitignore', path: 'sources/.gitignore', uri: `${ROOT}/sources/.gitignore`, type: 'file' },
+        { name: 'documents', path: 'sources/documents', uri: `${ROOT}/sources/documents`, type: 'directory' }
+      ]
+    }));
+    const sources = sections.find(section => section.kind === 'sources')!;
+    expect(sources.count).toBe(2);
+    expect(sources.items.map(item => `${item.itemType}:${item.label}`)).toEqual(['folder:documents', 'folder:images']);
+    const images = sources.items[1];
+    expect(images.children![0].itemType).toBe('folder');
+    expect(images.children![0].label).toBe('maps');
+    expect(images.children![0].children![0].label).toBe('map.png');
   });
 });
 

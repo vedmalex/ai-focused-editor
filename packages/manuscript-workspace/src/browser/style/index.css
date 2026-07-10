@@ -1147,3 +1147,21 @@
 .afe-citation-editor-help {
   margin-top: 12px;
 }
+
+/* ---------- author navigator icon theme ---------- */
+/* Per-kind accent colors via Theia chart variables (theme-aware). */
+
+.afe-ico-manuscript { color: var(--theia-charts-blue, #4e94ce); }
+.afe-ico-characters { color: var(--theia-charts-purple, #b180d7); }
+.afe-ico-terms { color: var(--theia-charts-green, #89d185); }
+.afe-ico-artifacts { color: var(--theia-charts-orange, #d18616); }
+.afe-ico-locations { color: var(--theia-charts-red, #e51400); }
+.afe-ico-citations { color: var(--theia-charts-yellow, #cca700); }
+.afe-ico-sources { color: var(--theia-descriptionForeground); }
+.afe-ico-knowledge { color: var(--theia-charts-yellow, #cca700); }
+
+/* codicon icons in the tree need a small alignment nudge next to labels */
+.theia-TreeNode .codicon[class*='afe-ico-'] {
+  margin-right: 4px;
+  vertical-align: -1px;
+}

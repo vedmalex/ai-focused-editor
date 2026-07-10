@@ -9,6 +9,7 @@ import {
 } from '../common/author-materials';
 import {
   MANUSCRIPT_TREE_ROOT_ID,
+  AuthorMaterialFolderTreeNode,
   AuthorMaterialsSectionTreeNode,
   AuthorMaterialTreeNode,
   ManuscriptFolderTreeNode,
@@ -101,7 +102,23 @@ export class ManuscriptTreeItemFactory {
   protected createMaterialNode(
     sectionKind: AuthorMaterialsSectionKind,
     item: AuthorMaterialItem
-  ): AuthorMaterialTreeNode {
+  ): AuthorMaterialTreeNode | AuthorMaterialFolderTreeNode {
+    if (item.itemType === 'folder') {
+      const folder: AuthorMaterialFolderTreeNode = {
+        id: `material-folder:${sectionKind}:${item.id}`,
+        name: item.label,
+        parent: undefined,
+        nodeType: 'material-folder',
+        sectionKind,
+        selected: false,
+        expanded: false,
+        children: []
+      };
+      for (const child of item.children ?? []) {
+        CompositeTreeNode.addChild(folder, this.createMaterialNode(sectionKind, child));
+      }
+      return folder;
+    }
     return {
       id: `material:${sectionKind}:${item.id}`,
       name: item.label,
