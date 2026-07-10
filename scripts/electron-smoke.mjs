@@ -15,14 +15,30 @@ const mainJs = join(appDir, 'lib/backend/electron-main.js');
 const workspace = join(repoRoot, 'examples/sample-book');
 
 // A previous interrupted run can leave an instance holding the single-instance
-// lock, which makes a fresh launch exit(0) immediately — clear it first.
-try {
+// lock, which makes a fresh launch exit(0) immediately — clear it first and
+// WAIT until the processes are really gone (500ms was not always enough: the
+// dying instance kept the lock long enough to kill the new window mid-boot).
+async function clearStaleInstances() {
   const { execSync } = await import('node:child_process');
-  execSync('pkill -f "apps/electron/lib/backend/electron-main.js" || true', { stdio: 'ignore', shell: '/bin/bash' });
-  await new Promise(resolve => setTimeout(resolve, 500));
-} catch {
-  // best effort
+  const pattern = 'apps/electron/lib/backend/electron-main.js';
+  try {
+    execSync(`pkill -f "${pattern}" || true`, { stdio: 'ignore', shell: '/bin/bash' });
+  } catch {
+    // best effort
+  }
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {
+      const { execSync: run } = await import('node:child_process');
+      run(`pgrep -f "${pattern}"`, { stdio: 'ignore', shell: '/bin/bash' });
+      // pgrep exit 0 => still alive, keep waiting
+      await new Promise(resolve => setTimeout(resolve, 250));
+    } catch {
+      return; // pgrep exit 1 => nothing left
+    }
+  }
 }
+await clearStaleInstances();
 
 if (!existsSync(mainJs)) {
   console.error(`Electron bundle not found: ${mainJs}\nRun \`bun run build:electron\` first.`);
@@ -41,15 +57,35 @@ function pass(message) {
   console.log(`PASS ${message}`);
 }
 
-const app = await electron.launch({
-  args: [mainJs, workspace],
-  cwd: appDir,
-  env: { ...process.env, NODE_ENV: 'development' },
-  timeout: 120000
-});
+// Launch with one retry: even after the stale-instance sweep the first boot
+// occasionally loses its window to a lock/teardown race when the smoke runs
+// right after other Playwright/Theia activity.
+async function launchWithRetry() {
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const candidate = await electron.launch({
+      args: [mainJs, workspace],
+      cwd: appDir,
+      env: { ...process.env, NODE_ENV: 'development' },
+      timeout: 120000
+    });
+    try {
+      const window = await candidate.firstWindow({ timeout: 120000 });
+      await window.waitForSelector('.theia-ApplicationShell', { timeout: 120000 });
+      return { app: candidate, window };
+    } catch (error) {
+      lastError = error;
+      console.log(`WARN electron launch attempt ${attempt} failed (${String(error).split('\n')[0]}); retrying...`);
+      await candidate.close().catch(() => undefined);
+      await clearStaleInstances();
+    }
+  }
+  throw lastError;
+}
+
+const { app, window } = await launchWithRetry();
 
 try {
-  const window = await app.firstWindow({ timeout: 120000 });
   window.on('console', message => {
     if (message.type() === 'error') {
       consoleErrors.push(message.text());
