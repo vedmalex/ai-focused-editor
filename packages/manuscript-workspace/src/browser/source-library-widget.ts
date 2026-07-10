@@ -1,4 +1,5 @@
 import URI from '@theia/core/lib/common/uri';
+import { nls } from '@theia/core/lib/common/nls';
 import {
   open,
   OpenerService
@@ -39,8 +40,11 @@ export class SourceLibraryWidget extends ReactWidget {
   @postConstruct()
   protected init(): void {
     this.id = SourceLibraryWidget.ID;
-    this.title.label = SourceLibraryWidget.LABEL;
-    this.title.caption = 'AI Focused Editor source library and citations';
+    this.title.label = nls.localize('ai-focused-editor/sources/widget-label', 'Sources');
+    this.title.caption = nls.localize(
+      'ai-focused-editor/sources/widget-caption',
+      'AI Focused Editor source library and citations'
+    );
     this.title.iconClass = 'fa fa-archive';
     this.title.closable = true;
     this.addClass('afe-source-library-widget');
@@ -55,7 +59,11 @@ export class SourceLibraryWidget extends ReactWidget {
   protected render(): React.ReactNode {
     const snapshot = this.snapshot;
     if (!snapshot) {
-      return React.createElement('div', { className: 'afe-source-library' }, 'Loading sources...');
+      return React.createElement(
+        'div',
+        { className: 'afe-source-library' },
+        nls.localize('ai-focused-editor/sources/loading', 'Loading sources...')
+      );
     }
 
     return React.createElement(
@@ -64,8 +72,12 @@ export class SourceLibraryWidget extends ReactWidget {
       React.createElement(
         'div',
         { className: 'afe-source-library-header' },
-        React.createElement('h3', undefined, 'Sources'),
-        React.createElement('button', { className: 'theia-button', onClick: () => this.refresh() }, 'Refresh')
+        React.createElement('h3', undefined, nls.localize('ai-focused-editor/sources/widget-label', 'Sources')),
+        React.createElement(
+          'button',
+          { className: 'theia-button', onClick: () => this.refresh() },
+          nls.localize('ai-focused-editor/sources/refresh-button', 'Refresh')
+        )
       ),
       this.renderDiagnostics(snapshot),
       this.renderItems(snapshot.items),
@@ -93,9 +105,9 @@ export class SourceLibraryWidget extends ReactWidget {
     return React.createElement(
       'section',
       { className: 'afe-source-library-section' },
-      React.createElement('h4', undefined, `Files (${items.length})`),
+      React.createElement('h4', undefined, nls.localize('ai-focused-editor/sources/files-heading', 'Files ({0})', items.length)),
       items.length === 0
-        ? React.createElement('p', undefined, 'No source files found.')
+        ? React.createElement('p', undefined, nls.localize('ai-focused-editor/sources/no-files', 'No source files found.'))
         : React.createElement(
           'ul',
           { className: 'afe-source-library-items' },
@@ -103,7 +115,11 @@ export class SourceLibraryWidget extends ReactWidget {
             'li',
             { key: item.uri },
             React.createElement('span', undefined, `${item.type}: ${item.path}`),
-            React.createElement('button', { className: 'theia-button', onClick: () => this.openUri(item.uri) }, 'Open')
+            React.createElement(
+              'button',
+              { className: 'theia-button', onClick: () => this.openUri(item.uri) },
+              nls.localize('ai-focused-editor/sources/open-button', 'Open')
+            )
           ))
         )
     );
@@ -113,9 +129,9 @@ export class SourceLibraryWidget extends ReactWidget {
     return React.createElement(
       'section',
       { className: 'afe-source-library-section' },
-      React.createElement('h4', undefined, `Citations (${citations.length})`),
+      React.createElement('h4', undefined, nls.localize('ai-focused-editor/sources/citations-heading', 'Citations ({0})', citations.length)),
       citations.length === 0
-        ? React.createElement('p', undefined, 'No citations found.')
+        ? React.createElement('p', undefined, nls.localize('ai-focused-editor/sources/no-citations', 'No citations found.'))
         : React.createElement(
           'ul',
           { className: 'afe-source-library-citations' },
@@ -131,7 +147,7 @@ export class SourceLibraryWidget extends ReactWidget {
         {
           className: 'afe-source-library-link',
           href: '#',
-          title: `Open ${citation.path}`,
+          title: nls.localize('ai-focused-editor/sources/open-path', 'Open {0}', citation.path),
           onClick: (event: React.MouseEvent) => {
             event.preventDefault();
             void this.openWorkspacePath(citation.path!);
@@ -146,8 +162,10 @@ export class SourceLibraryWidget extends ReactWidget {
       { key: citation.id },
       title,
       React.createElement('code', undefined, citation.id),
-      citation.source ? React.createElement('span', undefined, ` source: ${citation.source}`) : undefined,
-      this.renderCopyButton(citation.title, 'Copy citation title'),
+      citation.source
+        ? React.createElement('span', undefined, nls.localize('ai-focused-editor/sources/citation-source', ' source: {0}', citation.source))
+        : undefined,
+      this.renderCopyButton(citation.title, nls.localize('ai-focused-editor/sources/copy-citation-title', 'Copy citation title')),
       citation.note ? React.createElement('p', undefined, citation.note) : undefined
     );
   }
@@ -164,7 +182,7 @@ export class SourceLibraryWidget extends ReactWidget {
           void this.copyText(text);
         }
       },
-      'Copy'
+      nls.localize('ai-focused-editor/sources/copy-button', 'Copy')
     );
   }
 
@@ -176,9 +194,9 @@ export class SourceLibraryWidget extends ReactWidget {
     return React.createElement(
       'section',
       { className: 'afe-source-library-section' },
-      React.createElement('h4', undefined, `Excerpts (${excerpts.length})`),
+      React.createElement('h4', undefined, nls.localize('ai-focused-editor/sources/excerpts-heading', 'Excerpts ({0})', excerpts.length)),
       excerpts.length === 0
-        ? React.createElement('p', undefined, 'No excerpts indexed.')
+        ? React.createElement('p', undefined, nls.localize('ai-focused-editor/sources/no-excerpts', 'No excerpts indexed.'))
         : React.createElement(
           'ul',
           { className: 'afe-source-library-excerpts' },
@@ -195,7 +213,11 @@ export class SourceLibraryWidget extends ReactWidget {
         {
           className: 'afe-source-library-link',
           href: '#',
-          title: `Open ${excerpt.targetPath}${excerpt.targetLine ? `:${excerpt.targetLine}` : ''}`,
+          title: nls.localize(
+            'ai-focused-editor/sources/open-path',
+            'Open {0}',
+            `${excerpt.targetPath}${excerpt.targetLine ? `:${excerpt.targetLine}` : ''}`
+          ),
           onClick: (event: React.MouseEvent) => {
             event.preventDefault();
             void this.openWorkspacePath(excerpt.targetPath!, excerpt.targetLine);
@@ -212,7 +234,7 @@ export class SourceLibraryWidget extends ReactWidget {
       sourceLabel
         ? React.createElement('span', { className: 'afe-source-library-excerpt-source' }, ` — ${sourceLabel}`)
         : undefined,
-      this.renderCopyButton(excerpt.text, 'Copy excerpt text'),
+      this.renderCopyButton(excerpt.text, nls.localize('ai-focused-editor/sources/copy-excerpt-text', 'Copy excerpt text')),
       excerpt.note ? React.createElement('p', undefined, excerpt.note) : undefined
     );
   }

@@ -4,6 +4,7 @@ import {
   SemanticTag
 } from '@ai-focused-editor/semantic-markdown';
 import { Disposable, DisposableCollection } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import URI from '@theia/core/lib/common/uri';
 import { PreferenceService } from '@theia/core/lib/common/preferences';
 import { Markdown } from '@theia/core/lib/browser/markdown-rendering/markdown';
@@ -75,7 +76,7 @@ function extensionOf(path: string): string {
 @injectable()
 export class SemanticMarkdownPreviewWidget extends ReactWidget implements ExtractableWidget {
   static readonly ID = 'ai-focused-editor.semantic-markdown.preview';
-  static readonly LABEL = 'Semantic Preview';
+  static readonly LABEL = nls.localize('ai-focused-editor/editor/preview-label', 'Semantic Preview');
 
   /** FR-021: the preview can move to its own secondary window (writer-side reading surface). */
   isExtractable = true;
@@ -98,7 +99,7 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
 
   protected editorDisposables = new DisposableCollection();
   protected previewMarkdown = '';
-  protected sourceLabel = 'No Markdown editor selected';
+  protected sourceLabel = nls.localize('ai-focused-editor/editor/source-none', 'No Markdown editor selected');
   protected semanticTags: SemanticTag[] = [];
 
   /** Absolute-path (URI string) -> resolved data URI, keyed by file mtime so a
@@ -115,7 +116,7 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
   protected init(): void {
     this.id = SemanticMarkdownPreviewWidget.ID;
     this.title.label = SemanticMarkdownPreviewWidget.LABEL;
-    this.title.caption = 'Semantic Markdown Preview';
+    this.title.caption = nls.localize('ai-focused-editor/editor/preview-caption', 'Semantic Markdown Preview');
     this.title.iconClass = 'fa fa-eye';
     this.title.closable = true;
     this.addClass('afe-semantic-markdown-preview-widget');
@@ -145,7 +146,10 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
       this.svgSentinels = new Map();
       // Cancel any in-flight image resolution so it cannot repopulate the cleared preview.
       this.imageRenderGeneration++;
-      this.sourceLabel = 'Open a Markdown manuscript file to preview semantic tags.';
+      this.sourceLabel = nls.localize(
+        'ai-focused-editor/editor/source-open-file',
+        'Open a Markdown manuscript file to preview semantic tags.'
+      );
       this.update();
       return;
     }
@@ -317,7 +321,11 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
             className: 'afe-semantic-markdown-preview-content',
             onRender: this.patchPreviewImages
           })
-        : React.createElement('div', { className: 'afe-semantic-markdown-preview-empty' }, 'No preview content.')
+        : React.createElement(
+            'div',
+            { className: 'afe-semantic-markdown-preview-empty' },
+            nls.localize('ai-focused-editor/editor/no-preview-content', 'No preview content.')
+          )
     );
   }
 
@@ -326,14 +334,20 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
       return React.createElement(
         'div',
         { className: 'afe-semantic-markdown-tag-summary empty' },
-        'No semantic tags detected.'
+        nls.localize('ai-focused-editor/editor/no-tags-detected', 'No semantic tags detected.')
       );
     }
 
     return React.createElement(
       'div',
       { className: 'afe-semantic-markdown-tag-summary' },
-      React.createElement('strong', undefined, `${this.semanticTags.length} semantic tag(s)`),
+      // en default keeps `{0} semantic tag(s)` byte-identical: the default-locale
+      // UI-flow guard (AFE-04) waits for the literal substring "semantic tag(s)".
+      React.createElement('strong', undefined, nls.localize(
+        'ai-focused-editor/editor/tag-summary-count',
+        '{0} semantic tag(s)',
+        this.semanticTags.length
+      )),
       React.createElement(
         'div',
         { className: 'afe-semantic-markdown-tag-list' },
@@ -346,7 +360,11 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
           `${tag.label} (${tag.kind}:${tag.id})`
         )),
         this.semanticTags.length > 24
-          ? React.createElement('span', { className: 'afe-semantic-markdown-tag-chip more' }, `+${this.semanticTags.length - 24} more`)
+          ? React.createElement('span', { className: 'afe-semantic-markdown-tag-chip more' }, nls.localize(
+              'ai-focused-editor/editor/tag-summary-more',
+              '+{0} more',
+              this.semanticTags.length - 24
+            ))
           : undefined
       )
     );

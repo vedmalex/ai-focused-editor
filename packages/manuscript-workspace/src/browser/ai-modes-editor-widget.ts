@@ -1,5 +1,6 @@
 import URI from '@theia/core/lib/common/uri';
 import { MessageService } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { Navigatable } from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
@@ -22,16 +23,16 @@ import {
 } from '../common/ai-mode-forms';
 
 const CONTEXT_LABELS: Record<AiModeContext, string> = {
-  selection: 'Selection',
-  word: 'Word under cursor',
-  chapter: 'Whole chapter',
-  chat: 'Chat (no editor input)'
+  selection: nls.localize('ai-focused-editor/ai-modes/context-selection', 'Selection'),
+  word: nls.localize('ai-focused-editor/ai-modes/context-word', 'Word under cursor'),
+  chapter: nls.localize('ai-focused-editor/ai-modes/context-chapter', 'Whole chapter'),
+  chat: nls.localize('ai-focused-editor/ai-modes/context-chat', 'Chat (no editor input)')
 };
 
 const APPLY_LABELS: Record<AiModeApply, string> = {
-  replace: 'Replace input',
-  insert: 'Insert after input',
-  chat: 'Send to chat'
+  replace: nls.localize('ai-focused-editor/ai-modes/apply-replace', 'Replace input'),
+  insert: nls.localize('ai-focused-editor/ai-modes/apply-insert', 'Insert after input'),
+  chat: nls.localize('ai-focused-editor/ai-modes/apply-chat', 'Send to chat')
 };
 
 /**
@@ -47,7 +48,7 @@ const APPLY_LABELS: Record<AiModeApply, string> = {
 @injectable()
 export class AiModesEditorWidget extends ReactWidget implements Navigatable {
   static readonly FACTORY_ID = 'ai-focused-editor.ai-modes-editor';
-  static readonly LABEL = 'AI Modes';
+  static readonly LABEL = nls.localize('ai-focused-editor/ai-modes/editor-label', 'AI Modes');
 
   @inject(FileService)
   protected readonly fileService!: FileService;
@@ -67,7 +68,7 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
     this.uri = uri;
     this.id = `${AiModesEditorWidget.FACTORY_ID}:${uri.toString()}`;
     this.title.label = AiModesEditorWidget.LABEL;
-    this.title.caption = `AI modes form: ${uri.path.fsPath()}`;
+    this.title.caption = nls.localize('ai-focused-editor/ai-modes/editor-caption', 'AI modes form: {0}', uri.path.fsPath());
     this.title.iconClass = 'fa fa-magic';
     this.title.closable = true;
     this.addClass('afe-ai-modes-editor-widget');
@@ -185,7 +186,7 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
   protected async save(): Promise<void> {
     const problems = validateModes(this.rows);
     if (hasBlockingProblems(problems)) {
-      await this.messageService.error('Fix the highlighted mode problems before saving (ids must be present, unique, and each mode needs a system prompt).');
+      await this.messageService.error(nls.localize('ai-focused-editor/ai-modes/fix-problems', 'Fix the highlighted mode problems before saving (ids must be present, unique, and each mode needs a system prompt).'));
       return;
     }
     try {
@@ -193,10 +194,10 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
       await this.fileService.write(this.uri, content);
       // Re-read so the in-memory document (and comments) reflect what was written.
       await this.load();
-      await this.messageService.info(`Saved ${this.uri.path.base}.`);
+      await this.messageService.info(nls.localize('ai-focused-editor/ai-modes/saved', 'Saved {0}.', this.uri.path.base));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.messageService.error(`Could not save AI modes: ${detail}`);
+      await this.messageService.error(nls.localize('ai-focused-editor/ai-modes/save-failed', 'Could not save AI modes: {0}', detail));
     }
   }
 
@@ -210,7 +211,7 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
 
   protected render(): React.ReactNode {
     if (this.loading || !this.uri) {
-      return React.createElement('div', { className: 'afe-ai-modes-editor' }, 'Loading AI modes...');
+      return React.createElement('div', { className: 'afe-ai-modes-editor' }, nls.localize('ai-focused-editor/ai-modes/loading', 'Loading AI modes...'));
     }
 
     const problems = validateModes(this.rows);
@@ -220,24 +221,24 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
       React.createElement(
         'div',
         { className: 'afe-ai-modes-editor-header' },
-        React.createElement('h3', undefined, 'AI Modes'),
+        React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-modes/heading', 'AI Modes')),
         React.createElement('span', { className: 'afe-ai-modes-editor-count' }, `${this.rows.length}`)
       ),
       React.createElement(
         'p',
         { className: 'afe-ai-modes-editor-help' },
-        'Author-defined AI prompts and agents. Changes apply immediately: menu entries and @agents re-register on save.'
+        nls.localize('ai-focused-editor/ai-modes/help-1', 'Author-defined AI prompts and agents. Changes apply immediately: menu entries and @agents re-register on save.')
       ),
       this.parseError
         ? React.createElement(
           'div',
           { className: 'afe-ai-modes-editor-problem error' },
-          `YAML parse warning: ${this.parseError}`
+          nls.localize('ai-focused-editor/ai-modes/parse-warning', 'YAML parse warning: {0}', this.parseError)
         )
         : undefined,
       this.renderProblems(problems),
       this.rows.length === 0
-        ? React.createElement('p', { className: 'afe-ai-modes-editor-empty' }, 'No AI modes yet. Add one below.')
+        ? React.createElement('p', { className: 'afe-ai-modes-editor-empty' }, nls.localize('ai-focused-editor/ai-modes/empty', 'No AI modes yet. Add one below.'))
         : React.createElement(
           'ul',
           { className: 'afe-ai-modes-editor-cards' },
@@ -249,7 +250,7 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
         React.createElement(
           'button',
           { className: 'theia-button secondary', type: 'button', onClick: () => this.addRow() },
-          'Add Mode'
+          nls.localize('ai-focused-editor/ai-modes/add-mode', 'Add Mode')
         ),
         React.createElement(
           'button',
@@ -257,21 +258,21 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
             className: 'theia-button main',
             type: 'button',
             disabled: hasBlockingProblems(problems),
-            title: hasBlockingProblems(problems) ? 'Fix the highlighted problems before saving.' : undefined,
+            title: hasBlockingProblems(problems) ? nls.localize('ai-focused-editor/ai-modes/fix-before-save-title', 'Fix the highlighted problems before saving.') : undefined,
             onClick: () => { void this.save(); }
           },
-          this.dirty ? 'Save*' : 'Save'
+          this.dirty ? nls.localize('ai-focused-editor/ai-modes/save-dirty', 'Save*') : nls.localize('ai-focused-editor/ai-modes/save', 'Save')
         ),
         React.createElement(
           'button',
           { className: 'theia-button secondary', type: 'button', onClick: () => { void this.load(); } },
-          'Reload from disk'
+          nls.localize('ai-focused-editor/ai-modes/reload', 'Reload from disk')
         )
       ),
       React.createElement(
         'p',
         { className: 'afe-ai-modes-editor-help' },
-        'Saving writes pure YAML and preserves the file header, the version key, and comments. Use "Open With..." to edit the raw file.'
+        nls.localize('ai-focused-editor/ai-modes/help-2', 'Saving writes pure YAML and preserves the file header, the version key, and comments. Use "Open With..." to edit the raw file.')
       )
     );
   }
@@ -314,7 +315,7 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
           React.createElement(
             'span',
             { className: 'afe-ai-modes-editor-card-id' },
-            row.id.trim() || '(new mode)'
+            row.id.trim() || nls.localize('ai-focused-editor/ai-modes/new-mode', '(new mode)')
           ),
           row.label.trim()
             ? React.createElement('span', { className: 'afe-ai-modes-editor-card-label' }, row.label.trim())
@@ -326,10 +327,10 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
           {
             className: 'theia-button secondary afe-ai-modes-editor-delete',
             type: 'button',
-            title: 'Delete this mode',
+            title: nls.localize('ai-focused-editor/ai-modes/delete-mode-title', 'Delete this mode'),
             onClick: () => this.deleteRow(index)
           },
-          'Delete'
+          nls.localize('ai-focused-editor/ai-modes/delete', 'Delete')
         )
       ),
       selected ? this.renderCardBody(row, index) : undefined
@@ -341,10 +342,10 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
       React.createElement('span', { key: 'ctx', className: 'afe-ai-modes-editor-badge' }, row.context)
     ];
     if (row.menu) {
-      badges.push(React.createElement('span', { key: 'menu', className: 'afe-ai-modes-editor-badge menu' }, 'menu'));
+      badges.push(React.createElement('span', { key: 'menu', className: 'afe-ai-modes-editor-badge menu' }, nls.localize('ai-focused-editor/ai-modes/badge-menu', 'menu')));
     }
     if (row.agent) {
-      badges.push(React.createElement('span', { key: 'agent', className: 'afe-ai-modes-editor-badge agent' }, '@agent'));
+      badges.push(React.createElement('span', { key: 'agent', className: 'afe-ai-modes-editor-badge agent' }, nls.localize('ai-focused-editor/ai-modes/badge-agent', '@agent')));
     }
     return badges;
   }
@@ -353,21 +354,21 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
     return React.createElement(
       'div',
       { className: 'afe-ai-modes-editor-card-body' },
-      this.renderInput('Id', row, index, 'id', 'kebab-case slug, e.g. improve-selection', true),
-      this.renderInput('Label', row, index, 'label', 'menu/agent display name'),
-      this.renderInput('Description', row, index, 'description', 'short summary'),
+      this.renderInput(nls.localize('ai-focused-editor/ai-modes/field-id', 'Id'), row, index, 'id', nls.localize('ai-focused-editor/ai-modes/field-id-ph', 'kebab-case slug, e.g. improve-selection'), true),
+      this.renderInput(nls.localize('ai-focused-editor/ai-modes/field-label', 'Label'), row, index, 'label', nls.localize('ai-focused-editor/ai-modes/field-label-ph', 'menu/agent display name')),
+      this.renderInput(nls.localize('ai-focused-editor/ai-modes/field-description', 'Description'), row, index, 'description', nls.localize('ai-focused-editor/ai-modes/field-description-ph', 'short summary')),
       this.renderContextSelect(row, index),
       this.renderApplySelect(row, index),
-      this.renderCheckbox('Show in editor context menu', row, index, 'menu'),
-      this.renderCheckbox('Register as chat @agent', row, index, 'agent'),
-      this.renderInput('Icon', row, index, 'icon', 'codicon name without the codicon- prefix, e.g. sparkle'),
-      this.renderTextarea('System prompt', row, index, 'systemPrompt', 'instructions sent as the system message', 5),
-      this.renderTextarea('User prompt', row, index, 'userPrompt', 'optional user message prefix', 3),
+      this.renderCheckbox(nls.localize('ai-focused-editor/ai-modes/field-show-in-menu', 'Show in editor context menu'), row, index, 'menu'),
+      this.renderCheckbox(nls.localize('ai-focused-editor/ai-modes/field-register-agent', 'Register as chat @agent'), row, index, 'agent'),
+      this.renderInput(nls.localize('ai-focused-editor/ai-modes/field-icon', 'Icon'), row, index, 'icon', nls.localize('ai-focused-editor/ai-modes/field-icon-ph', 'codicon name without the codicon- prefix, e.g. sparkle')),
+      this.renderTextarea(nls.localize('ai-focused-editor/ai-modes/field-system-prompt', 'System prompt'), row, index, 'systemPrompt', nls.localize('ai-focused-editor/ai-modes/field-system-prompt-ph', 'instructions sent as the system message'), 5),
+      this.renderTextarea(nls.localize('ai-focused-editor/ai-modes/field-user-prompt', 'User prompt'), row, index, 'userPrompt', nls.localize('ai-focused-editor/ai-modes/field-user-prompt-ph', 'optional user message prefix'), 3),
       React.createElement(
         'div',
         { className: 'afe-ai-modes-editor-params' },
-        this.renderNumber('Temperature', row, index, 'temperature', '0.2', 0, 2, 0.1),
-        this.renderNumber('Max tokens', row, index, 'maxTokens', 'e.g. 800', 1, undefined, 1)
+        this.renderNumber(nls.localize('ai-focused-editor/ai-modes/field-temperature', 'Temperature'), row, index, 'temperature', '0.2', 0, 2, 0.1),
+        this.renderNumber(nls.localize('ai-focused-editor/ai-modes/field-max-tokens', 'Max tokens'), row, index, 'maxTokens', nls.localize('ai-focused-editor/ai-modes/field-max-tokens-ph', 'e.g. 800'), 1, undefined, 1)
       )
     );
   }
@@ -423,7 +424,7 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
     return React.createElement(
       'label',
       { className: 'afe-ai-modes-editor-field' },
-      React.createElement('span', undefined, 'Context'),
+      React.createElement('span', undefined, nls.localize('ai-focused-editor/ai-modes/field-context', 'Context')),
       React.createElement(
         'select',
         {
@@ -442,7 +443,7 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
     return React.createElement(
       'label',
       { className: 'afe-ai-modes-editor-field' },
-      React.createElement('span', undefined, 'Apply result'),
+      React.createElement('span', undefined, nls.localize('ai-focused-editor/ai-modes/field-apply-result', 'Apply result')),
       React.createElement(
         'select',
         {

@@ -6,6 +6,7 @@ import {
   MenuPath,
   MessageService
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import URI from '@theia/core/lib/common/uri';
 import {
   ApplicationShell,
@@ -37,11 +38,11 @@ import { AiProfilePreferenceService } from './ai-profile-preference-service';
 import { AiHistoryService } from './ai-history-service';
 import { AiConnectTheiaLanguageModel } from './ai-connect-theia-language-model';
 
-const AI_MODES_CATEGORY = 'AI Modes';
+const AI_MODES_CATEGORY = nls.localize('ai-focused-editor/ai-modes/modes-category', 'AI Modes');
 const MODE_RUN_COMMAND_PREFIX = 'ai-focused-editor.mode.run.';
 const MODE_AGENT_ID_PREFIX = 'ai-focused-editor.mode.';
 const AI_MODES_SUBMENU: MenuPath = [...EDITOR_CONTEXT_MENU, 'ai-focused-editor-modes'];
-const AI_MODES_SUBMENU_LABEL = 'AI Modes';
+const AI_MODES_SUBMENU_LABEL = nls.localize('ai-focused-editor/ai-modes/submenu-label', 'AI Modes');
 const REFRESH_DEBOUNCE_MS = 300;
 
 /**
@@ -269,7 +270,7 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
         this.customAgentFactory(
           agentId,
           this.agentName(mode.id),
-          mode.description || `Project AI mode agent: ${mode.id}`,
+          mode.description || nls.localize('ai-focused-editor/ai-modes/agent-description', 'Project AI mode agent: {0}', mode.id),
           [
             mode.systemPrompt,
             '',
@@ -315,7 +316,7 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
   protected async runModeById(modeId: string, commandId: string): Promise<void> {
     const mode = await this.aiModes.getMode(modeId);
     if (!mode) {
-      await this.messages.warn('This AI mode is no longer available; reload the modes file.');
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/mode-unavailable', 'This AI mode is no longer available; reload the modes file.'));
       return;
     }
     await this.runMode(mode, commandId);
@@ -331,37 +332,37 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
 
     if (context === 'selection') {
       if (!editor) {
-        await this.messages.warn('Open an editor before running this AI mode.');
+        await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/open-editor-first', 'Open an editor before running this AI mode.'));
         return;
       }
       const selection = this.copyRange(editor.selection);
       const selectedText = editor.document.getText(selection);
       if (!selectedText.trim()) {
-        await this.messages.warn(`Select text before running "${mode.label}".`);
+        await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/select-text-first', 'Select text before running "{0}".', mode.label));
         return;
       }
       input = selectedText;
       targetRange = selection;
     } else if (context === 'word') {
       if (!editor) {
-        await this.messages.warn('Open an editor before running this AI mode.');
+        await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/open-editor-first', 'Open an editor before running this AI mode.'));
         return;
       }
       const word = this.wordUnderCursor(editor);
       if (!word) {
-        await this.messages.warn(`Place the cursor on a word before running "${mode.label}".`);
+        await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/place-cursor-first', 'Place the cursor on a word before running "{0}".', mode.label));
         return;
       }
       input = word.text;
       targetRange = word.range;
     } else if (context === 'chapter') {
       if (!editor) {
-        await this.messages.warn('Open a chapter before running this AI mode.');
+        await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/open-chapter-first', 'Open a chapter before running this AI mode.'));
         return;
       }
       input = editor.document.getText().trim();
       if (!input) {
-        await this.messages.warn('The active chapter is empty.');
+        await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/chapter-empty', 'The active chapter is empty.'));
         return;
       }
     }
@@ -372,7 +373,7 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
     }
 
     if (!editor || !targetRange) {
-      await this.messages.warn(`"${mode.label}" needs an editor selection or word to apply its result.`);
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/needs-selection', '"{0}" needs an editor selection or word to apply its result.', mode.label));
       return;
     }
     await this.applyEdit(mode, commandId, editor, targetRange, input, apply, context);
@@ -409,13 +410,13 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
     const documentUri = editor.uri.toString();
     const profile = await this.aiProfilePreferences.getConfiguredProfile(documentUri);
     if (!profile) {
-      await this.messages.warn('Configure the AI profile (Model Config view) before running this AI mode.');
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/configure-profile-first', 'Configure the AI profile (Model Config view) before running this AI mode.'));
       return;
     }
 
     const originalDocumentText = editor.document.getText();
     const progress = await this.messages.showProgress({
-      text: `AI Focused Editor: ${mode.label}...`
+      text: nls.localize('ai-focused-editor/ai-modes/run-progress', 'AI Focused Editor: {0}...', mode.label)
     });
     try {
       const chain = await this.aiProfilePreferences.getFailoverChain(documentUri);
@@ -448,7 +449,7 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
 
       const generated = result.text.trim();
       if (!generated) {
-        await this.messages.info(`"${mode.label}" returned an empty result.`);
+        await this.messages.info(nls.localize('ai-focused-editor/ai-modes/empty-result', '"{0}" returned an empty result.', mode.label));
         return;
       }
 
@@ -456,7 +457,7 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
         ? this.replaceRangeInText(originalDocumentText, targetRange, generated)
         : this.insertAfterRange(originalDocumentText, targetRange, generated);
       if (targetState === originalDocumentText) {
-        await this.messages.info(`"${mode.label}" produced no change to apply.`);
+        await this.messages.info(nls.localize('ai-focused-editor/ai-modes/no-change', '"{0}" produced no change to apply.', mode.label));
         return;
       }
 
@@ -480,7 +481,7 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
       session.model.changeSet.addElements(changeSetElement);
       await this.revealChatView();
       await changeSetElement.openChange();
-      this.messages.info(`"${mode.label}" result is ready for review in the diff and chat Change Set.`);
+      this.messages.info(nls.localize('ai-focused-editor/ai-modes/result-ready', '"{0}" result is ready for review in the diff and chat Change Set.', mode.label));
 
       await this.logRun(mode, context, apply, documentUri, {
         chatSessionId: session.id,
@@ -492,7 +493,7 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
       await this.logRun(mode, context, apply, documentUri, {
         error: error instanceof Error ? error.message : String(error)
       });
-      await this.messages.error(`"${mode.label}" failed: ${error instanceof Error ? error.message : String(error)}`);
+      await this.messages.error(nls.localize('ai-focused-editor/ai-modes/mode-failed', '"{0}" failed: {1}', mode.label, error instanceof Error ? error.message : String(error)));
     } finally {
       progress.cancel();
     }

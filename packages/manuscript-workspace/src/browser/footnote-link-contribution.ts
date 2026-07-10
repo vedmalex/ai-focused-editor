@@ -1,6 +1,7 @@
 import { parseFootnotes } from '@ai-focused-editor/semantic-markdown';
 import type { FootnoteReference } from '@ai-focused-editor/semantic-markdown';
 import { DisposableCollection } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { injectable } from '@theia/core/shared/inversify';
 import * as monaco from '@theia/monaco-editor-core';
@@ -53,7 +54,11 @@ export class FootnoteLinkContribution implements FrontendApplicationContribution
       links.push({
         range: this.toMonacoRange(reference.range),
         url: this.revealUri(uri, definition.range.start.line, definition.range.start.character),
-        tooltip: `Go to footnote [${numbers.get(reference.id) ?? reference.id}] definition`
+        tooltip: nls.localize(
+          'ai-focused-editor/editor/footnote-goto-definition',
+          'Go to footnote [{0}] definition',
+          numbers.get(reference.id) ?? reference.id
+        )
       });
     }
 
@@ -65,7 +70,11 @@ export class FootnoteLinkContribution implements FrontendApplicationContribution
       links.push({
         range: this.toMonacoRange(definition.range),
         url: this.revealUri(uri, reference.range.start.line, reference.range.start.character),
-        tooltip: `Go to footnote [${numbers.get(definition.id) ?? definition.id}] reference`
+        tooltip: nls.localize(
+          'ai-focused-editor/editor/footnote-goto-reference',
+          'Go to footnote [{0}] reference',
+          numbers.get(definition.id) ?? definition.id
+        )
       });
     }
 

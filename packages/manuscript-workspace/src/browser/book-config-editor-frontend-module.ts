@@ -8,6 +8,7 @@ import {
   MenuPath,
   MessageService
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import {
   NavigatableWidgetOpenHandler,
   NavigatableWidgetOptions,
@@ -68,7 +69,7 @@ function baseName(uri: URI): string {
 @injectable()
 export class MetadataEditorOpenHandler extends NavigatableWidgetOpenHandler<MetadataEditorWidget> {
   readonly id = MetadataEditorWidget.FACTORY_ID;
-  readonly label = 'Book Metadata Form Editor';
+  readonly label = nls.localize('ai-focused-editor/book-config/metadata-open-handler-label', 'Book Metadata Form Editor');
 
   @inject(WorkspaceService)
   protected readonly workspaceService!: WorkspaceService;
@@ -83,7 +84,7 @@ export class MetadataEditorOpenHandler extends NavigatableWidgetOpenHandler<Meta
 @injectable()
 export class ManifestEditorOpenHandler extends NavigatableWidgetOpenHandler<ManifestEditorWidget> {
   readonly id = ManifestEditorWidget.FACTORY_ID;
-  readonly label = 'Manifest Form Editor';
+  readonly label = nls.localize('ai-focused-editor/book-config/manifest-open-handler-label', 'Manifest Form Editor');
 
   @inject(WorkspaceService)
   protected readonly workspaceService!: WorkspaceService;
@@ -105,17 +106,27 @@ function isWorkspaceRootFile(workspaceService: WorkspaceService, uri: URI, names
 }
 
 export namespace BookConfigEditorCommands {
-  export const EDIT_METADATA: Command = {
-    id: 'ai-focused-editor.config.editMetadata',
-    category: 'AI Focused Editor',
-    label: 'Edit Book Metadata...'
-  };
+  const CATEGORY_KEY = 'ai-focused-editor/book-config/category';
 
-  export const EDIT_MANIFEST: Command = {
-    id: 'ai-focused-editor.config.editManifest',
-    category: 'AI Focused Editor',
-    label: 'Edit Manifest...'
-  };
+  export const EDIT_METADATA: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.config.editMetadata',
+      category: 'AI Focused Editor',
+      label: 'Edit Book Metadata...'
+    },
+    'ai-focused-editor/book-config/edit-metadata',
+    CATEGORY_KEY
+  );
+
+  export const EDIT_MANIFEST: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.config.editManifest',
+      category: 'AI Focused Editor',
+      label: 'Edit Manifest...'
+    },
+    'ai-focused-editor/book-config/edit-manifest',
+    CATEGORY_KEY
+  );
 }
 
 @injectable()
@@ -141,7 +152,10 @@ export class BookConfigEditorCommandContribution
       execute: async () => {
         const uri = await this.resolveRootFile('metadata.yaml');
         if (!uri) {
-          await this.messageService.warn('Open a manuscript workspace before editing book metadata.');
+          await this.messageService.warn(nls.localize(
+            'ai-focused-editor/book-config/open-workspace-for-metadata',
+            'Open a manuscript workspace before editing book metadata.'
+          ));
           return;
         }
         await this.ensureFile(uri, STARTER_METADATA_YAML);
@@ -153,7 +167,10 @@ export class BookConfigEditorCommandContribution
       execute: async () => {
         const uri = await this.resolveRootFile('manifest.yaml');
         if (!uri) {
-          await this.messageService.warn('Open a manuscript workspace before editing the manifest.');
+          await this.messageService.warn(nls.localize(
+            'ai-focused-editor/book-config/open-workspace-for-manifest',
+            'Open a manuscript workspace before editing the manifest.'
+          ));
           return;
         }
         await this.ensureFile(uri, STARTER_MANIFEST_YAML);
@@ -190,7 +207,7 @@ export class BookConfigEditorCommandContribution
       id: 'ai-focused-editor.bookConfig.toolbar.properties',
       command: BookConfigEditorCommands.EDIT_METADATA.id,
       icon: 'codicon codicon-book',
-      tooltip: 'Book Properties (metadata.yaml)',
+      tooltip: nls.localize('ai-focused-editor/book-config/properties-tooltip', 'Book Properties (metadata.yaml)'),
       priority: 1,
       isVisible: (widget: Widget) => widget instanceof ManuscriptTreeWidget
     });

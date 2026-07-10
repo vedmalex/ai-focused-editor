@@ -1,5 +1,53 @@
 {
   "ai-focused-editor": {
-    "create": {}
+    "create": {
+      "category": "AI Focused Editor",
+      "new-character": "Новый персонаж…",
+      "new-term": "Новый термин…",
+      "new-artifact": "Новый артефакт…",
+      "new-location": "Новая локация…",
+      "new-citation": "Новая цитата…",
+      "new-knowledge-note": "Новая заметка…",
+      "add-source-file": "Добавить исходный файл…",
+
+      "create-entity-no-workspace": "Откройте рабочую область рукописи, прежде чем создавать материал.",
+      "create-entity-title": "Создание материала",
+      "create-entity-prompt": "Введите название",
+      "create-entity-empty": "Название не может быть пустым.",
+      "create-entity-failed": "Не удалось создать материал: {1}",
+      "entity-created": "Материал «{1}» создан.",
+      "entity-placeholder": "например: {0}",
+      "placeholder-character": "Арджуна",
+      "placeholder-term": "Дхарма",
+      "placeholder-artifact": "Гандива",
+      "placeholder-location": "Курукшетра",
+
+      "citation-no-workspace": "Откройте рабочую область рукописи, прежде чем создавать цитату.",
+      "citation-title": "Новая цитата",
+      "citation-prompt": "Название цитаты",
+      "citation-placeholder": "например: Бхагавад-гита 2.47",
+      "citation-empty": "Название цитаты не может быть пустым.",
+      "citation-failed": "Не удалось создать цитату: {0}",
+      "citation-added": "Цитата «{0}» добавлена.",
+
+      "note-no-workspace": "Откройте рабочую область рукописи, прежде чем создавать заметку.",
+      "knowledge-root-label": "(корень базы знаний)",
+      "note-title": "Новая заметка",
+      "note-category-placeholder": "Выберите категорию для заметки",
+      "note-prompt": "Название заметки",
+      "note-placeholder": "например: план главы 3",
+      "note-empty": "Название заметки не может быть пустым.",
+      "note-failed": "Не удалось создать заметку: {0}",
+      "note-created": "Заметка «{0}» создана.",
+
+      "source-no-workspace": "Откройте рабочую область рукописи, прежде чем добавлять исходный файл.",
+      "add-source-title": "Добавить исходный файл",
+      "source-add-failed": "Не удалось добавить {0}: {1}",
+      "sources-all-existing": "Все выбранные файлы уже находятся в папке sources/.",
+      "sources-added": "Добавлено файлов в sources/: {0}.",
+      "sources-skipped": "Пропущено (уже в sources/): {0}.",
+
+      "open-failed": "Файл создан, но открыть его не удалось: {0}"
+    }
   }
 }

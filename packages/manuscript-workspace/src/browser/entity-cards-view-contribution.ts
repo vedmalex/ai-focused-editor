@@ -3,6 +3,7 @@ import {
   CommandRegistry,
   MenuModelRegistry
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { EntityCardsWidget } from './entity-cards-widget';
@@ -12,15 +13,21 @@ import {
 } from './ai-focused-editor-menu';
 
 export namespace EntityCardsCommands {
-  export const OPEN: Command = {
-    id: 'ai-focused-editor.entities.openCards',
-    label: 'AI Focused Editor: Open Knowledge Cards'
-  };
+  export const OPEN: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.entities.openCards',
+      label: 'AI Focused Editor: Open Knowledge Cards'
+    },
+    'ai-focused-editor/entities/open-cards'
+  );
 
-  export const REFRESH: Command = {
-    id: 'ai-focused-editor.entities.refreshCards',
-    label: 'AI Focused Editor: Refresh Knowledge Cards'
-  };
+  export const REFRESH: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.entities.refreshCards',
+      label: 'AI Focused Editor: Refresh Knowledge Cards'
+    },
+    'ai-focused-editor/entities/refresh-cards'
+  );
 }
 
 @injectable()

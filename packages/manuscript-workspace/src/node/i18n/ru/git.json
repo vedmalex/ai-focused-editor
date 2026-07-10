@@ -1,5 +1,32 @@
 {
   "ai-focused-editor": {
-    "git": {}
+    "git": {
+      "category": "AI Focused Editor",
+      "init-repository": "Инициализировать репозиторий Git",
+      "add-to-gitignore": "Добавить в .gitignore",
+      "open-workspace-first": "Сначала откройте рабочую папку.",
+      "repository-initialized": "{0} Индикатор Git скоро появится в строке состояния.",
+      "file-outside-workspace": "Выбранный файл находится вне рабочей папки.",
+      "gitignore-already-contains": "Файл .gitignore уже содержит {0}.",
+      "gitignore-added": "Добавлено в .gitignore: {0}.",
+      "open-semantic-history": "AI Focused Editor: открыть семантическую историю",
+      "refresh-semantic-history": "AI Focused Editor: обновить семантическую историю",
+      "history-title": "Семантическая история",
+      "history-caption": "AI Focused Editor: история семантических сущностей",
+      "refreshing": "Обновление…",
+      "refresh": "Обновить",
+      "loading": "Загрузка семантической истории…",
+      "no-data": "Пока нет данных.",
+      "init-git-hint": "Инициализируйте Git, чтобы отслеживать семантическую историю.",
+      "no-semantic-commits": "Пока ни один коммит не затрагивает семантические сущности или доменные файлы.",
+      "no-semantic-changes": "нет семантических изменений",
+      "status-added": "добавлено",
+      "status-modified": "изменено",
+      "status-deleted": "удалено",
+      "status-renamed": "переименовано",
+      "status-copied": "скопировано",
+      "change-tooltip-openable": "{0}: {1} (нажмите, чтобы открыть)",
+      "change-tooltip": "{0}: {1}"
+    }
   }
 }

@@ -9,6 +9,7 @@ import {
   QuickPickItem
 } from '@theia/core/lib/common';
 import URI from '@theia/core/lib/common/uri';
+import { nls } from '@theia/core/lib/common/nls';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { FrontendApplicationContribution, open, OpenerService, WidgetManager } from '@theia/core/lib/browser';
 import { ContextKey, ContextKeyService } from '@theia/core/lib/browser/context-key-service';
@@ -45,41 +46,48 @@ import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 const CATEGORY = 'AI Focused Editor';
 
 export namespace AuthorMaterialsCommands {
-  export const NEW_CHARACTER: Command = {
-    id: 'ai-focused-editor.authorMaterials.newCharacter',
-    category: CATEGORY,
-    label: `New ${ENTITY_KIND_LABEL.character}...`
-  };
-  export const NEW_TERM: Command = {
-    id: 'ai-focused-editor.authorMaterials.newTerm',
-    category: CATEGORY,
-    label: `New ${ENTITY_KIND_LABEL.term}...`
-  };
-  export const NEW_ARTIFACT: Command = {
-    id: 'ai-focused-editor.authorMaterials.newArtifact',
-    category: CATEGORY,
-    label: `New ${ENTITY_KIND_LABEL.artifact}...`
-  };
-  export const NEW_LOCATION: Command = {
-    id: 'ai-focused-editor.authorMaterials.newLocation',
-    category: CATEGORY,
-    label: `New ${ENTITY_KIND_LABEL.location}...`
-  };
-  export const NEW_CITATION: Command = {
-    id: 'ai-focused-editor.authorMaterials.newCitation',
-    category: CATEGORY,
-    label: 'New Citation...'
-  };
-  export const NEW_KNOWLEDGE_NOTE: Command = {
-    id: 'ai-focused-editor.authorMaterials.newKnowledgeNote',
-    category: CATEGORY,
-    label: 'New Knowledge Note...'
-  };
-  export const ADD_SOURCE_FILE: Command = {
-    id: 'ai-focused-editor.authorMaterials.addSourceFile',
-    category: CATEGORY,
-    label: 'Add Source File...'
-  };
+  // en labels stay inline as the source of truth; ru comes from
+  // i18n/ru/create.json keyed by `ai-focused-editor/create/*`. The entity-kind
+  // label defaults ('Character', …) mirror ENTITY_KIND_LABEL (kept in the
+  // Theia-free common module, English this wave) so the product menu-bar text is
+  // byte-identical to the previous `New ${ENTITY_KIND_LABEL.kind}...` literals.
+  const CATEGORY_KEY = 'ai-focused-editor/create/category';
+
+  export const NEW_CHARACTER: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.authorMaterials.newCharacter', category: CATEGORY, label: 'New Character...' },
+    'ai-focused-editor/create/new-character',
+    CATEGORY_KEY
+  );
+  export const NEW_TERM: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.authorMaterials.newTerm', category: CATEGORY, label: 'New Term...' },
+    'ai-focused-editor/create/new-term',
+    CATEGORY_KEY
+  );
+  export const NEW_ARTIFACT: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.authorMaterials.newArtifact', category: CATEGORY, label: 'New Artifact...' },
+    'ai-focused-editor/create/new-artifact',
+    CATEGORY_KEY
+  );
+  export const NEW_LOCATION: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.authorMaterials.newLocation', category: CATEGORY, label: 'New Location...' },
+    'ai-focused-editor/create/new-location',
+    CATEGORY_KEY
+  );
+  export const NEW_CITATION: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.authorMaterials.newCitation', category: CATEGORY, label: 'New Citation...' },
+    'ai-focused-editor/create/new-citation',
+    CATEGORY_KEY
+  );
+  export const NEW_KNOWLEDGE_NOTE: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.authorMaterials.newKnowledgeNote', category: CATEGORY, label: 'New Knowledge Note...' },
+    'ai-focused-editor/create/new-knowledge-note',
+    CATEGORY_KEY
+  );
+  export const ADD_SOURCE_FILE: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.authorMaterials.addSourceFile', category: CATEGORY, label: 'Add Source File...' },
+    'ai-focused-editor/create/add-source-file',
+    CATEGORY_KEY
+  );
 }
 
 /** Command for each creatable entity kind, keyed for iteration. */
@@ -271,15 +279,25 @@ export class AuthorMaterialsCreateContribution
     const label = ENTITY_KIND_LABEL[kind];
     const root = await this.getRoot();
     if (!root) {
-      this.messages.warn(`Open a manuscript workspace before creating a ${label.toLowerCase()}.`);
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/create/create-entity-no-workspace',
+        'Open a manuscript workspace before creating a {0}.',
+        label.toLowerCase()
+      ));
       return;
     }
 
     const name = await this.quickInput.input({
-      title: `New ${label}`,
-      prompt: `${label} name`,
-      placeHolder: `e.g. ${this.entityPlaceholder(kind)}`,
-      validateInput: async value => (value.trim() ? undefined : `${label} name cannot be empty.`)
+      title: nls.localize('ai-focused-editor/create/create-entity-title', 'New {0}', label),
+      prompt: nls.localize('ai-focused-editor/create/create-entity-prompt', '{0} name', label),
+      placeHolder: nls.localize(
+        'ai-focused-editor/create/entity-placeholder',
+        'e.g. {0}',
+        this.entityPlaceholder(kind)
+      ),
+      validateInput: async value => (value.trim()
+        ? undefined
+        : nls.localize('ai-focused-editor/create/create-entity-empty', '{0} name cannot be empty.', label))
     });
     const trimmed = name?.trim();
     if (!trimmed) {
@@ -298,12 +316,22 @@ export class AuthorMaterialsCreateContribution
     try {
       await this.fileService.create(fileUri, buildEntityYaml({ id, name: trimmed }), { overwrite: false });
     } catch (error) {
-      this.messages.warn(`Could not create ${label.toLowerCase()}: ${this.detail(error)}`);
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/create/create-entity-failed',
+        'Could not create {0}: {1}',
+        label.toLowerCase(),
+        this.detail(error)
+      ));
       return;
     }
 
     await this.openAndRefresh(fileUri);
-    this.messages.info(`Created ${label.toLowerCase()} "${trimmed}".`);
+    this.messages.info(nls.localize(
+      'ai-focused-editor/create/entity-created',
+      'Created {0} "{1}".',
+      label.toLowerCase(),
+      trimmed
+    ));
   }
 
   /**
@@ -314,15 +342,20 @@ export class AuthorMaterialsCreateContribution
   protected async createCitation(): Promise<void> {
     const root = await this.getRoot();
     if (!root) {
-      this.messages.warn('Open a manuscript workspace before creating a citation.');
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/create/citation-no-workspace',
+        'Open a manuscript workspace before creating a citation.'
+      ));
       return;
     }
 
     const title = await this.quickInput.input({
-      title: 'New Citation',
-      prompt: 'Citation title',
-      placeHolder: 'e.g. Bhagavad Gita 2.47',
-      validateInput: async value => (value.trim() ? undefined : 'Citation title cannot be empty.')
+      title: nls.localize('ai-focused-editor/create/citation-title', 'New Citation'),
+      prompt: nls.localize('ai-focused-editor/create/citation-prompt', 'Citation title'),
+      placeHolder: nls.localize('ai-focused-editor/create/citation-placeholder', 'e.g. Bhagavad Gita 2.47'),
+      validateInput: async value => (value.trim()
+        ? undefined
+        : nls.localize('ai-focused-editor/create/citation-empty', 'Citation title cannot be empty.'))
     });
     const trimmed = title?.trim();
     if (!trimmed) {
@@ -337,12 +370,16 @@ export class AuthorMaterialsCreateContribution
     try {
       await this.appendCitation(fileUri, id, trimmed);
     } catch (error) {
-      this.messages.error(`Could not create citation: ${this.detail(error)}`);
+      this.messages.error(nls.localize(
+        'ai-focused-editor/create/citation-failed',
+        'Could not create citation: {0}',
+        this.detail(error)
+      ));
       return;
     }
 
     await this.openAndRefresh(fileUri);
-    this.messages.info(`Added citation "${trimmed}".`);
+    this.messages.info(nls.localize('ai-focused-editor/create/citation-added', 'Added citation "{0}".', trimmed));
   }
 
   /**
@@ -352,17 +389,24 @@ export class AuthorMaterialsCreateContribution
   protected async createKnowledgeNote(): Promise<void> {
     const root = await this.getRoot();
     if (!root) {
-      this.messages.warn('Open a manuscript workspace before creating a knowledge note.');
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/create/note-no-workspace',
+        'Open a manuscript workspace before creating a knowledge note.'
+      ));
       return;
     }
 
     const picks: KnowledgeCategoryPick[] = [
       ...KNOWLEDGE_CATEGORIES.map(category => ({ label: category, category })),
-      { label: '(knowledge root)', description: 'knowledge/', category: undefined }
+      {
+        label: nls.localize('ai-focused-editor/create/knowledge-root-label', '(knowledge root)'),
+        description: 'knowledge/',
+        category: undefined
+      }
     ];
     const picked = await this.quickInput.showQuickPick(picks, {
-      title: 'New Knowledge Note',
-      placeholder: 'Choose a category for the note'
+      title: nls.localize('ai-focused-editor/create/note-title', 'New Knowledge Note'),
+      placeholder: nls.localize('ai-focused-editor/create/note-category-placeholder', 'Choose a category for the note')
     });
     if (!picked) {
       return;
@@ -370,10 +414,12 @@ export class AuthorMaterialsCreateContribution
     const category = picked.category;
 
     const title = await this.quickInput.input({
-      title: 'New Knowledge Note',
-      prompt: 'Note title',
-      placeHolder: 'e.g. Chapter 3 outline',
-      validateInput: async value => (value.trim() ? undefined : 'Note title cannot be empty.')
+      title: nls.localize('ai-focused-editor/create/note-title', 'New Knowledge Note'),
+      prompt: nls.localize('ai-focused-editor/create/note-prompt', 'Note title'),
+      placeHolder: nls.localize('ai-focused-editor/create/note-placeholder', 'e.g. Chapter 3 outline'),
+      validateInput: async value => (value.trim()
+        ? undefined
+        : nls.localize('ai-focused-editor/create/note-empty', 'Note title cannot be empty.'))
     });
     const trimmed = title?.trim();
     if (!trimmed) {
@@ -396,12 +442,16 @@ export class AuthorMaterialsCreateContribution
     try {
       await this.fileService.create(fileUri, buildKnowledgeNoteMarkdown(trimmed), { overwrite: false });
     } catch (error) {
-      this.messages.warn(`Could not create knowledge note: ${this.detail(error)}`);
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/create/note-failed',
+        'Could not create knowledge note: {0}',
+        this.detail(error)
+      ));
       return;
     }
 
     await this.openAndRefresh(fileUri);
-    this.messages.info(`Created knowledge note "${trimmed}".`);
+    this.messages.info(nls.localize('ai-focused-editor/create/note-created', 'Created knowledge note "{0}".', trimmed));
   }
 
   /**
@@ -411,12 +461,15 @@ export class AuthorMaterialsCreateContribution
   protected async addSourceFile(): Promise<void> {
     const root = await this.getRoot();
     if (!root) {
-      this.messages.warn('Open a manuscript workspace before adding a source file.');
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/create/source-no-workspace',
+        'Open a manuscript workspace before adding a source file.'
+      ));
       return;
     }
 
     const selected = await this.fileDialogService.showOpenDialog({
-      title: 'Add Source File',
+      title: nls.localize('ai-focused-editor/create/add-source-title', 'Add Source File'),
       canSelectFiles: true,
       canSelectFolders: false,
       canSelectMany: true
@@ -446,19 +499,35 @@ export class AuthorMaterialsCreateContribution
         await this.fileService.copy(source, target, { overwrite: false });
         added++;
       } catch (error) {
-        this.messages.warn(`Could not add ${source.path.base}: ${this.detail(error)}`);
+        this.messages.warn(nls.localize(
+          'ai-focused-editor/create/source-add-failed',
+          'Could not add {0}: {1}',
+          source.path.base,
+          this.detail(error)
+        ));
       }
     }
 
     await this.refreshTree();
 
     if (added === 0 && skipped.length > 0) {
-      this.messages.info(`All selected file(s) are already under sources/.`);
+      this.messages.info(nls.localize(
+        'ai-focused-editor/create/sources-all-existing',
+        'All selected file(s) are already under sources/.'
+      ));
       return;
     }
-    const summary = [`Added ${added} source file(s) to sources/.`];
+    const summary = [nls.localize(
+      'ai-focused-editor/create/sources-added',
+      'Added {0} source file(s) to sources/.',
+      added
+    )];
     if (skipped.length > 0) {
-      summary.push(`Skipped ${skipped.length} already under sources/.`);
+      summary.push(nls.localize(
+        'ai-focused-editor/create/sources-skipped',
+        'Skipped {0} already under sources/.',
+        skipped.length
+      ));
     }
     this.messages.info(summary.join(' '));
   }
@@ -497,7 +566,11 @@ export class AuthorMaterialsCreateContribution
     try {
       await open(this.openerService, fileUri);
     } catch (error) {
-      this.messages.warn(`Created the file but could not open it: ${this.detail(error)}`);
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/create/open-failed',
+        'Created the file but could not open it: {0}',
+        this.detail(error)
+      ));
     }
     await this.refreshTree();
   }
@@ -552,13 +625,13 @@ export class AuthorMaterialsCreateContribution
   protected entityPlaceholder(kind: CreatableEntityKind): string {
     switch (kind) {
       case 'character':
-        return 'Arjuna';
+        return nls.localize('ai-focused-editor/create/placeholder-character', 'Arjuna');
       case 'term':
-        return 'Dharma';
+        return nls.localize('ai-focused-editor/create/placeholder-term', 'Dharma');
       case 'artifact':
-        return 'Gandiva';
+        return nls.localize('ai-focused-editor/create/placeholder-artifact', 'Gandiva');
       case 'location':
-        return 'Kurukshetra';
+        return nls.localize('ai-focused-editor/create/placeholder-location', 'Kurukshetra');
     }
   }
 

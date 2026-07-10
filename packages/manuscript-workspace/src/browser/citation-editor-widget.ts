@@ -1,5 +1,6 @@
 import URI from '@theia/core/lib/common/uri';
 import { MessageService } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { Navigatable } from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
@@ -61,8 +62,8 @@ export class CitationEditorWidget extends ReactWidget implements Navigatable {
   configure(uri: URI): void {
     this.uri = uri;
     this.id = `${CitationEditorWidget.FACTORY_ID}:${uri.toString()}`;
-    this.title.label = CitationEditorWidget.LABEL;
-    this.title.caption = `Citations form: ${uri.path.fsPath()}`;
+    this.title.label = nls.localize('ai-focused-editor/sources/citations-label', 'Citations');
+    this.title.caption = nls.localize('ai-focused-editor/sources/citations-caption', 'Citations form: {0}', uri.path.fsPath());
     this.title.iconClass = 'fa fa-quote-right';
     this.title.closable = true;
     this.addClass('afe-citation-editor-widget');
@@ -143,14 +144,27 @@ export class CitationEditorWidget extends ReactWidget implements Navigatable {
     this.rows.forEach((row, index) => {
       const id = row.id.trim();
       if (!id) {
-        problems.push({ severity: 'error', message: `Row ${index + 1}: citation id is required.` });
+        problems.push({
+          severity: 'error',
+          message: nls.localize('ai-focused-editor/sources/row-id-required', 'Row {0}: citation id is required.', index + 1)
+        });
       } else if (seen.has(id)) {
-        problems.push({ severity: 'error', message: `Row ${index + 1}: duplicate citation id "${id}".` });
+        problems.push({
+          severity: 'error',
+          message: nls.localize('ai-focused-editor/sources/row-id-duplicate', 'Row {0}: duplicate citation id "{1}".', index + 1, id)
+        });
       } else {
         seen.add(id);
       }
       if (id && !row.title.trim()) {
-        problems.push({ severity: 'warning', message: `Row ${index + 1}: a title is recommended (rows without one are hidden from the Sources view).` });
+        problems.push({
+          severity: 'warning',
+          message: nls.localize(
+            'ai-focused-editor/sources/row-title-recommended',
+            'Row {0}: a title is recommended (rows without one are hidden from the Sources view).',
+            index + 1
+          )
+        });
       }
     });
     return problems;
@@ -206,7 +220,10 @@ export class CitationEditorWidget extends ReactWidget implements Navigatable {
   protected async save(): Promise<void> {
     const problems = this.validate();
     if (problems.some(problem => problem.severity === 'error')) {
-      await this.messageService.error('Fix citation id problems before saving (ids must be unique and non-empty).');
+      await this.messageService.error(nls.localize(
+        'ai-focused-editor/sources/citations-save-error',
+        'Fix citation id problems before saving (ids must be unique and non-empty).'
+      ));
       return;
     }
     try {
@@ -214,10 +231,10 @@ export class CitationEditorWidget extends ReactWidget implements Navigatable {
       await this.fileService.write(this.uri, content);
       // Re-read so the in-memory document (and comments) reflect what was written.
       await this.load();
-      await this.messageService.info(`Saved ${this.uri.path.base}.`);
+      await this.messageService.info(nls.localize('ai-focused-editor/sources/saved-file', 'Saved {0}.', this.uri.path.base));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.messageService.error(`Could not save citations: ${detail}`);
+      await this.messageService.error(nls.localize('ai-focused-editor/sources/citations-save-failed', 'Could not save citations: {0}', detail));
     }
   }
 
@@ -231,7 +248,11 @@ export class CitationEditorWidget extends ReactWidget implements Navigatable {
 
   protected render(): React.ReactNode {
     if (this.loading || !this.uri) {
-      return React.createElement('div', { className: 'afe-citation-editor' }, 'Loading citations...');
+      return React.createElement(
+        'div',
+        { className: 'afe-citation-editor' },
+        nls.localize('ai-focused-editor/sources/citations-loading', 'Loading citations...')
+      );
     }
 
     const problems = this.validate();
@@ -241,19 +262,19 @@ export class CitationEditorWidget extends ReactWidget implements Navigatable {
       React.createElement(
         'div',
         { className: 'afe-citation-editor-header' },
-        React.createElement('h3', undefined, 'Citations'),
+        React.createElement('h3', undefined, nls.localize('ai-focused-editor/sources/citations-label', 'Citations')),
         React.createElement('span', { className: 'afe-citation-editor-count' }, `${this.rows.length}`)
       ),
       this.parseError
         ? React.createElement(
           'div',
           { className: 'afe-citation-editor-problem error' },
-          `YAML parse warning: ${this.parseError}`
+          nls.localize('ai-focused-editor/sources/citations-parse-warning', 'YAML parse warning: {0}', this.parseError)
         )
         : undefined,
       this.renderProblems(problems),
       this.rows.length === 0
-        ? React.createElement('p', { className: 'afe-citation-editor-empty' }, 'No citations yet. Add one below.')
+        ? React.createElement('p', { className: 'afe-citation-editor-empty' }, nls.localize('ai-focused-editor/sources/citations-empty', 'No citations yet. Add one below.'))
         : React.createElement(
           'ul',
           { className: 'afe-citation-editor-rows' },
@@ -265,23 +286,28 @@ export class CitationEditorWidget extends ReactWidget implements Navigatable {
         React.createElement(
           'button',
           { className: 'theia-button secondary', type: 'button', onClick: () => this.addRow() },
-          'Add citation'
+          nls.localize('ai-focused-editor/sources/add-citation', 'Add citation')
         ),
         React.createElement(
           'button',
           { className: 'theia-button main', type: 'button', onClick: () => { void this.save(); } },
-          this.dirty ? 'Save*' : 'Save'
+          this.dirty
+            ? nls.localize('ai-focused-editor/sources/save-dirty', 'Save*')
+            : nls.localize('ai-focused-editor/sources/save', 'Save')
         ),
         React.createElement(
           'button',
           { className: 'theia-button secondary', type: 'button', onClick: () => { void this.load(); } },
-          'Reload from disk'
+          nls.localize('ai-focused-editor/sources/reload-from-disk', 'Reload from disk')
         )
       ),
       React.createElement(
         'p',
         { className: 'afe-citation-editor-help' },
-        'Saving writes pure YAML and preserves the file header, the version key, and comments. Use "Open With..." to edit the raw file.'
+        nls.localize(
+          'ai-focused-editor/sources/citations-help',
+          'Saving writes pure YAML and preserves the file header, the version key, and comments. Use "Open With..." to edit the raw file.'
+        )
       )
     );
   }
@@ -308,21 +334,37 @@ export class CitationEditorWidget extends ReactWidget implements Navigatable {
       React.createElement(
         'div',
         { className: 'afe-citation-editor-row-head' },
-        this.renderInput('Id', row, index, 'id', 'stable slug, e.g. bg-2-47'),
+        this.renderInput(
+          nls.localize('ai-focused-editor/sources/field-id-label', 'Id'),
+          row, index, 'id',
+          nls.localize('ai-focused-editor/sources/field-id-placeholder', 'stable slug, e.g. bg-2-47')
+        ),
         React.createElement(
           'button',
           {
             className: 'theia-button secondary afe-citation-editor-delete',
             type: 'button',
-            title: 'Delete this citation',
+            title: nls.localize('ai-focused-editor/sources/delete-citation-title', 'Delete this citation'),
             onClick: () => this.deleteRow(index)
           },
-          'Delete'
+          nls.localize('ai-focused-editor/sources/delete-button', 'Delete')
         )
       ),
-      this.renderInput('Title', row, index, 'title', 'display title'),
-      this.renderInput('Source', row, index, 'source', 'workspace-relative source path or reference'),
-      this.renderTextarea('Note', row, index, 'note', 'free-form note')
+      this.renderInput(
+        nls.localize('ai-focused-editor/sources/field-title-label', 'Title'),
+        row, index, 'title',
+        nls.localize('ai-focused-editor/sources/field-title-placeholder', 'display title')
+      ),
+      this.renderInput(
+        nls.localize('ai-focused-editor/sources/field-source-label', 'Source'),
+        row, index, 'source',
+        nls.localize('ai-focused-editor/sources/field-source-placeholder', 'workspace-relative source path or reference')
+      ),
+      this.renderTextarea(
+        nls.localize('ai-focused-editor/sources/field-note-label', 'Note'),
+        row, index, 'note',
+        nls.localize('ai-focused-editor/sources/citation-note-placeholder', 'free-form note')
+      )
     );
   }
 

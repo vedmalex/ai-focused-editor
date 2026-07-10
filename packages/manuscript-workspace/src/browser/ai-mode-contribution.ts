@@ -6,6 +6,7 @@ import {
   MenuModelRegistry,
   MessageService
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 import URI from '@theia/core/lib/common/uri';
 import {
@@ -23,20 +24,29 @@ import {
 } from './ai-focused-editor-menu';
 
 export namespace AiModeCommands {
-  export const SHOW_PROJECT_AI_MODES: Command = {
-    id: 'ai-focused-editor.aiModes.show',
-    label: 'AI Focused Editor: Show Project AI Modes'
-  };
+  export const SHOW_PROJECT_AI_MODES: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.aiModes.show',
+      label: 'AI Focused Editor: Show Project AI Modes'
+    },
+    'ai-focused-editor/ai-modes/show-project-modes'
+  );
 
-  export const COPY_PROJECT_AI_MODES: Command = {
-    id: 'ai-focused-editor.aiModes.copySummary',
-    label: 'AI Focused Editor: Copy Project AI Mode Summary'
-  };
+  export const COPY_PROJECT_AI_MODES: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.aiModes.copySummary',
+      label: 'AI Focused Editor: Copy Project AI Mode Summary'
+    },
+    'ai-focused-editor/ai-modes/copy-project-modes'
+  );
 
-  export const OPEN_PROJECT_AI_MODES_FILE: Command = {
-    id: 'ai-focused-editor.aiModes.openFile',
-    label: 'AI Focused Editor: Open Project AI Modes File'
-  };
+  export const OPEN_PROJECT_AI_MODES_FILE: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.aiModes.openFile',
+      label: 'AI Focused Editor: Open Project AI Modes File'
+    },
+    'ai-focused-editor/ai-modes/open-project-modes-file'
+  );
 }
 
 @injectable()
@@ -82,11 +92,11 @@ export class AiModeContribution implements CommandContribution, MenuContribution
     const snapshot = await this.aiModes.refresh();
     const warningCount = snapshot.diagnostics.filter(diagnostic => diagnostic.severity !== 'info').length;
     const summary = snapshot.modes.length > 0
-      ? `${snapshot.modes.length} project AI mode(s): ${snapshot.modes.map(mode => mode.id).join(', ')}`
-      : 'No project AI modes loaded.';
+      ? nls.localize('ai-focused-editor/ai-modes/modes-summary', '{0} project AI mode(s): {1}', snapshot.modes.length, snapshot.modes.map(mode => mode.id).join(', '))
+      : nls.localize('ai-focused-editor/ai-modes/no-modes-loaded', 'No project AI modes loaded.');
 
     if (warningCount > 0) {
-      await this.messages.warn(`${summary} ${warningCount} diagnostic(s).`);
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/modes-summary-with-diagnostics', '{0} {1} diagnostic(s).', summary, warningCount));
       return;
     }
     await this.messages.info(summary);
@@ -95,13 +105,13 @@ export class AiModeContribution implements CommandContribution, MenuContribution
   protected async copyProjectAiModes(): Promise<void> {
     const snapshot = await this.aiModes.refresh();
     await this.clipboard.writeText(this.formatModes(snapshot.modes));
-    await this.messages.info(`Copied ${snapshot.modes.length} project AI mode(s) to clipboard.`);
+    await this.messages.info(nls.localize('ai-focused-editor/ai-modes/modes-copied', 'Copied {0} project AI mode(s) to clipboard.', snapshot.modes.length));
   }
 
   protected async openProjectAiModesFile(): Promise<void> {
     const snapshot = await this.aiModes.refresh();
     if (!snapshot.sourceUri) {
-      await this.messages.warn('Open a manuscript workspace before opening project AI modes.');
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/open-workspace-first', 'Open a manuscript workspace before opening project AI modes.'));
       return;
     }
     await open(this.openerService, new URI(snapshot.sourceUri));

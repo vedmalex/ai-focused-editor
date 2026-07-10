@@ -7,6 +7,7 @@ import {
   ResolvedAIContextVariable
 } from '@theia/ai-core';
 import { injectable, inject } from '@theia/core/shared/inversify';
+import { nls } from '@theia/core/lib/common/nls';
 import URI from '@theia/core/lib/common/uri';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
@@ -31,8 +32,11 @@ const MAX_CHAPTER_CHARS = 24000;
 export const MANUSCRIPT_CONTEXT_VARIABLE: AIContextVariable = {
   id: 'ai-focused-editor.manuscript-context',
   name: 'manuscript',
-  label: 'Manuscript',
-  description: 'Whole-project context: manifest, diagnostics, entities, and source summary.',
+  label: nls.localize('ai-focused-editor/workspace/var-manuscript-label', 'Manuscript'),
+  description: nls.localize(
+    'ai-focused-editor/workspace/var-manuscript-description',
+    'Whole-project context: manifest, diagnostics, entities, and source summary.'
+  ),
   iconClasses: ['fa', 'fa-book'],
   isContextVariable: true
 };
@@ -40,8 +44,11 @@ export const MANUSCRIPT_CONTEXT_VARIABLE: AIContextVariable = {
 export const CHAPTER_CONTEXT_VARIABLE: AIContextVariable = {
   id: 'ai-focused-editor.chapter-context',
   name: 'chapter',
-  label: 'Chapter',
-  description: 'A single chapter\'s Markdown. Defaults to the active editor; pass a workspace-relative path as argument (#chapter:content/chapter-01.md).',
+  label: nls.localize('ai-focused-editor/workspace/var-chapter-label', 'Chapter'),
+  description: nls.localize(
+    'ai-focused-editor/workspace/var-chapter-description',
+    'A single chapter\'s Markdown. Defaults to the active editor; pass a workspace-relative path as argument (#chapter:content/chapter-01.md).'
+  ),
   iconClasses: ['fa', 'fa-file-text-o'],
   isContextVariable: true
 };
@@ -49,8 +56,11 @@ export const CHAPTER_CONTEXT_VARIABLE: AIContextVariable = {
 export const ENTITY_CONTEXT_VARIABLE: AIContextVariable = {
   id: 'ai-focused-editor.entity-context',
   name: 'entity',
-  label: 'Entity Card',
-  description: 'One knowledge-base card by id (#entity:krishna) with all fields.',
+  label: nls.localize('ai-focused-editor/workspace/var-entity-label', 'Entity Card'),
+  description: nls.localize(
+    'ai-focused-editor/workspace/var-entity-description',
+    'One knowledge-base card by id (#entity:krishna) with all fields.'
+  ),
   iconClasses: ['fa', 'fa-user'],
   isContextVariable: true
 };
@@ -58,8 +68,11 @@ export const ENTITY_CONTEXT_VARIABLE: AIContextVariable = {
 export const ENTITIES_CONTEXT_VARIABLE: AIContextVariable = {
   id: 'ai-focused-editor.entities-context',
   name: 'entities',
-  label: 'All Entities',
-  description: 'Compact roster of every character, term, artifact, and location card.',
+  label: nls.localize('ai-focused-editor/workspace/var-entities-label', 'All Entities'),
+  description: nls.localize(
+    'ai-focused-editor/workspace/var-entities-description',
+    'Compact roster of every character, term, artifact, and location card.'
+  ),
   iconClasses: ['fa', 'fa-users'],
   isContextVariable: true
 };
@@ -67,8 +80,11 @@ export const ENTITIES_CONTEXT_VARIABLE: AIContextVariable = {
 export const SOURCES_CONTEXT_VARIABLE: AIContextVariable = {
   id: 'ai-focused-editor.sources-context',
   name: 'sources',
-  label: 'Sources & Citations',
-  description: 'Source files, citations, and excerpts registered in the workspace.',
+  label: nls.localize('ai-focused-editor/workspace/var-sources-label', 'Sources & Citations'),
+  description: nls.localize(
+    'ai-focused-editor/workspace/var-sources-description',
+    'Source files, citations, and excerpts registered in the workspace.'
+  ),
   iconClasses: ['fa', 'fa-quote-right'],
   isContextVariable: true
 };
@@ -76,8 +92,11 @@ export const SOURCES_CONTEXT_VARIABLE: AIContextVariable = {
 export const OUTLINE_CONTEXT_VARIABLE: AIContextVariable = {
   id: 'ai-focused-editor.outline-context',
   name: 'outline',
-  label: 'Book Outline',
-  description: 'Manifest structure plus the heading outline of every included chapter.',
+  label: nls.localize('ai-focused-editor/workspace/var-outline-label', 'Book Outline'),
+  description: nls.localize(
+    'ai-focused-editor/workspace/var-outline-description',
+    'Manifest structure plus the heading outline of every included chapter.'
+  ),
   iconClasses: ['fa', 'fa-list'],
   isContextVariable: true
 };

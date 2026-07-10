@@ -55,53 +55,89 @@ const WORKSPACE_VALIDATION_OWNER = 'ai-focused-editor.workspace';
 const MAX_SELECTION_PREVIEW_LENGTH = 240;
 
 export namespace AiFocusedEditorCommands {
-  export const VALIDATE_WORKSPACE: Command = {
-    id: 'ai-focused-editor.workspace.validate',
-    category: 'AI Focused Editor',
-    label: 'Validate Manuscript Workspace'
-  };
+  // en labels stay inline as the source of truth; ru comes from
+  // i18n/ru/workspace.json keyed by `ai-focused-editor/workspace/*`.
+  const CATEGORY_KEY = 'ai-focused-editor/workspace/category';
 
-  export const IMPROVE_SELECTION: Command = {
-    id: 'ai-focused-editor.ai.improveSelection',
-    category: 'AI Focused Editor',
-    label: 'Improve Selected Text'
-  };
+  export const VALIDATE_WORKSPACE: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.workspace.validate',
+      category: 'AI Focused Editor',
+      label: 'Validate Manuscript Workspace'
+    },
+    'ai-focused-editor/workspace/validate',
+    CATEGORY_KEY
+  );
 
-  export const CHECK_CONSISTENCY: Command = {
-    id: 'ai-focused-editor.ai.checkConsistency',
-    category: 'AI Focused Editor',
-    label: 'Check Manuscript Consistency'
-  };
+  export const IMPROVE_SELECTION: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.ai.improveSelection',
+      category: 'AI Focused Editor',
+      label: 'Improve Selected Text'
+    },
+    'ai-focused-editor/workspace/improve-selection',
+    CATEGORY_KEY
+  );
 
-  export const COPY_MANUSCRIPT_CONTEXT: Command = {
-    id: 'ai-focused-editor.ai.copyManuscriptContext',
-    category: 'AI Focused Editor',
-    label: 'Copy Manuscript AI Context'
-  };
+  export const CHECK_CONSISTENCY: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.ai.checkConsistency',
+      category: 'AI Focused Editor',
+      label: 'Check Manuscript Consistency'
+    },
+    'ai-focused-editor/workspace/check-consistency',
+    CATEGORY_KEY
+  );
 
-  export const VERIFY_AI_PROFILE: Command = {
-    id: 'ai-focused-editor.ai.verifyProfile',
-    category: 'AI Focused Editor',
-    label: 'Verify AI Profile'
-  };
+  export const COPY_MANUSCRIPT_CONTEXT: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.ai.copyManuscriptContext',
+      category: 'AI Focused Editor',
+      label: 'Copy Manuscript AI Context'
+    },
+    'ai-focused-editor/workspace/copy-context',
+    CATEGORY_KEY
+  );
 
-  export const TOGGLE_FOCUS_MODE: Command = {
-    id: 'ai-focused-editor.focusMode.toggle',
-    category: 'AI Focused Editor',
-    label: 'Toggle Focus Mode'
-  };
+  export const VERIFY_AI_PROFILE: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.ai.verifyProfile',
+      category: 'AI Focused Editor',
+      label: 'Verify AI Profile'
+    },
+    'ai-focused-editor/workspace/verify-profile',
+    CATEGORY_KEY
+  );
 
-  export const SUGGEST_COREFERENCE: Command = {
-    id: 'ai-focused-editor.ai.suggestCoreference',
-    category: 'AI Focused Editor',
-    label: 'Suggest Coreference Tags'
-  };
+  export const TOGGLE_FOCUS_MODE: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.focusMode.toggle',
+      category: 'AI Focused Editor',
+      label: 'Toggle Focus Mode'
+    },
+    'ai-focused-editor/workspace/toggle-focus-mode',
+    CATEGORY_KEY
+  );
 
-  export const AI_REVIEW_CHAPTER: Command = {
-    id: 'ai-focused-editor.ai.reviewChapter',
-    category: 'AI Focused Editor',
-    label: 'AI Review Current Chapter'
-  };
+  export const SUGGEST_COREFERENCE: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.ai.suggestCoreference',
+      category: 'AI Focused Editor',
+      label: 'Suggest Coreference Tags'
+    },
+    'ai-focused-editor/workspace/suggest-coreference',
+    CATEGORY_KEY
+  );
+
+  export const AI_REVIEW_CHAPTER: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.ai.reviewChapter',
+      category: 'AI Focused Editor',
+      label: 'AI Review Current Chapter'
+    },
+    'ai-focused-editor/workspace/review-chapter',
+    CATEGORY_KEY
+  );
 }
 
 @injectable()
@@ -196,7 +232,10 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     const editorWidget = this.editorManager.currentEditor ?? this.editorManager.activeEditor;
     const editor = editorWidget?.editor;
     if (!editor || !editor.uri.path.toString().endsWith('.md')) {
-      await this.messages.warn('Open a Markdown chapter before requesting an AI review.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/review-needs-markdown',
+        'Open a Markdown chapter before requesting an AI review.'
+      ));
       return;
     }
 
@@ -225,19 +264,28 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     const editorWidget = this.editorManager.currentEditor ?? this.editorManager.activeEditor;
     const editor = editorWidget?.editor;
     if (!editor || !editor.uri.path.toString().endsWith('.md')) {
-      await this.messages.warn('Open a Markdown chapter before running coreference suggestions.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/coref-needs-markdown',
+        'Open a Markdown chapter before running coreference suggestions.'
+      ));
       return;
     }
 
     const profile = await this.aiProfilePreferences.getConfiguredProfile();
     if (!profile) {
-      await this.messages.warn('Configure the AI profile (Model Config view) before running coreference suggestions.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/coref-needs-profile',
+        'Configure the AI profile (Model Config view) before running coreference suggestions.'
+      ));
       return;
     }
 
     const entitySnapshot = await this.narrativeEntities.getSnapshot();
     if (entitySnapshot.entities.length === 0) {
-      await this.messages.warn('No entity cards found under entities/ — coreference tagging needs a knowledge base.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/coref-needs-entities',
+        'No entity cards found under entities/ — coreference tagging needs a knowledge base.'
+      ));
       return;
     }
 
@@ -251,7 +299,7 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     }));
     const mode = await this.aiModes.getMode('coreference-tags');
     const progress = await this.messages.showProgress({
-      text: 'AI Focused Editor: suggesting coreference tags...'
+      text: nls.localize('ai-focused-editor/workspace/coref-progress', 'AI Focused Editor: suggesting coreference tags...')
     });
 
     try {
@@ -287,12 +335,18 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
 
       const updatedText = this.extractMarkdownPayload(result.text);
       if (!updatedText || updatedText === originalText) {
-        await this.messages.info('No coreference suggestions for this chapter.');
+        await this.messages.info(nls.localize(
+          'ai-focused-editor/workspace/coref-none',
+          'No coreference suggestions for this chapter.'
+        ));
         return;
       }
       const ratio = updatedText.length / Math.max(originalText.length, 1);
       if (ratio < 0.7 || ratio > 1.6) {
-        await this.messages.warn('Coreference response deviated too much from the source; discarded for safety.');
+        await this.messages.warn(nls.localize(
+          'ai-focused-editor/workspace/coref-deviated',
+          'Coreference response deviated too much from the source; discarded for safety.'
+        ));
         return;
       }
 
@@ -312,11 +366,17 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
           requestId
         }
       });
-      session.model.changeSet.setTitle('Coreference Tag Suggestions');
+      session.model.changeSet.setTitle(nls.localize(
+        'ai-focused-editor/workspace/coref-title',
+        'Coreference Tag Suggestions'
+      ));
       session.model.changeSet.addElements(changeSetElement);
       await this.revealChatView();
       await changeSetElement.openChange();
-      this.messages.info('Coreference suggestions are ready for review in the diff and chat Change Set.');
+      this.messages.info(nls.localize(
+        'ai-focused-editor/workspace/coref-ready',
+        'Coreference suggestions are ready for review in the diff and chat Change Set.'
+      ));
 
       await this.tryAppendChatEvent({
         kind: 'ai-coreference-suggestion',
@@ -339,7 +399,11 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
           error: error instanceof Error ? error.message : String(error)
         }
       });
-      await this.messages.error(`Coreference suggestion failed: ${error instanceof Error ? error.message : String(error)}`);
+      await this.messages.error(nls.localize(
+        'ai-focused-editor/workspace/coref-failed',
+        'Coreference suggestion failed: {0}',
+        error instanceof Error ? error.message : String(error)
+      ));
     } finally {
       progress.cancel();
     }
@@ -392,7 +456,13 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     const warnings = snapshot.diagnostics.filter(diagnostic => diagnostic.severity === 'warning');
     const files = this.countFiles(snapshot.content);
 
-    const message = `Manuscript workspace: ${files} content file(s), ${errors.length} error(s), ${warnings.length} warning(s).`;
+    const message = nls.localize(
+      'ai-focused-editor/workspace/validate-summary',
+      'Manuscript workspace: {0} content file(s), {1} error(s), {2} warning(s).',
+      files,
+      errors.length,
+      warnings.length
+    );
     if (errors.length > 0) {
       await this.messages.error(message);
       return;
@@ -408,7 +478,10 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     const editorWidget = this.editorManager.currentEditor ?? this.editorManager.activeEditor;
     const editor = editorWidget?.editor;
     if (!editor) {
-      await this.messages.warn('Open a text editor before running Improve Selected.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/improve-needs-editor',
+        'Open a text editor before running Improve Selected.'
+      ));
       return;
     }
 
@@ -416,14 +489,20 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     const selectedText = editor.document.getText(selection);
     const selectedTextForPrompt = selectedText.trim();
     if (!selectedTextForPrompt) {
-      await this.messages.warn('Select text in the active editor before running Improve Selected.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/improve-needs-selection',
+        'Select text in the active editor before running Improve Selected.'
+      ));
       return;
     }
     const originalDocumentText = editor.document.getText();
 
     const profile = await this.aiProfilePreferences.getConfiguredProfile(editor.uri.toString());
     if (!profile) {
-      await this.messages.warn('Configure an AI connection (profile or alias) in AI Model Config before running Improve Selected.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/improve-needs-profile',
+        'Configure an AI connection (profile or alias) in AI Model Config before running Improve Selected.'
+      ));
       return;
     }
 
@@ -439,7 +518,7 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
       }
     });
     const progress = await this.messages.showProgress({
-      text: 'AI Focused Editor: improving selected text...'
+      text: nls.localize('ai-focused-editor/workspace/improve-progress', 'AI Focused Editor: improving selected text...')
     });
 
     try {
@@ -480,7 +559,10 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
 
       const improvedText = result.text.trim();
       if (!improvedText) {
-        await this.messages.warn('AI returned an empty improvement.');
+        await this.messages.warn(nls.localize(
+          'ai-focused-editor/workspace/improve-empty',
+          'AI returned an empty improvement.'
+        ));
         return;
       }
 
@@ -494,17 +576,27 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
         session.id
       );
       if (changeSetElement.targetState === originalDocumentText) {
-        await this.messages.info('AI returned text identical to the current selection.');
+        await this.messages.info(nls.localize(
+          'ai-focused-editor/workspace/improve-identical',
+          'AI returned text identical to the current selection.'
+        ));
         return;
       }
 
       // Surface the proposal through the native Change Set review UI in the chat view
       // (Accept/Reject controls), plus an immediate diff preview of the edit.
-      session.model.changeSet.setTitle('Improve Selected Text');
+      session.model.changeSet.setTitle(nls.localize(
+        'ai-focused-editor/workspace/improve-title',
+        'Improve Selected Text'
+      ));
       session.model.changeSet.addElements(changeSetElement);
       await this.revealChatView();
       await changeSetElement.openChange();
-      this.messages.info(`AI improvement ready for review in the diff and chat Change Set: ${this.previewText(improvedText)}`);
+      this.messages.info(nls.localize(
+        'ai-focused-editor/workspace/improve-ready',
+        'AI improvement ready for review in the diff and chat Change Set: {0}',
+        this.previewText(improvedText)
+      ));
       await this.tryAppendChatEvent({
         kind: 'ai-improve-selection',
         command: AiFocusedEditorCommands.IMPROVE_SELECTION.id,
@@ -529,7 +621,11 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
           error: error instanceof Error ? error.message : String(error)
         }
       });
-      await this.messages.error(`Improve Selected failed: ${error instanceof Error ? error.message : String(error)}`);
+      await this.messages.error(nls.localize(
+        'ai-focused-editor/workspace/improve-failed',
+        'Improve Selected failed: {0}',
+        error instanceof Error ? error.message : String(error)
+      ));
     } finally {
       progress.cancel();
     }
@@ -614,26 +710,36 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
       }
     });
     await this.clipboardService.writeText(context);
-    await this.messages.info(`Manuscript AI context copied to clipboard (${context.length} characters).`);
+    await this.messages.info(nls.localize(
+      'ai-focused-editor/workspace/context-copied',
+      'Manuscript AI context copied to clipboard ({0} characters).',
+      context.length
+    ));
   }
 
   protected async checkManuscriptConsistency(): Promise<void> {
     const profile = await this.aiProfilePreferences.getConfiguredProfile();
     if (!profile) {
-      await this.messages.warn('Configure the AI profile (Model Config view) before running the consistency check.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/consistency-needs-profile',
+        'Configure the AI profile (Model Config view) before running the consistency check.'
+      ));
       return;
     }
 
     const snapshot = await this.manuscriptWorkspace.getSnapshot();
     if (!snapshot.rootUri) {
-      await this.messages.warn('Open a manuscript workspace folder before running the consistency check.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/consistency-needs-workspace',
+        'Open a manuscript workspace folder before running the consistency check.'
+      ));
       return;
     }
 
     const context = await this.manuscriptContextAssembler.assemble();
     const mode = await this.aiModes.getMode('consistency-check');
     const progress = await this.messages.showProgress({
-      text: 'AI Focused Editor: checking manuscript consistency...'
+      text: nls.localize('ai-focused-editor/workspace/consistency-progress', 'AI Focused Editor: checking manuscript consistency...')
     });
 
     try {
@@ -667,12 +773,20 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
 
       const findings = this.parseConsistencyFindings(result.text);
       if (findings === undefined) {
-        await this.messages.warn(`Consistency check returned an unstructured answer: ${this.previewText(result.text)}`);
+        await this.messages.warn(nls.localize(
+          'ai-focused-editor/workspace/consistency-unstructured',
+          'Consistency check returned an unstructured answer: {0}',
+          this.previewText(result.text)
+        ));
       } else {
         this.publishConsistencyMarkers(snapshot.rootUri, findings);
         await this.messages.info(findings.length === 0
-          ? 'AI consistency check found no issues.'
-          : `AI consistency check reported ${findings.length} finding(s); see the Problems view.`);
+          ? nls.localize('ai-focused-editor/workspace/consistency-none', 'AI consistency check found no issues.')
+          : nls.localize(
+              'ai-focused-editor/workspace/consistency-found',
+              'AI consistency check reported {0} finding(s); see the Problems view.',
+              findings.length
+            ));
       }
 
       await this.tryAppendChatEvent({
@@ -693,7 +807,11 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
           error: error instanceof Error ? error.message : String(error)
         }
       });
-      await this.messages.error(`Consistency check failed: ${error instanceof Error ? error.message : String(error)}`);
+      await this.messages.error(nls.localize(
+        'ai-focused-editor/workspace/consistency-failed',
+        'Consistency check failed: {0}',
+        error instanceof Error ? error.message : String(error)
+      ));
     } finally {
       progress.cancel();
     }
@@ -760,12 +878,16 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
   protected async verifyAiProfile(): Promise<void> {
     const status = await this.aiProfilePreferences.getStatus();
     if (!status.profile) {
-      await this.messages.warn(`AI profile is incomplete. Missing: ${status.missing.join(', ')}.`);
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/verify-incomplete',
+        'AI profile is incomplete. Missing: {0}.',
+        status.missing.join(', ')
+      ));
       return;
     }
 
     const progress = await this.messages.showProgress({
-      text: 'AI Focused Editor: verifying AI profile...'
+      text: nls.localize('ai-focused-editor/workspace/verify-progress', 'AI Focused Editor: verifying AI profile...')
     });
     try {
       const result = await this.aiConnection.generate(status.profile, {
@@ -799,7 +921,13 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
           usage: result.usage
         }
       });
-      await this.messages.info(`AI profile verified via ${result.route?.provider ?? status.profile.provider}/${result.route?.model ?? status.profile.model}: ${this.previewText(result.text)}`);
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/workspace/verify-ok',
+        'AI profile verified via {0}/{1}: {2}',
+        result.route?.provider ?? status.profile.provider,
+        result.route?.model ?? status.profile.model,
+        this.previewText(result.text)
+      ));
     } catch (error) {
       await this.tryAppendChatEvent({
         kind: 'ai-command-error',
@@ -810,7 +938,11 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
           error: error instanceof Error ? error.message : String(error)
         }
       });
-      await this.messages.error(`AI profile verification failed: ${error instanceof Error ? error.message : String(error)}`);
+      await this.messages.error(nls.localize(
+        'ai-focused-editor/workspace/verify-failed',
+        'AI profile verification failed: {0}',
+        error instanceof Error ? error.message : String(error)
+      ));
     } finally {
       progress.cancel();
     }
@@ -906,12 +1038,18 @@ export class ManuscriptWorkspaceMenuContribution implements MenuContribution {
       AiFocusedEditorMenus.MAIN,
       nls.localize('ai-focused-editor/menu/manuscript', AI_FOCUSED_EDITOR_MENU_LABEL)
     );
-    menus.registerSubmenu(AiFocusedEditorMenus.SEMANTIC_MARKDOWN, 'Semantic Markdown');
-    menus.registerSubmenu(AiFocusedEditorMenus.BUILD, 'Build');
-    menus.registerSubmenu(AiFocusedEditorMenus.KNOWLEDGE, 'Knowledge');
-    menus.registerSubmenu(AiFocusedEditorMenus.SOURCES, 'Sources');
-    menus.registerSubmenu(AiFocusedEditorMenus.AI_MODES, 'AI Modes');
-    menus.registerSubmenu(AiFocusedEditorMenus.AI_DEBUG, 'AI Debug');
+    menus.registerSubmenu(
+      AiFocusedEditorMenus.SEMANTIC_MARKDOWN,
+      nls.localize('ai-focused-editor/workspace/submenu-semantic-markdown', 'Semantic Markdown')
+    );
+    menus.registerSubmenu(AiFocusedEditorMenus.BUILD, nls.localize('ai-focused-editor/workspace/submenu-build', 'Build'));
+    menus.registerSubmenu(
+      AiFocusedEditorMenus.KNOWLEDGE,
+      nls.localize('ai-focused-editor/workspace/submenu-knowledge', 'Knowledge')
+    );
+    menus.registerSubmenu(AiFocusedEditorMenus.SOURCES, nls.localize('ai-focused-editor/workspace/submenu-sources', 'Sources'));
+    menus.registerSubmenu(AiFocusedEditorMenus.AI_MODES, nls.localize('ai-focused-editor/workspace/submenu-ai-modes', 'AI Modes'));
+    menus.registerSubmenu(AiFocusedEditorMenus.AI_DEBUG, nls.localize('ai-focused-editor/workspace/submenu-ai-debug', 'AI Debug'));
     menus.registerMenuAction(menuPath, {
       commandId: AiFocusedEditorCommands.VALIDATE_WORKSPACE.id
     });
@@ -935,7 +1073,7 @@ export class ManuscriptWorkspaceMenuContribution implements MenuContribution {
     // Outline view; surface its toggle in the product menu.
     menus.registerMenuAction(menuPath, {
       commandId: 'outlineView:toggle',
-      label: 'Chapter Outline',
+      label: nls.localize('ai-focused-editor/workspace/chapter-outline', 'Chapter Outline'),
       order: '0a'
     });
     // Per-folder workbench layout is restored from local storage; a stale
@@ -943,7 +1081,7 @@ export class ManuscriptWorkspaceMenuContribution implements MenuContribution {
     // reset right in the product menu.
     menus.registerMenuAction(menuPath, {
       commandId: 'reset.layout',
-      label: 'Reset Workbench Layout (This Folder)',
+      label: nls.localize('ai-focused-editor/workspace/reset-layout', 'Reset Workbench Layout (This Folder)'),
       order: 'z9'
     });
 

@@ -4,6 +4,7 @@ import { PreferenceScope, PreferenceService } from '@theia/core/lib/common/prefe
 import { LabelProvider } from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import URI from '@theia/core/lib/common/uri';
+import { nls } from '@theia/core/lib/common/nls';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { WorkspaceCommands } from '@theia/workspace/lib/browser';
 import {
@@ -22,18 +23,26 @@ import { AI_FOCUSED_EDITOR_WELCOME_SHOW_ON_STARTUP } from './ai-focused-editor-p
  */
 export namespace WelcomeCommands {
   /** Open/reveal the welcome page as the active main tab. */
-  export const OPEN: Command = {
-    id: 'ai-focused-editor.welcome.open',
-    category: 'AI Focused Editor',
-    label: 'Welcome'
-  };
+  export const OPEN: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.welcome.open',
+      category: 'AI Focused Editor',
+      label: 'Welcome'
+    },
+    'ai-focused-editor/welcome/open',
+    'ai-focused-editor/welcome/category'
+  );
 
   /** Multi-step "New Book..." wizard that materializes a fresh book scaffold. */
-  export const NEW_BOOK: Command = {
-    id: 'ai-focused-editor.book.newBook',
-    category: 'AI Focused Editor',
-    label: 'New Book...'
-  };
+  export const NEW_BOOK: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.book.newBook',
+      category: 'AI Focused Editor',
+      label: 'New Book...'
+    },
+    'ai-focused-editor/welcome/new-book',
+    'ai-focused-editor/welcome/category'
+  );
 }
 
 /**
@@ -82,8 +91,8 @@ export class WelcomeWidget extends ReactWidget {
   @postConstruct()
   protected init(): void {
     this.id = WelcomeWidget.ID;
-    this.title.label = WelcomeWidget.LABEL;
-    this.title.caption = 'AI Focused Editor — Welcome';
+    this.title.label = nls.localize('ai-focused-editor/welcome/title-label', WelcomeWidget.LABEL);
+    this.title.caption = nls.localize('ai-focused-editor/welcome/title-caption', 'AI Focused Editor — Welcome');
     this.title.iconClass = 'codicon codicon-book';
     this.title.closable = true;
     this.addClass('afe-welcome');
@@ -130,7 +139,10 @@ export class WelcomeWidget extends ReactWidget {
       React.createElement(
         'p',
         { className: 'afe-welcome-tagline' },
-        'A writer-first manuscript workspace: draft, structure, and publish your book.'
+        nls.localize(
+          'ai-focused-editor/welcome/tagline',
+          'A writer-first manuscript workspace: draft, structure, and publish your book.'
+        )
       )
     );
   }
@@ -144,29 +156,45 @@ export class WelcomeWidget extends ReactWidget {
     return React.createElement(
       'section',
       { className: 'afe-welcome-section' },
-      React.createElement('h2', { className: 'afe-welcome-section-title' }, 'Start'),
+      React.createElement(
+        'h2',
+        { className: 'afe-welcome-section-title' },
+        nls.localize('ai-focused-editor/welcome/section-start', 'Start')
+      ),
       React.createElement(
         'div',
         { className: 'afe-welcome-actions' },
         this.renderActionButton(
           'codicon codicon-new-file',
-          'Create New Book...',
-          'Materialize a fresh book scaffold with the New Book wizard',
+          nls.localize('ai-focused-editor/welcome/action-new-book-label', 'Create New Book...'),
+          nls.localize(
+            'ai-focused-editor/welcome/action-new-book-title',
+            'Materialize a fresh book scaffold with the New Book wizard'
+          ),
           () => this.runCommand(WelcomeCommands.NEW_BOOK.id),
           true
         ),
         this.renderActionButton(
           'codicon codicon-folder-opened',
-          'Open Folder...',
-          'Open an existing book folder as the workspace',
+          nls.localize('ai-focused-editor/welcome/action-open-folder-label', 'Open Folder...'),
+          nls.localize(
+            'ai-focused-editor/welcome/action-open-folder-title',
+            'Open an existing book folder as the workspace'
+          ),
           () => this.openFolder()
         ),
         this.renderActionButton(
           'codicon codicon-checklist',
-          'Book Doctor...',
+          nls.localize('ai-focused-editor/welcome/action-book-doctor-label', 'Book Doctor...'),
           doctorRegistered
-            ? 'Inspect the current book and create any missing scaffold'
-            : 'Book Doctor is not available in this build',
+            ? nls.localize(
+                'ai-focused-editor/welcome/action-book-doctor-title',
+                'Inspect the current book and create any missing scaffold'
+              )
+            : nls.localize(
+                'ai-focused-editor/welcome/action-book-doctor-unavailable',
+                'Book Doctor is not available in this build'
+              ),
           () => this.runBookDoctor(),
           false,
           !doctorRegistered
@@ -205,7 +233,11 @@ export class WelcomeWidget extends ReactWidget {
     return React.createElement(
       'section',
       { className: 'afe-welcome-section' },
-      React.createElement('h2', { className: 'afe-welcome-section-title' }, 'Recent'),
+      React.createElement(
+        'h2',
+        { className: 'afe-welcome-section-title' },
+        nls.localize('ai-focused-editor/welcome/section-recent', 'Recent')
+      ),
       React.createElement('ul', { className: 'afe-welcome-recent' }, ...rows)
     );
   }
@@ -222,7 +254,7 @@ export class WelcomeWidget extends ReactWidget {
         {
           className: 'afe-welcome-recent-row',
           type: 'button',
-          title: `Open ${path}`,
+          title: nls.localize('ai-focused-editor/welcome/recent-open', 'Open {0}', path),
           onClick: () => this.openWorkspace(uriString)
         },
         React.createElement('span', { className: 'afe-welcome-recent-name' }, name),
@@ -243,7 +275,11 @@ export class WelcomeWidget extends ReactWidget {
           checked: this.showOnStartup,
           onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.setShowOnStartup(event.currentTarget.checked)
         }),
-        React.createElement('span', undefined, 'Show this page when no files are open')
+        React.createElement(
+          'span',
+          undefined,
+          nls.localize('ai-focused-editor/welcome/show-on-startup', 'Show this page when no files are open')
+        )
       )
     );
   }
@@ -268,7 +304,10 @@ export class WelcomeWidget extends ReactWidget {
     const candidates = [WorkspaceCommands.OPEN.id, WorkspaceCommands.OPEN_FOLDER.id, WorkspaceCommands.OPEN_WORKSPACE.id];
     const id = candidates.find(candidate => this.commandRegistry.isEnabled(candidate));
     if (!id) {
-      void this.messages.warn('Opening a folder is not available in this build.');
+      void this.messages.warn(nls.localize(
+        'ai-focused-editor/welcome/open-folder-unavailable',
+        'Opening a folder is not available in this build.'
+      ));
       return;
     }
     void this.commandRegistry.executeCommand(id);
@@ -281,7 +320,10 @@ export class WelcomeWidget extends ReactWidget {
     // The command's own handler is gated on an open workspace (isEnabled);
     // executing a disabled command would throw, so warn instead.
     if (!this.commandRegistry.isEnabled(BOOK_DOCTOR_COMMAND_ID)) {
-      void this.messages.warn('Open a manuscript workspace before running the Book Doctor.');
+      void this.messages.warn(nls.localize(
+        'ai-focused-editor/welcome/book-doctor-needs-workspace',
+        'Open a manuscript workspace before running the Book Doctor.'
+      ));
       return;
     }
     void this.commandRegistry.executeCommand(BOOK_DOCTOR_COMMAND_ID);

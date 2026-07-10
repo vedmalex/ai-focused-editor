@@ -1,4 +1,5 @@
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { nls } from '@theia/core/lib/common/nls';
 import {
   inject,
   injectable,
@@ -38,8 +39,8 @@ export class NarrativeMapWidget extends ReactWidget {
   @postConstruct()
   protected init(): void {
     this.id = NarrativeMapWidget.ID;
-    this.title.label = NarrativeMapWidget.LABEL;
-    this.title.caption = 'AI Focused Editor narrative timeline and relationship map';
+    this.title.label = nls.localize('ai-focused-editor/entities/map-title', NarrativeMapWidget.LABEL);
+    this.title.caption = nls.localize('ai-focused-editor/entities/map-caption', 'AI Focused Editor narrative timeline and relationship map');
     this.title.iconClass = 'fa fa-project-diagram';
     this.title.closable = true;
     this.addClass('afe-narrative-map');
@@ -64,7 +65,9 @@ export class NarrativeMapWidget extends ReactWidget {
       { className: 'afe-narrative-map-body' },
       this.renderHeader(),
       !snapshot
-        ? h('p', { className: 'afe-empty-state' }, this.loading ? 'Loading narrative map...' : 'No data yet.')
+        ? h('p', { className: 'afe-empty-state' }, this.loading
+          ? nls.localize('ai-focused-editor/entities/loading-map', 'Loading narrative map...')
+          : nls.localize('ai-focused-editor/entities/no-data', 'No data yet.'))
         : h(
           React.Fragment,
           undefined,
@@ -79,7 +82,7 @@ export class NarrativeMapWidget extends ReactWidget {
     return h(
       'div',
       { className: 'afe-narrative-map-header' },
-      h('h3', undefined, 'Narrative Map'),
+      h('h3', undefined, nls.localize('ai-focused-editor/entities/map-title', 'Narrative Map')),
       h(
         'button',
         {
@@ -87,7 +90,9 @@ export class NarrativeMapWidget extends ReactWidget {
           disabled: this.loading,
           onClick: () => this.refresh()
         },
-        this.loading ? 'Refreshing...' : 'Refresh'
+        this.loading
+          ? nls.localize('ai-focused-editor/entities/refreshing', 'Refreshing...')
+          : nls.localize('ai-focused-editor/entities/refresh', 'Refresh')
       )
     );
   }
@@ -116,10 +121,10 @@ export class NarrativeMapWidget extends ReactWidget {
     return h(
       'section',
       { className: 'afe-narrative-map-section' },
-      h('h4', undefined, 'Timeline'),
+      h('h4', undefined, nls.localize('ai-focused-editor/entities/timeline', 'Timeline')),
       this.renderOwnership(snapshot.ownership),
       snapshot.timeline.length === 0
-        ? h('p', { className: 'afe-empty-state' }, 'No chapters found in the manifest.')
+        ? h('p', { className: 'afe-empty-state' }, nls.localize('ai-focused-editor/entities/no-chapters', 'No chapters found in the manifest.'))
         : h(
           'div',
           { className: 'afe-narrative-timeline' },
@@ -140,10 +145,10 @@ export class NarrativeMapWidget extends ReactWidget {
         { className: 'afe-narrative-timeline-chapter' },
         h('span', { className: 'afe-narrative-timeline-order' }, `${chapter.order + 1}`),
         h('span', { className: 'afe-narrative-timeline-title' }, chapter.title),
-        chapter.buildIncluded ? undefined : h('span', { className: 'afe-narrative-timeline-flag' }, 'excluded')
+        chapter.buildIncluded ? undefined : h('span', { className: 'afe-narrative-timeline-flag' }, nls.localize('ai-focused-editor/entities/excluded', 'excluded'))
       ),
       chapter.entities.length === 0
-        ? h('span', { className: 'afe-narrative-chip-empty' }, 'no tagged entities')
+        ? h('span', { className: 'afe-narrative-chip-empty' }, nls.localize('ai-focused-editor/entities/no-tagged-entities', 'no tagged entities'))
         : h(
           'div',
           { className: 'afe-narrative-chip-row' },
@@ -167,7 +172,7 @@ export class NarrativeMapWidget extends ReactWidget {
     return h(
       'div',
       { className: 'afe-narrative-ownership' },
-      h('h5', undefined, 'Artifact ownership'),
+      h('h5', undefined, nls.localize('ai-focused-editor/entities/artifact-ownership', 'Artifact ownership')),
       ...ownership.map(transfer => this.renderOwnershipTransfer(transfer))
     );
   }
@@ -204,9 +209,9 @@ export class NarrativeMapWidget extends ReactWidget {
     if (entry.from && entry.to) {
       range = ` (${entry.from} → ${entry.to})`;
     } else if (entry.from) {
-      range = ` (from ${entry.from})`;
+      range = nls.localize('ai-focused-editor/entities/ownership-from', ' (from {0})', entry.from);
     } else if (entry.to) {
-      range = ` (until ${entry.to})`;
+      range = nls.localize('ai-focused-editor/entities/ownership-until', ' (until {0})', entry.to);
     }
     const note = entry.note ? ` — ${entry.note}` : '';
     return `${range}${note}`;
@@ -219,16 +224,16 @@ export class NarrativeMapWidget extends ReactWidget {
     return h(
       'section',
       { className: 'afe-narrative-map-section' },
-      h('h4', undefined, 'Relations'),
+      h('h4', undefined, nls.localize('ai-focused-editor/entities/relations', 'Relations')),
       truncated
         ? h(
           'p',
           { className: 'afe-narrative-truncation' },
-          `Showing the top ${nodes.length} of ${totalEntities} entities by appearances.`
+          nls.localize('ai-focused-editor/entities/showing-top', 'Showing the top {0} of {1} entities by appearances.', nodes.length, totalEntities)
         )
         : undefined,
       nodes.length < 2
-        ? h('p', { className: 'afe-empty-state' }, 'Not enough co-occurring entities to draw a graph.')
+        ? h('p', { className: 'afe-empty-state' }, nls.localize('ai-focused-editor/entities/not-enough-entities', 'Not enough co-occurring entities to draw a graph.'))
         : this.renderGraph(nodes, relations)
     );
   }
@@ -256,7 +261,7 @@ export class NarrativeMapWidget extends ReactWidget {
           className: 'afe-narrative-graph-svg',
           viewBox: `0 0 ${SVG_SIZE} ${SVG_SIZE}`,
           role: 'img',
-          'aria-label': 'Entity co-occurrence graph'
+          'aria-label': nls.localize('ai-focused-editor/entities/graph-aria', 'Entity co-occurrence graph')
         },
         h('g', { className: 'afe-narrative-graph-edges' }, ...relations.map(edge =>
           this.renderEdge(edge, positions, maxWeight))),
@@ -288,7 +293,7 @@ export class NarrativeMapWidget extends ReactWidget {
         y2: target.y,
         strokeWidth
       },
-      h('title', undefined, `${edge.sourceLabel} ↔ ${edge.targetLabel}: ${edge.weight} chapters`)
+      h('title', undefined, nls.localize('ai-focused-editor/entities/edge-title', '{0} ↔ {1}: {2} chapters', edge.sourceLabel, edge.targetLabel, edge.weight))
     );
   }
 
@@ -312,7 +317,7 @@ export class NarrativeMapWidget extends ReactWidget {
       h(
         'circle',
         { className: 'afe-narrative-graph-dot', cx: position.x, cy: position.y, r: radius },
-        h('title', undefined, `${node.label} (${node.appearances} appearances)`)
+        h('title', undefined, nls.localize('ai-focused-editor/entities/node-title', '{0} ({1} appearances)', node.label, node.appearances))
       ),
       h(
         'text',

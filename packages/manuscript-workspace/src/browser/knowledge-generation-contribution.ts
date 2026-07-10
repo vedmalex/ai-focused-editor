@@ -7,6 +7,7 @@ import {
   MessageService
 } from '@theia/core/lib/common';
 import URI from '@theia/core/lib/common/uri';
+import { nls } from '@theia/core/lib/common/nls';
 import {
   open,
   OpenerService
@@ -40,23 +41,37 @@ import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 const AI_FOCUSED_EDITOR_CATEGORY = 'AI Focused Editor';
 
 export namespace AiFocusedEditorKnowledgeCommands {
-  export const SUMMARIZE_CHAPTER: Command = {
-    id: 'ai-focused-editor.knowledge.summarizeChapter',
-    category: AI_FOCUSED_EDITOR_CATEGORY,
-    label: 'Summarize Current Chapter'
-  };
+  const CATEGORY_KEY = 'ai-focused-editor/knowledge/category';
 
-  export const GENERATE_SCENE_PLAN: Command = {
-    id: 'ai-focused-editor.knowledge.generateScenePlan',
-    category: AI_FOCUSED_EDITOR_CATEGORY,
-    label: 'Generate Scene Plan for Current Chapter'
-  };
+  export const SUMMARIZE_CHAPTER: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.knowledge.summarizeChapter',
+      category: AI_FOCUSED_EDITOR_CATEGORY,
+      label: 'Summarize Current Chapter'
+    },
+    'ai-focused-editor/knowledge/summarize-chapter',
+    CATEGORY_KEY
+  );
 
-  export const GENERATE_AUTHOR_QUESTIONS: Command = {
-    id: 'ai-focused-editor.knowledge.generateAuthorQuestions',
-    category: AI_FOCUSED_EDITOR_CATEGORY,
-    label: 'Generate Author Questions for Current Chapter'
-  };
+  export const GENERATE_SCENE_PLAN: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.knowledge.generateScenePlan',
+      category: AI_FOCUSED_EDITOR_CATEGORY,
+      label: 'Generate Scene Plan for Current Chapter'
+    },
+    'ai-focused-editor/knowledge/generate-scene-plan',
+    CATEGORY_KEY
+  );
+
+  export const GENERATE_AUTHOR_QUESTIONS: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.knowledge.generateAuthorQuestions',
+      category: AI_FOCUSED_EDITOR_CATEGORY,
+      label: 'Generate Author Questions for Current Chapter'
+    },
+    'ai-focused-editor/knowledge/generate-author-questions',
+    CATEGORY_KEY
+  );
 }
 
 interface KnowledgeCommandConfig {
@@ -191,34 +206,48 @@ export class KnowledgeGenerationContribution implements CommandContribution, Men
 
   protected async generate(kind: KnowledgeKind): Promise<void> {
     const config = KNOWLEDGE_COMMANDS[kind];
+    const artifactLabel = nls.localize(`ai-focused-editor/knowledge/title-${kind}`, config.title);
+    const progressLabel = nls.localize(`ai-focused-editor/knowledge/progress-${kind}`, config.progressLabel);
 
     const editorWidget = this.editorManager.currentEditor ?? this.editorManager.activeEditor;
     const editor = editorWidget?.editor;
     if (!editor) {
-      await this.messages.warn('Open a Markdown chapter in the editor before generating knowledge.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/knowledge/open-markdown-first',
+        'Open a Markdown chapter in the editor before generating knowledge.'
+      ));
       return;
     }
     if (!this.isMarkdown(editor)) {
-      await this.messages.warn('The active editor is not a Markdown chapter.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/knowledge/not-markdown',
+        'The active editor is not a Markdown chapter.'
+      ));
       return;
     }
 
     const chapterText = editor.document.getText().trim();
     if (!chapterText) {
-      await this.messages.warn('The active chapter is empty.');
+      await this.messages.warn(nls.localize('ai-focused-editor/knowledge/chapter-empty', 'The active chapter is empty.'));
       return;
     }
 
     const documentUri = editor.uri.toString();
     const profile = await this.aiProfilePreferences.getConfiguredProfile(documentUri);
     if (!profile) {
-      await this.messages.warn('Configure the AI profile (Model Config view) before generating knowledge.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/knowledge/configure-profile',
+        'Configure the AI profile (Model Config view) before generating knowledge.'
+      ));
       return;
     }
 
     const root = await this.getWorkspaceRoot();
     if (!root) {
-      await this.messages.warn('Open a manuscript workspace folder before generating knowledge.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/knowledge/open-workspace',
+        'Open a manuscript workspace folder before generating knowledge.'
+      ));
       return;
     }
 
@@ -227,7 +256,7 @@ export class KnowledgeGenerationContribution implements CommandContribution, Men
     const mode = await this.aiModes.getMode(config.modeId);
 
     const progress = await this.messages.showProgress({
-      text: `AI Focused Editor: ${config.progressLabel}...`
+      text: nls.localize('ai-focused-editor/knowledge/progress', 'AI Focused Editor: {0}...', progressLabel)
     });
     try {
       const chain = await this.aiProfilePreferences.getFailoverChain(documentUri);
@@ -272,11 +301,19 @@ export class KnowledgeGenerationContribution implements CommandContribution, Men
       const targetUri = await this.writeKnowledgeFile(root, config.subdir, slug, stringify(coercion.document));
 
       if (coercion.parsed) {
-        await this.messages.info(`${config.title} written to ${relativeTarget}.`);
+        await this.messages.info(nls.localize(
+          'ai-focused-editor/knowledge/written',
+          '{0} written to {1}.',
+          artifactLabel,
+          relativeTarget
+        ));
       } else {
-        await this.messages.warn(
-          `${config.title} response was not valid JSON; stored the raw model text in ${relativeTarget}.`
-        );
+        await this.messages.warn(nls.localize(
+          'ai-focused-editor/knowledge/not-json',
+          '{0} response was not valid JSON; stored the raw model text in {1}.',
+          artifactLabel,
+          relativeTarget
+        ));
       }
 
       await this.tryOpen(targetUri);
@@ -302,7 +339,12 @@ export class KnowledgeGenerationContribution implements CommandContribution, Men
           error: error instanceof Error ? error.message : String(error)
         }
       });
-      await this.messages.error(`${config.title} failed: ${error instanceof Error ? error.message : String(error)}`);
+      await this.messages.error(nls.localize(
+        'ai-focused-editor/knowledge/failed',
+        '{0} failed: {1}',
+        artifactLabel,
+        error instanceof Error ? error.message : String(error)
+      ));
     } finally {
       progress.cancel();
     }

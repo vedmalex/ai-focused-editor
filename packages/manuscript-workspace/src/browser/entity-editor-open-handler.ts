@@ -15,6 +15,7 @@ import {
   NavigatableWidgetOpenHandler,
   WidgetOpenerOptions
 } from '@theia/core/lib/browser';
+import { nls } from '@theia/core/lib/common/nls';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import { EDITOR_CONTEXT_MENU } from '@theia/editor/lib/browser';
 import {
@@ -45,7 +46,7 @@ function isEntityYaml(uri: URI): boolean {
 @injectable()
 export class EntityEditorOpenHandler extends NavigatableWidgetOpenHandler<EntityEditorWidget> {
   readonly id = EntityEditorWidget.FACTORY_ID;
-  readonly label = 'Entity Form Editor';
+  readonly label = nls.localize('ai-focused-editor/entities/open-handler-label', 'Entity Form Editor');
 
   canHandle(uri: URI, _options?: WidgetOpenerOptions): number {
     return isEntityYaml(uri) ? ENTITY_EDITOR_PRIORITY : 0;
@@ -53,15 +54,21 @@ export class EntityEditorOpenHandler extends NavigatableWidgetOpenHandler<Entity
 }
 
 export namespace EntityEditorCommands {
-  export const OPEN_WITH_FORM_EDITOR: Command = {
-    id: 'ai-focused-editor.entity.openFormEditor',
-    label: 'AI Focused Editor: Open With Form Editor'
-  };
+  export const OPEN_WITH_FORM_EDITOR: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.entity.openFormEditor',
+      label: 'AI Focused Editor: Open With Form Editor'
+    },
+    'ai-focused-editor/entities/open-form-editor'
+  );
 
-  export const OPEN_RAW_YAML: Command = {
-    id: 'ai-focused-editor.entity.openRawYaml',
-    label: 'AI Focused Editor: Open Entity YAML (Raw)'
-  };
+  export const OPEN_RAW_YAML: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.entity.openRawYaml',
+      label: 'AI Focused Editor: Open Entity YAML (Raw)'
+    },
+    'ai-focused-editor/entities/open-raw-yaml'
+  );
 }
 
 @injectable()
@@ -88,7 +95,10 @@ export class EntityEditorCommandContribution implements CommandContribution, Men
       execute: async (arg?: unknown) => {
         const uri = this.resolveUri(arg);
         if (!uri || !isEntityYaml(uri)) {
-          await this.messageService.warn('Open Form Editor is only available for entity YAML files (entities/**/*.yaml).');
+          await this.messageService.warn(nls.localize(
+            'ai-focused-editor/entities/only-entity-yaml',
+            'Open Form Editor is only available for entity YAML files (entities/**/*.yaml).'
+          ));
           return;
         }
         await this.openHandler.open(uri);
@@ -101,7 +111,7 @@ export class EntityEditorCommandContribution implements CommandContribution, Men
       execute: async (arg?: unknown) => {
         const uri = this.resolveUri(arg);
         if (!uri) {
-          await this.messageService.warn('Select an entity YAML file first.');
+          await this.messageService.warn(nls.localize('ai-focused-editor/entities/select-entity-first', 'Select an entity YAML file first.'));
           return;
         }
         // EditorManager is the text-editor open handler, so this bypasses the

@@ -4,6 +4,7 @@ import {
   CommandRegistry,
   DisposableCollection
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import URI from '@theia/core/lib/common/uri';
 import {
   FrontendApplicationContribution,
@@ -192,12 +193,15 @@ export class SemanticLinkContribution implements FrontendApplicationContribution
   }
 
   protected entityTooltip(entity: NarrativeEntity): string {
-    return `Open ${entity.label} (${entity.kind})`;
+    // `entity.kind` is a data enum value (semantic tag kind), left untranslated.
+    return nls.localize('ai-focused-editor/editor/link-open-entity', 'Open {0} ({1})', entity.label, entity.kind);
   }
 
   protected relativeTooltip(resolved: ResolvedRelativeLink): string {
     const name = resolved.path.slice(resolved.path.lastIndexOf('/') + 1);
-    return resolved.anchor ? `Open ${name}#${resolved.anchor}` : `Open ${name}`;
+    return resolved.anchor
+      ? nls.localize('ai-focused-editor/editor/link-open-anchor', 'Open {0}#{1}', name, resolved.anchor)
+      : nls.localize('ai-focused-editor/editor/link-open-file', 'Open {0}', name);
   }
 
   protected openTargetUri(uri: string, anchor?: string): monaco.Uri {

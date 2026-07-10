@@ -3,21 +3,28 @@ import {
   CommandRegistry,
   MenuModelRegistry
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { NarrativeMapWidget } from './narrative-map-widget';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 
 export namespace NarrativeMapCommands {
-  export const OPEN: Command = {
-    id: 'ai-focused-editor.narrative.openMap',
-    label: 'AI Focused Editor: Open Narrative Map'
-  };
+  export const OPEN: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.narrative.openMap',
+      label: 'AI Focused Editor: Open Narrative Map'
+    },
+    'ai-focused-editor/entities/open-map'
+  );
 
-  export const REFRESH: Command = {
-    id: 'ai-focused-editor.narrative.refreshMap',
-    label: 'AI Focused Editor: Refresh Narrative Map'
-  };
+  export const REFRESH: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.narrative.refreshMap',
+      label: 'AI Focused Editor: Refresh Narrative Map'
+    },
+    'ai-focused-editor/entities/refresh-map'
+  );
 }
 
 @injectable()

@@ -1,5 +1,6 @@
 import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 import { MessageService } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { open, OpenerService } from '@theia/core/lib/browser';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
@@ -48,14 +49,14 @@ const MAX_SELECTION_PREVIEW = 500;
 const HISTORY_LOG_LIMIT = 100;
 
 const HISTORY_KIND_LABELS: Array<{ kind: AiHistoryKind; label: string }> = [
-  { kind: 'chat', label: 'Chat requests' },
-  { kind: 'context-snapshots', label: 'Context snapshots' }
+  { kind: 'chat', label: nls.localize('ai-focused-editor/ai-config/history-chat', 'Chat requests') },
+  { kind: 'context-snapshots', label: nls.localize('ai-focused-editor/ai-config/history-context-snapshots', 'Context snapshots') }
 ];
 
 @injectable()
 export class AiDebugWidget extends ReactWidget {
   static readonly ID = 'ai-focused-editor.ai-debug';
-  static readonly LABEL = 'AI Debug';
+  static readonly LABEL = nls.localize('ai-focused-editor/ai-config/debug-label', 'AI Debug');
 
   @inject(AiProfilePreferenceService)
   protected readonly aiProfilePreferences!: AiProfilePreferenceService;
@@ -94,7 +95,7 @@ export class AiDebugWidget extends ReactWidget {
   protected init(): void {
     this.id = AiDebugWidget.ID;
     this.title.label = AiDebugWidget.LABEL;
-    this.title.caption = 'AI Focused Editor prompt/context/provider inspection';
+    this.title.caption = nls.localize('ai-focused-editor/ai-config/debug-caption', 'AI Focused Editor prompt/context/provider inspection');
     this.title.iconClass = 'fa fa-bug';
     this.title.closable = true;
     this.addClass('afe-ai-debug-widget');
@@ -130,7 +131,7 @@ export class AiDebugWidget extends ReactWidget {
       return;
     }
     await this.clipboard.writeText(this.formatSnapshot(this.snapshot));
-    await this.messages.info('AI debug snapshot copied to clipboard.');
+    await this.messages.info(nls.localize('ai-focused-editor/ai-config/snapshot-copied', 'AI debug snapshot copied to clipboard.'));
   }
 
   async refreshLog(): Promise<void> {
@@ -185,19 +186,19 @@ export class AiDebugWidget extends ReactWidget {
       return;
     }
     await open(this.openerService, fileUri).catch(async () => {
-      await this.messages.warn('Could not open the history JSONL file.');
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-config/open-jsonl-failed', 'Could not open the history JSONL file.'));
     });
   }
 
   async copyLogEntry(record: AiHistoryRecord): Promise<void> {
     await this.clipboard.writeText(JSON.stringify(record, undefined, 2));
-    await this.messages.info('AI history entry copied to clipboard.');
+    await this.messages.info(nls.localize('ai-focused-editor/ai-config/history-entry-copied', 'AI history entry copied to clipboard.'));
   }
 
   protected render(): React.ReactNode {
     const snapshot = this.snapshot;
     if (!snapshot) {
-      return React.createElement('div', { className: 'afe-ai-debug' }, 'Loading AI debug state...');
+      return React.createElement('div', { className: 'afe-ai-debug' }, nls.localize('ai-focused-editor/ai-config/loading-debug', 'Loading AI debug state...'));
     }
 
     return React.createElement(
@@ -206,22 +207,22 @@ export class AiDebugWidget extends ReactWidget {
       React.createElement(
         'div',
         { className: 'afe-ai-debug-actions' },
-        React.createElement('h3', undefined, 'AI Debug'),
+        React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-config/debug-heading', 'AI Debug')),
         React.createElement(
           'button',
           { className: 'theia-button', onClick: () => this.refresh() },
-          'Refresh'
+          nls.localize('ai-focused-editor/ai-config/refresh', 'Refresh')
         ),
         React.createElement(
           'button',
           { className: 'theia-button main', onClick: () => this.copySnapshot() },
-          'Copy Snapshot'
+          nls.localize('ai-focused-editor/ai-config/copy-snapshot', 'Copy Snapshot')
         )
       ),
       this.renderProfile(snapshot.profile),
       this.renderModes(snapshot.modes, snapshot.modeDiagnostics),
       this.renderActiveEditor(snapshot),
-      React.createElement('h4', undefined, `Manuscript Context (${snapshot.manuscriptContext.length} chars)`),
+      React.createElement('h4', undefined, nls.localize('ai-focused-editor/ai-config/manuscript-context', 'Manuscript Context ({0} chars)', snapshot.manuscriptContext.length)),
       React.createElement('pre', { className: 'afe-ai-debug-context' }, this.truncate(snapshot.manuscriptContext, MAX_CONTEXT_PREVIEW)),
       this.renderRequestLog()
     );
@@ -232,7 +233,7 @@ export class AiDebugWidget extends ReactWidget {
     return React.createElement(
       'details',
       { className: 'afe-ai-debug-section afe-ai-debug-log', open: true },
-      React.createElement('summary', undefined, `Request Log (${entries.length})`),
+      React.createElement('summary', undefined, nls.localize('ai-focused-editor/ai-config/request-log', 'Request Log ({0})', entries.length)),
       React.createElement(
         'div',
         { className: 'afe-ai-debug-log-controls' },
@@ -241,7 +242,7 @@ export class AiDebugWidget extends ReactWidget {
           {
             className: 'theia-select',
             value: kind,
-            'aria-label': 'History log kind',
+            'aria-label': nls.localize('ai-focused-editor/ai-config/history-kind-aria', 'History log kind'),
             onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.selectLogKind(event.target.value as AiHistoryKind)
           },
           ...HISTORY_KIND_LABELS.map(entry => React.createElement('option', { key: entry.kind, value: entry.kind }, entry.label))
@@ -252,7 +253,7 @@ export class AiDebugWidget extends ReactWidget {
             {
               className: 'theia-select',
               value: selectedDay ?? '',
-              'aria-label': 'History log day',
+              'aria-label': nls.localize('ai-focused-editor/ai-config/history-day-aria', 'History log day'),
               onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.selectLogDay(event.target.value)
             },
             ...days.map(day => React.createElement('option', { key: day, value: day }, day))
@@ -261,7 +262,7 @@ export class AiDebugWidget extends ReactWidget {
         React.createElement(
           'button',
           { className: 'theia-button', onClick: () => this.refreshLog() },
-          'Refresh'
+          nls.localize('ai-focused-editor/ai-config/refresh', 'Refresh')
         ),
         React.createElement(
           'button',
@@ -270,7 +271,7 @@ export class AiDebugWidget extends ReactWidget {
             disabled: !selectedDay,
             onClick: () => this.openLogFile()
           },
-          'Open JSONL'
+          nls.localize('ai-focused-editor/ai-config/open-jsonl', 'Open JSONL')
         )
       ),
       this.renderRequestLogBody(entries, loading)
@@ -279,13 +280,13 @@ export class AiDebugWidget extends ReactWidget {
 
   protected renderRequestLogBody(entries: AiHistoryRecord[], loading: boolean): React.ReactNode {
     if (loading && entries.length === 0) {
-      return React.createElement('p', { className: 'afe-ai-debug-log-empty' }, 'Loading history...');
+      return React.createElement('p', { className: 'afe-ai-debug-log-empty' }, nls.localize('ai-focused-editor/ai-config/loading-history', 'Loading history...'));
     }
     if (this.logState.days.length === 0) {
-      return React.createElement('p', { className: 'afe-ai-debug-log-empty' }, 'AI actions will be logged here as you use AI features.');
+      return React.createElement('p', { className: 'afe-ai-debug-log-empty' }, nls.localize('ai-focused-editor/ai-config/history-empty', 'AI actions will be logged here as you use AI features.'));
     }
     if (entries.length === 0) {
-      return React.createElement('p', { className: 'afe-ai-debug-log-empty' }, 'No entries recorded for this day.');
+      return React.createElement('p', { className: 'afe-ai-debug-log-empty' }, nls.localize('ai-focused-editor/ai-config/history-no-entries', 'No entries recorded for this day.'));
     }
     return React.createElement(
       'div',
@@ -303,8 +304,8 @@ export class AiDebugWidget extends ReactWidget {
         'summary',
         { className: 'afe-ai-debug-log-summary' },
         React.createElement('span', { className: 'afe-ai-debug-log-time' }, this.formatTime(record.timestamp)),
-        React.createElement('span', { className: 'afe-ai-debug-log-badge' }, record.kind || 'unknown'),
-        React.createElement('span', { className: 'afe-ai-debug-log-command' }, record.command || '(no command)'),
+        React.createElement('span', { className: 'afe-ai-debug-log-badge' }, record.kind || nls.localize('ai-focused-editor/ai-config/unknown', 'unknown')),
+        React.createElement('span', { className: 'afe-ai-debug-log-command' }, record.command || nls.localize('ai-focused-editor/ai-config/no-command', '(no command)')),
         route
           ? React.createElement('span', { className: 'afe-ai-debug-log-route' }, route)
           : undefined,
@@ -318,7 +319,7 @@ export class AiDebugWidget extends ReactWidget {
               void this.copyLogEntry(record);
             }
           },
-          'Copy'
+          nls.localize('ai-focused-editor/ai-config/copy', 'Copy')
         )
       ),
       React.createElement('pre', { className: 'afe-ai-debug-log-json' }, JSON.stringify(record, undefined, 2))
@@ -353,19 +354,19 @@ export class AiDebugWidget extends ReactWidget {
 
   protected renderProfile(profile: AiProfileStatus): React.ReactNode {
     const rows = [
-      ['Configured', profile.configured ? 'yes' : 'no'],
-      ['Provider', profile.summary.provider || 'not set'],
-      ['Model', profile.summary.model || 'not set'],
-      ['Transport', profile.summary.transportKind || 'api'],
-      ['Transport ID', profile.summary.transportId || 'default'],
-      ['Profile ID', profile.summary.profileId || 'default'],
-      ['Endpoint', profile.summary.endpointUrl || 'provider default'],
-      ['API Key', profile.summary.hasApiKey ? 'configured' : 'missing']
+      [nls.localize('ai-focused-editor/ai-config/row-configured', 'Configured'), profile.configured ? nls.localize('ai-focused-editor/ai-config/value-yes', 'yes') : nls.localize('ai-focused-editor/ai-config/value-no', 'no')],
+      [nls.localize('ai-focused-editor/ai-config/row-provider', 'Provider'), profile.summary.provider || nls.localize('ai-focused-editor/ai-config/not-set', 'not set')],
+      [nls.localize('ai-focused-editor/ai-config/row-model', 'Model'), profile.summary.model || nls.localize('ai-focused-editor/ai-config/not-set', 'not set')],
+      [nls.localize('ai-focused-editor/ai-config/row-transport', 'Transport'), profile.summary.transportKind || 'api'],
+      [nls.localize('ai-focused-editor/ai-config/row-transport-id', 'Transport ID'), profile.summary.transportId || nls.localize('ai-focused-editor/ai-config/value-default', 'default')],
+      [nls.localize('ai-focused-editor/ai-config/row-profile-id', 'Profile ID'), profile.summary.profileId || nls.localize('ai-focused-editor/ai-config/value-default', 'default')],
+      [nls.localize('ai-focused-editor/ai-config/row-endpoint', 'Endpoint'), profile.summary.endpointUrl || nls.localize('ai-focused-editor/ai-config/value-provider-default', 'provider default')],
+      [nls.localize('ai-focused-editor/ai-config/row-api-key', 'API Key'), profile.summary.hasApiKey ? nls.localize('ai-focused-editor/ai-config/value-configured', 'configured') : nls.localize('ai-focused-editor/ai-config/value-missing', 'missing')]
     ];
     return React.createElement(
       'section',
       { className: 'afe-ai-debug-section' },
-      React.createElement('h4', undefined, 'Provider/Profile'),
+      React.createElement('h4', undefined, nls.localize('ai-focused-editor/ai-config/provider-profile-heading', 'Provider/Profile')),
       React.createElement(
         'table',
         undefined,
@@ -381,7 +382,7 @@ export class AiDebugWidget extends ReactWidget {
         )
       ),
       profile.missing.length > 0
-        ? React.createElement('p', { className: 'afe-ai-debug-warning' }, `Missing: ${profile.missing.join(', ')}`)
+        ? React.createElement('p', { className: 'afe-ai-debug-warning' }, nls.localize('ai-focused-editor/ai-config/missing-label', 'Missing: {0}', profile.missing.join(', ')))
         : undefined
     );
   }
@@ -390,9 +391,9 @@ export class AiDebugWidget extends ReactWidget {
     return React.createElement(
       'section',
       { className: 'afe-ai-debug-section' },
-      React.createElement('h4', undefined, `Project AI Modes (${modes.length})`),
+      React.createElement('h4', undefined, nls.localize('ai-focused-editor/ai-config/project-ai-modes', 'Project AI Modes ({0})', modes.length)),
       modes.length === 0
-        ? React.createElement('p', undefined, 'No project AI modes loaded.')
+        ? React.createElement('p', undefined, nls.localize('ai-focused-editor/ai-config/no-project-modes', 'No project AI modes loaded.'))
         : React.createElement(
           'ul',
           undefined,
@@ -420,9 +421,9 @@ export class AiDebugWidget extends ReactWidget {
     return React.createElement(
       'section',
       { className: 'afe-ai-debug-section' },
-      React.createElement('h4', undefined, 'Active Editor'),
-      React.createElement('p', undefined, snapshot.activeEditorUri ?? 'No active editor.'),
-      React.createElement('p', undefined, `Selected text: ${snapshot.selectedTextLength} chars`),
+      React.createElement('h4', undefined, nls.localize('ai-focused-editor/ai-config/active-editor', 'Active Editor')),
+      React.createElement('p', undefined, snapshot.activeEditorUri ?? nls.localize('ai-focused-editor/ai-config/no-active-editor', 'No active editor.')),
+      React.createElement('p', undefined, nls.localize('ai-focused-editor/ai-config/selected-text', 'Selected text: {0} chars', snapshot.selectedTextLength)),
       snapshot.selectedTextPreview
         ? React.createElement('pre', undefined, snapshot.selectedTextPreview)
         : undefined

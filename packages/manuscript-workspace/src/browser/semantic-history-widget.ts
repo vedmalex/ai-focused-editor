@@ -1,4 +1,5 @@
 import URI from '@theia/core/lib/common/uri';
+import { nls } from '@theia/core/lib/common/nls';
 import {
   open,
   OpenerService
@@ -23,13 +24,13 @@ const h = React.createElement;
 
 const HISTORY_LIMIT = 50;
 
-/** Maps a normalised git status letter to a human word + chip class. */
-const STATUS_META: Record<string, { label: string; className: string }> = {
-  A: { label: 'added', className: 'added' },
-  M: { label: 'modified', className: 'modified' },
-  D: { label: 'deleted', className: 'deleted' },
-  R: { label: 'renamed', className: 'renamed' },
-  C: { label: 'copied', className: 'renamed' }
+/** Maps a normalised git status letter to a localizable human word + chip class. */
+const STATUS_META: Record<string, { labelKey: string; label: string; className: string }> = {
+  A: { labelKey: 'ai-focused-editor/git/status-added', label: 'added', className: 'added' },
+  M: { labelKey: 'ai-focused-editor/git/status-modified', label: 'modified', className: 'modified' },
+  D: { labelKey: 'ai-focused-editor/git/status-deleted', label: 'deleted', className: 'deleted' },
+  R: { labelKey: 'ai-focused-editor/git/status-renamed', label: 'renamed', className: 'renamed' },
+  C: { labelKey: 'ai-focused-editor/git/status-copied', label: 'copied', className: 'renamed' }
 };
 
 /**
@@ -40,7 +41,7 @@ const STATUS_META: Record<string, { label: string; className: string }> = {
 @injectable()
 export class SemanticHistoryWidget extends ReactWidget {
   static readonly ID = 'ai-focused-editor.semantic-history';
-  static readonly LABEL = 'Semantic History';
+  static readonly LABEL = nls.localize('ai-focused-editor/git/history-title', 'Semantic History');
 
   @inject(GitStatusServiceSymbol)
   protected readonly gitStatus!: GitStatusService;
@@ -59,7 +60,10 @@ export class SemanticHistoryWidget extends ReactWidget {
   protected init(): void {
     this.id = SemanticHistoryWidget.ID;
     this.title.label = SemanticHistoryWidget.LABEL;
-    this.title.caption = 'AI Focused Editor semantic entity history';
+    this.title.caption = nls.localize(
+      'ai-focused-editor/git/history-caption',
+      'AI Focused Editor semantic entity history'
+    );
     this.title.iconClass = 'fa fa-history';
     this.title.closable = true;
     this.addClass('afe-semantic-history');
@@ -94,7 +98,7 @@ export class SemanticHistoryWidget extends ReactWidget {
     return h(
       'div',
       { className: 'afe-semantic-history-header' },
-      h('h3', undefined, 'Semantic History'),
+      h('h3', undefined, nls.localize('ai-focused-editor/git/history-title', 'Semantic History')),
       h(
         'button',
         {
@@ -102,7 +106,9 @@ export class SemanticHistoryWidget extends ReactWidget {
           disabled: this.loading,
           onClick: () => this.refresh()
         },
-        this.loading ? 'Refreshing...' : 'Refresh'
+        this.loading
+          ? nls.localize('ai-focused-editor/git/refreshing', 'Refreshing...')
+          : nls.localize('ai-focused-editor/git/refresh', 'Refresh')
       )
     );
   }
@@ -110,13 +116,30 @@ export class SemanticHistoryWidget extends ReactWidget {
   protected renderContent(): React.ReactNode {
     const result = this.result;
     if (!result) {
-      return h('p', { className: 'afe-empty-state' }, this.loading ? 'Loading semantic history...' : 'No data yet.');
+      return h(
+        'p',
+        { className: 'afe-empty-state' },
+        this.loading
+          ? nls.localize('ai-focused-editor/git/loading', 'Loading semantic history...')
+          : nls.localize('ai-focused-editor/git/no-data', 'No data yet.')
+      );
     }
     if (!result.isRepository) {
-      return h('p', { className: 'afe-empty-state' }, 'Initialize git to track semantic history.');
+      return h(
+        'p',
+        { className: 'afe-empty-state' },
+        nls.localize('ai-focused-editor/git/init-git-hint', 'Initialize git to track semantic history.')
+      );
     }
     if (result.entries.length === 0) {
-      return h('p', { className: 'afe-empty-state' }, 'No commits touch semantic entities or domain files yet.');
+      return h(
+        'p',
+        { className: 'afe-empty-state' },
+        nls.localize(
+          'ai-focused-editor/git/no-semantic-commits',
+          'No commits touch semantic entities or domain files yet.'
+        )
+      );
     }
     return h(
       'div',
@@ -140,7 +163,11 @@ export class SemanticHistoryWidget extends ReactWidget {
           : undefined
       ),
       entry.changes.length === 0
-        ? h('span', { className: 'afe-semantic-history-empty' }, 'no semantic changes')
+        ? h(
+          'span',
+          { className: 'afe-semantic-history-empty' },
+          nls.localize('ai-focused-editor/git/no-semantic-changes', 'no semantic changes')
+        )
         : h(
           'div',
           { className: 'afe-semantic-history-chip-row' },
@@ -150,7 +177,9 @@ export class SemanticHistoryWidget extends ReactWidget {
   }
 
   protected renderChange(entry: SemanticHistoryEntry, change: SemanticHistoryChange, index: number): React.ReactNode {
-    const status = STATUS_META[change.status] ?? { label: change.status, className: 'modified' };
+    const meta = STATUS_META[change.status];
+    const statusLabel = meta ? nls.localize(meta.labelKey, meta.label) : change.status;
+    const className = meta?.className ?? 'modified';
     const key = `${entry.commit}:${index}:${change.path}`;
 
     if (change.entityKind && change.entityId) {
@@ -159,7 +188,7 @@ export class SemanticHistoryWidget extends ReactWidget {
         'afe-semantic-history-chip',
         'entity',
         change.entityKind,
-        status.className,
+        className,
         openable ? 'openable' : 'disabled'
       ].join(' ');
       return h(
@@ -167,7 +196,14 @@ export class SemanticHistoryWidget extends ReactWidget {
         {
           key,
           className: classNames,
-          title: `${status.label}: ${change.path}${openable ? ' (click to open)' : ''}`,
+          title: openable
+            ? nls.localize(
+              'ai-focused-editor/git/change-tooltip-openable',
+              '{0}: {1} (click to open)',
+              statusLabel,
+              change.path
+            )
+            : nls.localize('ai-focused-editor/git/change-tooltip', '{0}: {1}', statusLabel, change.path),
           role: openable ? 'button' : undefined,
           onClick: openable ? () => this.openChange(change) : undefined
         },
@@ -180,8 +216,8 @@ export class SemanticHistoryWidget extends ReactWidget {
       'span',
       {
         key,
-        className: `afe-semantic-history-chip path ${status.className}`,
-        title: `${status.label}: ${change.path}`
+        className: `afe-semantic-history-chip path ${className}`,
+        title: nls.localize('ai-focused-editor/git/change-tooltip', '{0}: {1}', statusLabel, change.path)
       },
       change.path
     );

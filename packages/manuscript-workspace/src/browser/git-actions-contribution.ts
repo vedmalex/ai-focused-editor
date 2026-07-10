@@ -8,6 +8,7 @@ import {
   SelectionService
 } from '@theia/core/lib/common';
 import { UriAwareCommandHandler } from '@theia/core/lib/common/uri-command-handler';
+import { nls } from '@theia/core/lib/common/nls';
 import URI from '@theia/core/lib/common/uri';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
@@ -18,17 +19,27 @@ import { GitStatusService as GitStatusServiceSymbol } from '../common';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 
 export namespace GitActionCommands {
-  export const INIT_REPOSITORY: Command = {
-    id: 'ai-focused-editor.git.initRepository',
-    category: 'AI Focused Editor',
-    label: 'Initialize Git Repository'
-  };
+  const CATEGORY_KEY = 'ai-focused-editor/git/category';
 
-  export const ADD_TO_GITIGNORE: Command = {
-    id: 'ai-focused-editor.git.addToGitignore',
-    category: 'AI Focused Editor',
-    label: 'Add to .gitignore'
-  };
+  export const INIT_REPOSITORY: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.git.initRepository',
+      category: 'AI Focused Editor',
+      label: 'Initialize Git Repository'
+    },
+    'ai-focused-editor/git/init-repository',
+    CATEGORY_KEY
+  );
+
+  export const ADD_TO_GITIGNORE: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.git.addToGitignore',
+      category: 'AI Focused Editor',
+      label: 'Add to .gitignore'
+    },
+    'ai-focused-editor/git/add-to-gitignore',
+    CATEGORY_KEY
+  );
 }
 
 /**
@@ -82,12 +93,16 @@ export class GitActionsContribution implements CommandContribution, MenuContribu
     await this.workspaceService.ready;
     const root = this.workspaceService.tryGetRoots()[0];
     if (!root) {
-      await this.messages.warn('Open a workspace folder first.');
+      await this.messages.warn(nls.localize('ai-focused-editor/git/open-workspace-first', 'Open a workspace folder first.'));
       return;
     }
     const result = await this.gitStatus.initRepository(root.resource.toString());
     if (result.ok) {
-      await this.messages.info(`${result.message} The git indicator appears in the status bar shortly.`);
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/git/repository-initialized',
+        '{0} The git indicator appears in the status bar shortly.',
+        result.message
+      ));
     } else {
       await this.messages.warn(result.message);
     }
@@ -97,13 +112,16 @@ export class GitActionsContribution implements CommandContribution, MenuContribu
     await this.workspaceService.ready;
     const root = this.workspaceService.tryGetRoots()[0];
     if (!root) {
-      await this.messages.warn('Open a workspace folder first.');
+      await this.messages.warn(nls.localize('ai-focused-editor/git/open-workspace-first', 'Open a workspace folder first.'));
       return;
     }
 
     const relative = root.resource.relative(uri)?.toString();
     if (!relative) {
-      await this.messages.warn('The selected file is outside the workspace.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/git/file-outside-workspace',
+        'The selected file is outside the workspace.'
+      ));
       return;
     }
 
@@ -117,7 +135,11 @@ export class GitActionsContribution implements CommandContribution, MenuContribu
 
     const lines = existing.split('\n').map(line => line.trim());
     if (lines.includes(relative) || lines.includes(`/${relative}`)) {
-      await this.messages.info(`.gitignore already contains ${relative}.`);
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/git/gitignore-already-contains',
+        '.gitignore already contains {0}.',
+        relative
+      ));
       return;
     }
 
@@ -131,6 +153,6 @@ export class GitActionsContribution implements CommandContribution, MenuContribu
     } else {
       await this.fileService.write(gitignoreUri, next);
     }
-    await this.messages.info(`Added ${relative} to .gitignore.`);
+    await this.messages.info(nls.localize('ai-focused-editor/git/gitignore-added', 'Added {0} to .gitignore.', relative));
   }
 }

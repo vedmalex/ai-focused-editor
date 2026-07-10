@@ -6,6 +6,7 @@ import {
   OpenerService
 } from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { nls } from '@theia/core/lib/common/nls';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import {
   inject,
@@ -47,10 +48,10 @@ const EMPTY_DRAFT: EntityDraft = {
 
 /** Sub-directory under `entities/` mapped to its entity kind and label key. */
 const ENTITY_KIND_BY_DIRECTORY: Record<string, { kind: NarrativeEntityKind; labelKey: 'name' | 'term'; labelText: string }> = {
-  characters: { kind: 'character', labelKey: 'name', labelText: 'Name' },
-  artifacts: { kind: 'artifact', labelKey: 'name', labelText: 'Name' },
-  locations: { kind: 'location', labelKey: 'name', labelText: 'Name' },
-  terms: { kind: 'term', labelKey: 'term', labelText: 'Term' }
+  characters: { kind: 'character', labelKey: 'name', labelText: nls.localize('ai-focused-editor/entities/field-name', 'Name') },
+  artifacts: { kind: 'artifact', labelKey: 'name', labelText: nls.localize('ai-focused-editor/entities/field-name', 'Name') },
+  locations: { kind: 'location', labelKey: 'name', labelText: nls.localize('ai-focused-editor/entities/field-name', 'Name') },
+  terms: { kind: 'term', labelKey: 'term', labelText: nls.localize('ai-focused-editor/entities/field-term', 'Term') }
 };
 
 export function entityDescriptorForUri(uri: URI): { kind: NarrativeEntityKind; labelKey: 'name' | 'term'; labelText: string } | undefined {
@@ -118,7 +119,7 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
     this.labelText = descriptor.labelText;
     this.id = `${EntityEditorWidget.FACTORY_ID}:${uri.toString()}`;
     this.title.label = uri.path.base;
-    this.title.caption = `Entity form: ${uri.path.fsPath()}`;
+    this.title.caption = nls.localize('ai-focused-editor/entities/editor-caption', 'Entity form: {0}', uri.path.fsPath());
     this.title.iconClass = 'fa fa-id-badge';
     this.title.closable = true;
     this.addClass('afe-entity-editor-widget');
@@ -291,16 +292,16 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
       await this.fileService.write(this.uri, content);
       // Re-read so the in-memory document (and comments) reflect what was written.
       await this.load();
-      await this.messageService.info(`Saved ${this.uri.path.base}.`);
+      await this.messageService.info(nls.localize('ai-focused-editor/entities/saved', 'Saved {0}.', this.uri.path.base));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.messageService.error(`Could not save entity: ${detail}`);
+      await this.messageService.error(nls.localize('ai-focused-editor/entities/save-failed', 'Could not save entity: {0}', detail));
     }
   }
 
   protected render(): React.ReactNode {
     if (this.loading || !this.uri) {
-      return React.createElement('div', { className: 'afe-entity-editor' }, 'Loading entity...');
+      return React.createElement('div', { className: 'afe-entity-editor' }, nls.localize('ai-focused-editor/entities/loading', 'Loading entity...'));
     }
 
     const problems = this.problems();
@@ -310,14 +311,14 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
       React.createElement(
         'div',
         { className: 'afe-entity-editor-header' },
-        React.createElement('h3', undefined, `${this.labelDisplay()} form`),
+        React.createElement('h3', undefined, nls.localize('ai-focused-editor/entities/editor-heading', '{0} form', this.labelDisplay())),
         React.createElement('span', { className: 'afe-entity-editor-kind' }, this.kind)
       ),
       this.parseError
         ? React.createElement(
           'div',
           { className: 'afe-entity-editor-problem error' },
-          `YAML parse warning: ${this.parseError}`
+          nls.localize('ai-focused-editor/entities/parse-warning', 'YAML parse warning: {0}', this.parseError)
         )
         : undefined,
       this.renderProblems(problems),
@@ -330,22 +331,67 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
             void this.save();
           }
         },
-        this.renderInput('Id', 'id', 'stable identifier, e.g. krishna'),
-        this.renderInput(this.labelText, 'label', `display ${this.labelText.toLowerCase()}`),
-        this.renderTextarea('Aliases', 'aliases', 'one alias per line', 3),
-        this.renderTextarea('Epithets', 'epithets', 'one epithet per line', 3),
-        this.renderTextarea('Summary', 'summary', 'short one-line summary', 2),
-        this.renderTextarea('Backstory', 'backstory', 'longer history behind the entity', 4),
-        this.renderTextarea('Arc', 'arc', 'how the entity changes across the manuscript', 2),
-        this.renderTextarea('Speech patterns', 'speechPatterns', 'one trait per line', 3),
-        this.renderTextarea('Notes', 'notes', 'free-form authoring notes', 3),
+        this.renderInput(
+          nls.localize('ai-focused-editor/entities/field-id', 'Id'),
+          'id',
+          nls.localize('ai-focused-editor/entities/ph-id', 'stable identifier, e.g. krishna')
+        ),
+        this.renderInput(
+          this.labelText,
+          'label',
+          nls.localize('ai-focused-editor/entities/ph-label', 'display {0}', this.labelText.toLowerCase())
+        ),
+        this.renderTextarea(
+          nls.localize('ai-focused-editor/entities/field-aliases', 'Aliases'),
+          'aliases',
+          nls.localize('ai-focused-editor/entities/ph-aliases', 'one alias per line'),
+          3
+        ),
+        this.renderTextarea(
+          nls.localize('ai-focused-editor/entities/field-epithets', 'Epithets'),
+          'epithets',
+          nls.localize('ai-focused-editor/entities/ph-epithets', 'one epithet per line'),
+          3
+        ),
+        this.renderTextarea(
+          nls.localize('ai-focused-editor/entities/field-summary', 'Summary'),
+          'summary',
+          nls.localize('ai-focused-editor/entities/ph-summary', 'short one-line summary'),
+          2
+        ),
+        this.renderTextarea(
+          nls.localize('ai-focused-editor/entities/field-backstory', 'Backstory'),
+          'backstory',
+          nls.localize('ai-focused-editor/entities/ph-backstory', 'longer history behind the entity'),
+          4
+        ),
+        this.renderTextarea(
+          nls.localize('ai-focused-editor/entities/field-arc', 'Arc'),
+          'arc',
+          nls.localize('ai-focused-editor/entities/ph-arc', 'how the entity changes across the manuscript'),
+          2
+        ),
+        this.renderTextarea(
+          nls.localize('ai-focused-editor/entities/field-speech-patterns', 'Speech patterns'),
+          'speechPatterns',
+          nls.localize('ai-focused-editor/entities/ph-speech-patterns', 'one trait per line'),
+          3
+        ),
+        this.renderTextarea(
+          nls.localize('ai-focused-editor/entities/field-notes', 'Notes'),
+          'notes',
+          nls.localize('ai-focused-editor/entities/ph-notes', 'free-form authoring notes'),
+          3
+        ),
         React.createElement(
           'div',
           { className: 'afe-entity-editor-actions' },
           React.createElement(
             'button',
             { className: 'theia-button main', type: 'submit' },
-            this.dirty ? 'Save*' : 'Save'
+            this.dirty
+              ? nls.localize('ai-focused-editor/entities/save-dirty', 'Save*')
+              : nls.localize('ai-focused-editor/entities/save', 'Save')
           ),
           React.createElement(
             'button',
@@ -354,14 +400,17 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
               type: 'button',
               onClick: () => { void this.load(); }
             },
-            'Reload from disk'
+            nls.localize('ai-focused-editor/entities/reload-from-disk', 'Reload from disk')
           )
         )
       ),
       React.createElement(
         'p',
         { className: 'afe-entity-editor-help' },
-        'Saving writes pure YAML and preserves comments and unknown keys. Use "Open With..." to edit the raw file.'
+        nls.localize(
+          'ai-focused-editor/entities/editor-help',
+          'Saving writes pure YAML and preserves comments and unknown keys. Use "Open With..." to edit the raw file.'
+        )
       )
     );
   }
@@ -425,7 +474,7 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
     return React.createElement(
       'div',
       { className: 'afe-entity-mentions-row' },
-      React.createElement('span', { className: 'afe-entity-mentions-label' }, 'Mentions:'),
+      React.createElement('span', { className: 'afe-entity-mentions-label' }, nls.localize('ai-focused-editor/entities/mentions-label', 'Mentions:')),
       ...mentions.map((mention, index) => this.renderMentionChip(mention, index))
     );
   }
@@ -437,13 +486,13 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
       return React.createElement('span', {
         key: index,
         className: 'afe-entity-mention-chip unknown',
-        title: `Unknown entity: ${mention.kind ? `${mention.kind}:` : ''}${mention.id}`
+        title: nls.localize('ai-focused-editor/entities/unknown-entity', 'Unknown entity: {0}', `${mention.kind ? `${mention.kind}:` : ''}${mention.id}`)
       }, display);
     }
     return React.createElement('span', {
       key: index,
       className: 'afe-entity-mention-chip',
-      title: `Open ${entity.kind}: ${entity.label}`,
+      title: nls.localize('ai-focused-editor/entities/open-entity', 'Open {0}: {1}', entity.kind, entity.label),
       role: 'link',
       tabIndex: 0,
       onClick: () => this.openMention(entity),

@@ -1,4 +1,5 @@
 import { FrontendApplicationContribution } from '@theia/core/lib/browser';
+import { nls } from '@theia/core/lib/common/nls';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { CustomAgentFactory } from '@theia/ai-chat/lib/browser/custom-agent-factory';
 import { AiConnectTheiaLanguageModel } from './ai-connect-theia-language-model';
@@ -19,8 +20,14 @@ export class ManuscriptChatAgentContribution implements FrontendApplicationContr
     this.registered = true;
     this.customAgentFactory(
       MANUSCRIPT_AGENT_ID,
+      // The agent NAME doubles as the @mention token; kept English/ASCII so the
+      // chat mention parser resolves it. Only the human-readable description is
+      // localized (systemPrompt below stays English — it steers the model).
       'Manuscript',
-      'Writer-focused AI agent for manuscript editing, semantic Markdown, project entities, and source-aware review.',
+      nls.localize(
+        'ai-focused-editor/workspace/agent-description',
+        'Writer-focused AI agent for manuscript editing, semantic Markdown, project entities, and source-aware review.'
+      ),
       [
         'You are the Manuscript agent inside AI Focused Editor.',
         'Help writers and translators improve long-form Markdown manuscripts while preserving authorial control.',

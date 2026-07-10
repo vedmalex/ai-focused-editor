@@ -8,6 +8,7 @@ import {
   QuickPickItem
 } from '@theia/core/lib/common';
 import URI from '@theia/core/lib/common/uri';
+import { nls } from '@theia/core/lib/common/nls';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { FileDialogService } from '@theia/filesystem/lib/browser';
@@ -50,31 +51,51 @@ import {
 } from './ai-history-service';
 
 export namespace SourceLibraryCommands {
-  export const OPEN: Command = {
-    id: 'ai-focused-editor.sources.open',
-    label: 'AI Focused Editor: Open Sources'
-  };
+  // en labels/category stay inline as the source of truth; ru comes from
+  // i18n/ru/sources.json keyed by `ai-focused-editor/sources/*`.
+  const CATEGORY_KEY = 'ai-focused-editor/sources/category';
 
-  export const REFRESH: Command = {
-    id: 'ai-focused-editor.sources.refresh',
-    label: 'AI Focused Editor: Refresh Sources'
-  };
+  export const OPEN: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.sources.open',
+      label: 'AI Focused Editor: Open Sources'
+    },
+    'ai-focused-editor/sources/open'
+  );
 
-  export const ATTACH: Command = {
-    id: 'ai-focused-editor.sources.attach',
-    label: 'AI Focused Editor: Attach Source File...'
-  };
+  export const REFRESH: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.sources.refresh',
+      label: 'AI Focused Editor: Refresh Sources'
+    },
+    'ai-focused-editor/sources/refresh'
+  );
 
-  export const ANALYZE: Command = {
-    id: 'ai-focused-editor.sources.analyze',
-    label: 'AI Focused Editor: Analyze Source Document...'
-  };
+  export const ATTACH: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.sources.attach',
+      label: 'AI Focused Editor: Attach Source File...'
+    },
+    'ai-focused-editor/sources/attach'
+  );
 
-  export const SAVE_SELECTION_AS_CITATION: Command = {
-    id: 'ai-focused-editor.sources.saveSelectionAsCitation',
-    category: 'AI Focused Editor',
-    label: 'Save Selection as Citation...'
-  };
+  export const ANALYZE: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.sources.analyze',
+      label: 'AI Focused Editor: Analyze Source Document...'
+    },
+    'ai-focused-editor/sources/analyze'
+  );
+
+  export const SAVE_SELECTION_AS_CITATION: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.sources.saveSelectionAsCitation',
+      category: 'AI Focused Editor',
+      label: 'Save Selection as Citation...'
+    },
+    'ai-focused-editor/sources/save-selection-as-citation',
+    CATEGORY_KEY
+  );
 }
 
 const IMAGE_EXTENSIONS = new Set([
@@ -237,12 +258,15 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
   protected async attachSource(): Promise<void> {
     const root = await this.getRoot();
     if (!root) {
-      this.messageService.warn('Open a manuscript workspace before attaching a source.');
+      this.messageService.warn(nls.localize(
+        'ai-focused-editor/sources/attach-needs-workspace',
+        'Open a manuscript workspace before attaching a source.'
+      ));
       return;
     }
 
     const selected = await this.fileDialogService.showOpenDialog({
-      title: 'Attach Source File',
+      title: nls.localize('ai-focused-editor/sources/attach-dialog-title', 'Attach Source File'),
       canSelectFiles: true,
       canSelectFolders: false,
       canSelectMany: false
@@ -263,14 +287,23 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
     try {
       await this.fileService.copy(source, target, { overwrite: false });
     } catch (error) {
-      this.messageService.error(`Could not attach source: ${error instanceof Error ? error.message : String(error)}`);
+      this.messageService.error(nls.localize(
+        'ai-focused-editor/sources/attach-failed',
+        'Could not attach source: {0}',
+        error instanceof Error ? error.message : String(error)
+      ));
       return;
     }
 
     this.invalidateSnapshot();
     const widget = await this.openView({ activate: false, reveal: true });
     await widget.refresh();
-    this.messageService.info(`Attached ${target.path.base} to sources/${subdir}/.`);
+    this.messageService.info(nls.localize(
+      'ai-focused-editor/sources/attach-success',
+      'Attached {0} to sources/{1}/.',
+      target.path.base,
+      subdir
+    ));
   }
 
   /**
@@ -281,26 +314,37 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
   protected async analyzeSource(): Promise<void> {
     const root = await this.getRoot();
     if (!root) {
-      this.messageService.warn('Open a manuscript workspace before analyzing a source.');
+      this.messageService.warn(nls.localize(
+        'ai-focused-editor/sources/analyze-needs-workspace',
+        'Open a manuscript workspace before analyzing a source.'
+      ));
       return;
     }
 
     const sourcesDir = root.resolve('sources');
     const candidates = await this.collectTextSources(sourcesDir, root);
     if (candidates.length === 0) {
-      this.messageService.warn('No analyzable source documents (.md, .txt, .markdown, .pdf) found under sources/.');
+      this.messageService.warn(nls.localize(
+        'ai-focused-editor/sources/analyze-no-documents',
+        'No analyzable source documents (.md, .txt, .markdown, .pdf) found under sources/.'
+      ));
       return;
     }
 
     const picked = await this.quickInput.showQuickPick<SourceQuickPickItem>(
       candidates.map(source => ({
         label: source.path,
-        description: source.isPdf ? `${source.name} (PDF)` : source.name,
+        description: source.isPdf
+          ? nls.localize('ai-focused-editor/sources/analyze-pick-pdf-description', '{0} (PDF)', source.name)
+          : source.name,
         source
       })),
       {
-        title: 'Analyze Source Document',
-        placeholder: 'Select a source document to extract excerpts and citations from'
+        title: nls.localize('ai-focused-editor/sources/analyze-pick-title', 'Analyze Source Document'),
+        placeholder: nls.localize(
+          'ai-focused-editor/sources/analyze-pick-placeholder',
+          'Select a source document to extract excerpts and citations from'
+        )
       }
     );
     if (!picked) {
@@ -311,7 +355,10 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
 
     const profile = await this.aiProfilePreferences.getConfiguredProfile(documentUri);
     if (!profile) {
-      this.messageService.warn('Configure the AI profile (Model Config view) before analyzing sources.');
+      this.messageService.warn(nls.localize(
+        'ai-focused-editor/sources/analyze-needs-profile',
+        'Configure the AI profile (Model Config view) before analyzing sources.'
+      ));
       return;
     }
 
@@ -325,9 +372,12 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
         extraction = { ok: false, detail: error instanceof Error ? error.message : String(error) };
       }
       if (!extraction.ok || extraction.text === undefined) {
-        this.messageService.warn(
-          `Could not extract text from ${sourceFile.path}: ${extraction.detail ?? 'no extractable text found.'}`
-        );
+        this.messageService.warn(nls.localize(
+          'ai-focused-editor/sources/analyze-extract-failed',
+          'Could not extract text from {0}: {1}',
+          sourceFile.path,
+          extraction.detail ?? nls.localize('ai-focused-editor/sources/analyze-no-extractable-text', 'no extractable text found.')
+        ));
         return;
       }
       content = extraction.text;
@@ -335,9 +385,12 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
       try {
         content = (await this.fileService.read(new URI(sourceFile.uri))).value;
       } catch (error) {
-        this.messageService.error(
-          `Could not read ${sourceFile.path}: ${error instanceof Error ? error.message : String(error)}`
-        );
+        this.messageService.error(nls.localize(
+          'ai-focused-editor/sources/analyze-read-failed',
+          'Could not read {0}: {1}',
+          sourceFile.path,
+          error instanceof Error ? error.message : String(error)
+        ));
         return;
       }
     }
@@ -350,7 +403,7 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
 
     const mode = await this.aiModes.getMode(ANALYZE_SOURCE_MODE_ID);
     const progress = await this.messageService.showProgress({
-      text: 'AI Focused Editor: analyzing source document...'
+      text: nls.localize('ai-focused-editor/sources/analyze-progress', 'AI Focused Editor: analyzing source document...')
     });
     try {
       const chain = await this.aiProfilePreferences.getFailoverChain(documentUri);
@@ -400,13 +453,27 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
       const widget = await this.openView({ activate: false, reveal: true });
       await widget.refresh();
 
-      const summary = [
-        `Analyzed ${sourceFile.path}: added ${excerptRecords.length} excerpt(s) and ${dedupe.added.length} citation(s)`,
-        dedupe.skipped.length > 0 ? `, skipped ${dedupe.skipped.length} existing citation(s)` : '',
-        '.'
-      ].join('');
+      const skippedClause = dedupe.skipped.length > 0
+        ? nls.localize(
+          'ai-focused-editor/sources/analyze-summary-skipped',
+          ', skipped {0} existing citation(s)',
+          dedupe.skipped.length
+        )
+        : '';
+      const summary = nls.localize(
+        'ai-focused-editor/sources/analyze-summary',
+        'Analyzed {0}: added {1} excerpt(s) and {2} citation(s){3}.',
+        sourceFile.path,
+        excerptRecords.length,
+        dedupe.added.length,
+        skippedClause
+      );
       if (analysis.excerpts.length === 0 && analysis.citations.length === 0) {
-        this.messageService.warn(`No excerpts or citations could be extracted from ${sourceFile.path}.`);
+        this.messageService.warn(nls.localize(
+          'ai-focused-editor/sources/analyze-nothing-extracted',
+          'No excerpts or citations could be extracted from {0}.',
+          sourceFile.path
+        ));
       } else {
         this.messageService.info(summary);
       }
@@ -437,9 +504,11 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
           error: error instanceof Error ? error.message : String(error)
         }
       });
-      this.messageService.error(
-        `Source analysis failed: ${error instanceof Error ? error.message : String(error)}`
-      );
+      this.messageService.error(nls.localize(
+        'ai-focused-editor/sources/analyze-failed',
+        'Source analysis failed: {0}',
+        error instanceof Error ? error.message : String(error)
+      ));
     } finally {
       progress.cancel();
     }
@@ -456,20 +525,29 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
   protected async saveSelectionAsCitation(): Promise<void> {
     const root = await this.getRoot();
     if (!root) {
-      this.messageService.warn('Open a manuscript workspace before saving a citation.');
+      this.messageService.warn(nls.localize(
+        'ai-focused-editor/sources/save-citation-needs-workspace',
+        'Open a manuscript workspace before saving a citation.'
+      ));
       return;
     }
 
     const editor = (this.editorManager.currentEditor ?? this.editorManager.activeEditor)?.editor;
     if (!editor) {
-      this.messageService.warn('Open a text editor and select text before saving a citation.');
+      this.messageService.warn(nls.localize(
+        'ai-focused-editor/sources/save-citation-needs-editor',
+        'Open a text editor and select text before saving a citation.'
+      ));
       return;
     }
 
     const selection = editor.selection;
     const selectedText = editor.document.getText(selection);
     if (!selectedText.trim()) {
-      this.messageService.warn('Select text in the active editor before saving a citation.');
+      this.messageService.warn(nls.localize(
+        'ai-focused-editor/sources/save-citation-needs-selection',
+        'Select text in the active editor before saving a citation.'
+      ));
       return;
     }
 
@@ -483,16 +561,20 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
     const suggestedId = dedupeCitationId(citationSlugFromText(selectedText), existingIds);
 
     const rawId = await this.quickInput.input({
-      title: 'Save Selection as Citation',
-      prompt: 'Citation id (url-safe slug)',
+      title: nls.localize('ai-focused-editor/sources/save-citation-dialog-title', 'Save Selection as Citation'),
+      prompt: nls.localize('ai-focused-editor/sources/save-citation-id-prompt', 'Citation id (url-safe slug)'),
       value: suggestedId,
       validateInput: async value => {
         const trimmed = value.trim();
         if (!trimmed) {
-          return 'Citation id cannot be empty.';
+          return nls.localize('ai-focused-editor/sources/save-citation-id-empty', 'Citation id cannot be empty.');
         }
         if (existingIds.includes(trimmed)) {
-          return `A citation with id "${trimmed}" already exists.`;
+          return nls.localize(
+            'ai-focused-editor/sources/save-citation-id-exists',
+            'A citation with id "{0}" already exists.',
+            trimmed
+          );
         }
         return undefined;
       }
@@ -503,9 +585,12 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
     const citationId = dedupeCitationId(rawId.trim(), existingIds);
 
     const rawNote = await this.quickInput.input({
-      title: 'Save Selection as Citation',
-      prompt: 'Optional note (press Enter to skip, Esc to cancel)',
-      placeHolder: 'why this passage matters'
+      title: nls.localize('ai-focused-editor/sources/save-citation-dialog-title', 'Save Selection as Citation'),
+      prompt: nls.localize(
+        'ai-focused-editor/sources/save-citation-note-prompt',
+        'Optional note (press Enter to skip, Esc to cancel)'
+      ),
+      placeHolder: nls.localize('ai-focused-editor/sources/save-citation-note-placeholder', 'why this passage matters')
     });
     if (rawNote === undefined) {
       return;
@@ -536,7 +621,11 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
       await this.mergeCitations(sourcesDir, [citation]);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      this.messageService.error(`Could not save citation: ${detail}`);
+      this.messageService.error(nls.localize(
+        'ai-focused-editor/sources/save-citation-failed',
+        'Could not save citation: {0}',
+        detail
+      ));
       await this.tryAppendChatEvent({
         kind: 'ai-command-error',
         command: SourceLibraryCommands.SAVE_SELECTION_AS_CITATION.id,
@@ -549,7 +638,11 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
     this.invalidateSnapshot();
     const widget = await this.openView({ activate: false, reveal: true });
     await widget.refresh();
-    this.messageService.info(`Saved citation "${citationId}".`);
+    this.messageService.info(nls.localize(
+      'ai-focused-editor/sources/save-citation-success',
+      'Saved citation "{0}".',
+      citationId
+    ));
 
     await this.tryAppendChatEvent({
       kind: 'citation-saved',
@@ -771,7 +864,7 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
       links.push({
         range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column),
         url,
-        tooltip: `Open citation ${id}`
+        tooltip: nls.localize('ai-focused-editor/sources/open-citation-tooltip', 'Open citation {0}', id)
       });
     }
     return { links };

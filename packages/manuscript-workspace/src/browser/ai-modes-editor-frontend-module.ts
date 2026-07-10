@@ -7,6 +7,7 @@ import {
   MenuModelRegistry,
   MessageService
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import {
   NavigatableWidgetOpenHandler,
   NavigatableWidgetOptions,
@@ -48,7 +49,7 @@ function isAiModesYaml(uri: URI): boolean {
 @injectable()
 export class AiModesEditorOpenHandler extends NavigatableWidgetOpenHandler<AiModesEditorWidget> {
   readonly id = AiModesEditorWidget.FACTORY_ID;
-  readonly label = 'AI Modes Form Editor';
+  readonly label = nls.localize('ai-focused-editor/ai-modes/open-handler-label', 'AI Modes Form Editor');
 
   canHandle(uri: URI, _options?: WidgetOpenerOptions): number {
     return isAiModesYaml(uri) ? AI_MODES_EDITOR_PRIORITY : 0;
@@ -56,11 +57,15 @@ export class AiModesEditorOpenHandler extends NavigatableWidgetOpenHandler<AiMod
 }
 
 export namespace AiModesEditorCommands {
-  export const EDIT_AI_MODES: Command = {
-    id: 'ai-focused-editor.aiModes.editModes',
-    category: 'AI Focused Editor',
-    label: 'Edit AI Modes...'
-  };
+  export const EDIT_AI_MODES: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.aiModes.editModes',
+      category: 'AI Focused Editor',
+      label: 'Edit AI Modes...'
+    },
+    'ai-focused-editor/ai-modes/edit-modes',
+    'ai-focused-editor/ai-modes/category'
+  );
 }
 
 @injectable()
@@ -82,7 +87,7 @@ export class AiModesEditorCommandContribution implements CommandContribution, Me
       execute: async () => {
         const uri = await this.resolveModesUri();
         if (!uri) {
-          await this.messageService.warn('Open a manuscript workspace before editing AI modes.');
+          await this.messageService.warn(nls.localize('ai-focused-editor/ai-modes/open-workspace-edit', 'Open a manuscript workspace before editing AI modes.'));
           return;
         }
         await this.ensureFile(uri);

@@ -1,5 +1,47 @@
 {
   "ai-focused-editor": {
-    "build": {}
+    "build": {
+      "category": "AI Focused Editor",
+      "build-markdown": "AI Focused Editor: Собрать рукопись в Markdown",
+      "build-html": "AI Focused Editor: Собрать рукопись в HTML",
+      "build-epub": "Собрать рукопись в EPUB",
+      "build-pdf": "Собрать рукопись в PDF",
+      "open-last-build": "AI Focused Editor: Открыть последнюю сборку рукописи",
+      "copy-last-build-path": "AI Focused Editor: Скопировать путь последней сборки",
+      "open-build-action": "Открыть сборку",
+      "copy-path-action": "Скопировать путь",
+      "open-workspace-before-build": "Откройте рабочую область рукописи перед сборкой {0}.",
+      "task-did-not-start": "Задача сборки книги не запустилась.",
+      "task-started": "Задача сборки книги ({0}) запущена. Следите за ходом в терминале задачи или в канале вывода AI Focused Editor.",
+      "build-failed-error": "Сборка книги не удалась: {0}",
+      "run-before-open-last": "Запустите сборку рукописи в Markdown, прежде чем открывать последнюю сборку.",
+      "run-before-copy-path": "Запустите сборку рукописи в Markdown, прежде чем копировать путь.",
+      "path-copied": "Путь к сборке книги скопирован в буфер обмена.",
+      "task-detail": "Собрать рабочую область рукописи в {0}.",
+      "build-completed": "Сборка книги завершена. Результат: {0}",
+      "reason-signal": "сигнал {0}",
+      "reason-exit-code": "код выхода {0}",
+      "unknown-exit-code": "неизвестен",
+      "build-failed-with-reason": "Сборка книги завершилась с ошибкой ({0}). Подробности — в терминале задачи.",
+      "wizard": "Собрать книгу…",
+      "wizard-toolbar-tooltip": "Собрать или опубликовать книгу…",
+      "open-workspace-before-wizard": "Откройте рабочую область рукописи перед сборкой книги.",
+      "select-at-least-one": "Выберите хотя бы один формат для сборки.",
+      "wizard-step1-title": "Сборка книги — 1/2: форматы",
+      "wizard-step1-placeholder": "Выберите форматы для сборки",
+      "start-build": "$(rocket) Начать сборку",
+      "back": "$(arrow-left) Назад",
+      "wizard-step2-title": "Сборка книги — 2/2: подтверждение",
+      "building-progress": "Сборка {0}…",
+      "build-reported-errors": "сборка сообщила об ошибках",
+      "format-build-failed": "Сборка {0} не удалась: {1}",
+      "copy-paths-action": "Скопировать пути",
+      "open-format-action": "Открыть {0}",
+      "book-built-count": "Книга собрана. Форматов: {0}",
+      "paths-copied": "Пути к сборкам книги скопированы в буфер обмена.",
+      "describe-title-author": "{0} — {1} · выберите «Начать сборку», чтобы начать",
+      "describe-title": "{0} · выберите «Начать сборку», чтобы начать",
+      "describe-default": "Проверьте форматы и выберите «Начать сборку», чтобы начать"
+    }
   }
 }

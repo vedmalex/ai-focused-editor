@@ -12,6 +12,7 @@ import {
   QuickPickSeparator
 } from '@theia/core/lib/common';
 import URI from '@theia/core/lib/common/uri';
+import { nls } from '@theia/core/lib/common/nls';
 import type { Widget } from '@theia/core/lib/browser';
 import { WidgetManager } from '@theia/core/lib/browser';
 import {
@@ -40,11 +41,17 @@ import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import { AFE_MANUSCRIPT_SECTION_CONTEXT_KEY } from './manuscript-tree';
 
 export namespace BookDoctorCommands {
-  export const DOCTOR: Command = {
-    id: 'ai-focused-editor.book.doctor',
-    category: 'AI Focused Editor',
-    label: 'Book Doctor...'
-  };
+  // en label/category stay inline as the source of truth; ru comes from
+  // i18n/ru/doctor.json keyed by `ai-focused-editor/doctor/*`.
+  export const DOCTOR: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.book.doctor',
+      category: 'AI Focused Editor',
+      label: 'Book Doctor...'
+    },
+    'ai-focused-editor/doctor/doctor',
+    'ai-focused-editor/doctor/category'
+  );
 }
 
 /** Book-properties group in the manuscript tree context menu (shared with book-config/build). */
@@ -120,7 +127,7 @@ export class BookDoctorContribution
       id: 'ai-focused-editor.bookDoctor.toolbar',
       command: BookDoctorCommands.DOCTOR.id,
       icon: 'codicon codicon-pulse',
-      tooltip: 'Book Doctor',
+      tooltip: nls.localize('ai-focused-editor/doctor/toolbar-tooltip', 'Book Doctor'),
       priority: 4,
       isVisible: (widget: Widget) => widget instanceof ManuscriptTreeWidget
     });
@@ -130,18 +137,24 @@ export class BookDoctorContribution
     const snapshot = await this.manuscriptWorkspace.getSnapshot();
     const rootUri = snapshot.rootUri;
     if (!rootUri) {
-      await this.messages.warn('Open a manuscript workspace before running the Book Doctor.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/doctor/no-workspace',
+        'Open a manuscript workspace before running the Book Doctor.'
+      ));
       return;
     }
 
     const report = await this.progressService.withProgress(
-      'Checking book structure...',
+      nls.localize('ai-focused-editor/doctor/checking', 'Checking book structure...'),
       'notification',
       () => this.gather(rootUri)
     );
 
     if (report.fixes.length === 0 && report.findings.length === 0) {
-      await this.messages.info('Book structure is healthy — nothing to fix.');
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/doctor/healthy',
+        'Book structure is healthy — nothing to fix.'
+      ));
       return;
     }
 
@@ -285,25 +298,41 @@ export class BookDoctorContribution
     }));
     const findingItems: DoctorPickItem[] = report.findings.map(finding => ({
       label: finding.label,
-      detail: `Informational — selecting has no effect. ${finding.detail}`,
+      detail: nls.localize(
+        'ai-focused-editor/doctor/finding-detail',
+        'Informational — selecting has no effect. {0}',
+        finding.detail
+      ),
       alwaysShow: true
     }));
 
     const items: Array<DoctorPickItem | QuickPickSeparator> = [...fixItems];
     if (findingItems.length > 0) {
-      items.push({ type: 'separator', label: 'Findings (informational)' });
+      items.push({
+        type: 'separator',
+        label: nls.localize('ai-focused-editor/doctor/findings-separator', 'Findings (informational)')
+      });
       items.push(...findingItems);
     }
 
     return new Promise<BookDoctorFix[] | undefined>(resolve => {
       const quickPick = this.quickInput.createQuickPick<DoctorPickItem>();
-      quickPick.title = 'Book Doctor — select fixes to apply';
+      quickPick.title = nls.localize(
+        'ai-focused-editor/doctor/pick-title',
+        'Book Doctor — select fixes to apply'
+      );
       quickPick.canSelectMany = true;
       quickPick.matchOnDescription = true;
       quickPick.matchOnDetail = true;
       quickPick.placeholder = report.fixes.length > 0
-        ? 'Checked items will be created; informational findings are read-only'
-        : 'No auto-fixes available — review the informational findings, then close';
+        ? nls.localize(
+            'ai-focused-editor/doctor/pick-placeholder',
+            'Checked items will be created; informational findings are read-only'
+          )
+        : nls.localize(
+            'ai-focused-editor/doctor/pick-placeholder-empty',
+            'No auto-fixes available — review the informational findings, then close'
+          );
       quickPick.items = items;
       quickPick.selectedItems = fixItems;
 
@@ -363,12 +392,20 @@ export class BookDoctorContribution
 
     await this.refreshTree();
 
-    const parts = [`Book Doctor: created ${created} item(s)`];
+    const parts = [nls.localize(
+      'ai-focused-editor/doctor/applied-created',
+      'Book Doctor: created {0} item(s)',
+      created
+    )];
     if (skipped > 0) {
-      parts.push(`skipped ${skipped}`);
+      parts.push(nls.localize('ai-focused-editor/doctor/applied-skipped', 'skipped {0}', skipped));
     }
     if (report.findings.length > 0) {
-      parts.push(`${report.findings.length} informational finding(s) remain`);
+      parts.push(nls.localize(
+        'ai-focused-editor/doctor/applied-findings-remain',
+        '{0} informational finding(s) remain',
+        report.findings.length
+      ));
     }
     await this.messages.info(`${parts.join(', ')}.`);
   }

@@ -7,6 +7,7 @@ import {
   MenuModelRegistry,
   MessageService
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import {
   NavigatableWidgetOpenHandler,
   NavigatableWidgetOptions,
@@ -43,7 +44,7 @@ function isCitationsYaml(uri: URI): boolean {
 @injectable()
 export class CitationEditorOpenHandler extends NavigatableWidgetOpenHandler<CitationEditorWidget> {
   readonly id = CitationEditorWidget.FACTORY_ID;
-  readonly label = 'Citations Form Editor';
+  readonly label = nls.localize('ai-focused-editor/sources/citation-editor-open-handler', 'Citations Form Editor');
 
   canHandle(uri: URI, _options?: WidgetOpenerOptions): number {
     return isCitationsYaml(uri) ? CITATION_EDITOR_PRIORITY : 0;
@@ -51,11 +52,15 @@ export class CitationEditorOpenHandler extends NavigatableWidgetOpenHandler<Cita
 }
 
 export namespace CitationEditorCommands {
-  export const EDIT_CITATIONS: Command = {
-    id: 'ai-focused-editor.sources.editCitations',
-    category: 'AI Focused Editor',
-    label: 'Edit Citations...'
-  };
+  export const EDIT_CITATIONS: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.sources.editCitations',
+      category: 'AI Focused Editor',
+      label: 'Edit Citations...'
+    },
+    'ai-focused-editor/sources/edit-citations',
+    'ai-focused-editor/sources/category'
+  );
 }
 
 @injectable()
@@ -77,7 +82,10 @@ export class CitationEditorCommandContribution implements CommandContribution, M
       execute: async () => {
         const uri = await this.resolveCitationsUri();
         if (!uri) {
-          await this.messageService.warn('Open a manuscript workspace before editing citations.');
+          await this.messageService.warn(nls.localize(
+            'ai-focused-editor/sources/edit-citations-needs-workspace',
+            'Open a manuscript workspace before editing citations.'
+          ));
           return;
         }
         await this.ensureFile(uri);

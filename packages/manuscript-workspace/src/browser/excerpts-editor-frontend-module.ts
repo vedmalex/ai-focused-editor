@@ -7,6 +7,7 @@ import {
   MenuModelRegistry,
   MessageService
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import {
   NavigatableWidgetOpenHandler,
   NavigatableWidgetOptions,
@@ -47,7 +48,7 @@ function isExcerptsJsonl(uri: URI): boolean {
 @injectable()
 export class ExcerptsEditorOpenHandler extends NavigatableWidgetOpenHandler<ExcerptsEditorWidget> {
   readonly id = ExcerptsEditorWidget.FACTORY_ID;
-  readonly label = 'Excerpts Form Editor';
+  readonly label = nls.localize('ai-focused-editor/sources/excerpts-editor-open-handler', 'Excerpts Form Editor');
 
   canHandle(uri: URI, _options?: WidgetOpenerOptions): number {
     return isExcerptsJsonl(uri) ? EXCERPTS_EDITOR_PRIORITY : 0;
@@ -55,11 +56,15 @@ export class ExcerptsEditorOpenHandler extends NavigatableWidgetOpenHandler<Exce
 }
 
 export namespace ExcerptsEditorCommands {
-  export const EDIT_EXCERPTS: Command = {
-    id: 'ai-focused-editor.excerpts.editExcerpts',
-    category: 'AI Focused Editor',
-    label: 'Edit Excerpts...'
-  };
+  export const EDIT_EXCERPTS: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.excerpts.editExcerpts',
+      category: 'AI Focused Editor',
+      label: 'Edit Excerpts...'
+    },
+    'ai-focused-editor/sources/edit-excerpts',
+    'ai-focused-editor/sources/category'
+  );
 }
 
 @injectable()
@@ -81,7 +86,10 @@ export class ExcerptsEditorCommandContribution implements CommandContribution, M
       execute: async () => {
         const uri = await this.resolveExcerptsUri();
         if (!uri) {
-          await this.messageService.warn('Open a manuscript workspace before editing excerpts.');
+          await this.messageService.warn(nls.localize(
+            'ai-focused-editor/sources/edit-excerpts-needs-workspace',
+            'Open a manuscript workspace before editing excerpts.'
+          ));
           return;
         }
         await this.ensureFile(uri);

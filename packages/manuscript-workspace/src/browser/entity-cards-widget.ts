@@ -4,6 +4,7 @@ import {
   OpenerService
 } from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { nls } from '@theia/core/lib/common/nls';
 import {
   inject,
   injectable,
@@ -37,8 +38,8 @@ export class EntityCardsWidget extends ReactWidget {
   @postConstruct()
   protected init(): void {
     this.id = EntityCardsWidget.ID;
-    this.title.label = EntityCardsWidget.LABEL;
-    this.title.caption = 'AI Focused Editor character and term cards';
+    this.title.label = nls.localize('ai-focused-editor/entities/cards-title', EntityCardsWidget.LABEL);
+    this.title.caption = nls.localize('ai-focused-editor/entities/cards-caption', 'AI Focused Editor character and term cards');
     this.title.iconClass = 'fa fa-address-card';
     this.title.closable = true;
     this.addClass('afe-entity-cards-widget');
@@ -53,7 +54,7 @@ export class EntityCardsWidget extends ReactWidget {
   protected render(): React.ReactNode {
     const snapshot = this.snapshot;
     if (!snapshot) {
-      return React.createElement('div', { className: 'afe-entity-cards' }, 'Loading knowledge cards...');
+      return React.createElement('div', { className: 'afe-entity-cards' }, nls.localize('ai-focused-editor/entities/loading-cards', 'Loading knowledge cards...'));
     }
 
     this.mentionIndex = this.buildMentionIndex(snapshot);
@@ -68,21 +69,21 @@ export class EntityCardsWidget extends ReactWidget {
       React.createElement(
         'div',
         { className: 'afe-entity-cards-header' },
-        React.createElement('h3', undefined, 'Knowledge Cards'),
+        React.createElement('h3', undefined, nls.localize('ai-focused-editor/entities/cards-title', 'Knowledge Cards')),
         React.createElement(
           'button',
           {
             className: 'theia-button secondary',
             onClick: () => this.refresh()
           },
-          'Refresh'
+          nls.localize('ai-focused-editor/entities/refresh', 'Refresh')
         )
       ),
       this.renderDiagnostics(snapshot),
-      this.renderEntityGroup('Characters', 'character', characters),
-      this.renderEntityGroup('Artifacts', 'artifact', artifacts),
-      this.renderEntityGroup('Locations', 'location', locations),
-      this.renderEntityGroup('Terms', 'term', terms)
+      this.renderEntityGroup(nls.localize('ai-focused-editor/entities/group-characters', 'Characters'), 'character', characters),
+      this.renderEntityGroup(nls.localize('ai-focused-editor/entities/group-artifacts', 'Artifacts'), 'artifact', artifacts),
+      this.renderEntityGroup(nls.localize('ai-focused-editor/entities/group-locations', 'Locations'), 'location', locations),
+      this.renderEntityGroup(nls.localize('ai-focused-editor/entities/group-terms', 'Terms'), 'term', terms)
     );
   }
 
@@ -115,7 +116,7 @@ export class EntityCardsWidget extends ReactWidget {
       { className: `afe-entity-group ${kind}` },
       React.createElement('h4', undefined, `${title} (${entities.length})`),
       entities.length === 0
-        ? React.createElement('p', { className: 'afe-empty-state' }, `No ${kind} entities found.`)
+        ? React.createElement('p', { className: 'afe-empty-state' }, nls.localize('ai-focused-editor/entities/no-entities', 'No {0} entities found.', kind))
         : React.createElement(
           'div',
           { className: 'afe-entity-card-list' },
@@ -141,10 +142,10 @@ export class EntityCardsWidget extends ReactWidget {
       ),
       React.createElement('div', { className: 'afe-entity-id' }, entity.id),
       entity.aliases.length > 0
-        ? React.createElement('div', { className: 'afe-entity-aliases' }, `Aliases: ${entity.aliases.join(', ')}`)
+        ? React.createElement('div', { className: 'afe-entity-aliases' }, nls.localize('ai-focused-editor/entities/aliases-line', 'Aliases: {0}', entity.aliases.join(', ')))
         : undefined,
       epithets.length > 0
-        ? React.createElement('div', { className: 'afe-entity-epithets' }, `Epithets: ${epithets.join(', ')}`)
+        ? React.createElement('div', { className: 'afe-entity-epithets' }, nls.localize('ai-focused-editor/entities/epithets-line', 'Epithets: {0}', epithets.join(', ')))
         : undefined,
       entity.summary
         ? React.createElement('p', { className: 'afe-entity-summary' }, ...this.renderMentionText(entity.summary, `${entity.uri}-summary`))
@@ -153,22 +154,22 @@ export class EntityCardsWidget extends ReactWidget {
         ? React.createElement(
           'div',
           { className: 'afe-entity-arc' },
-          React.createElement('span', { className: 'afe-entity-field-label' }, 'Arc: '),
+          React.createElement('span', { className: 'afe-entity-field-label' }, nls.localize('ai-focused-editor/entities/arc-label', 'Arc: ')),
           ...this.renderMentionText(entity.arc, `${entity.uri}-arc`)
         )
         : undefined,
       speechPatterns.length > 0
-        ? this.renderCollapsible('Speech patterns', React.createElement(
+        ? this.renderCollapsible(nls.localize('ai-focused-editor/entities/field-speech-patterns', 'Speech patterns'), React.createElement(
           'ul',
           { className: 'afe-entity-speech-list' },
           ...speechPatterns.map((pattern, index) => React.createElement('li', { key: index }, pattern))
         ))
         : undefined,
       entity.backstory
-        ? this.renderCollapsible('Backstory', React.createElement('p', { className: 'afe-entity-backstory' }, ...this.renderMentionText(entity.backstory, `${entity.uri}-backstory`)))
+        ? this.renderCollapsible(nls.localize('ai-focused-editor/entities/field-backstory', 'Backstory'), React.createElement('p', { className: 'afe-entity-backstory' }, ...this.renderMentionText(entity.backstory, `${entity.uri}-backstory`)))
         : undefined,
       entity.notes
-        ? this.renderCollapsible('Notes', React.createElement('p', { className: 'afe-entity-notes' }, ...this.renderMentionText(entity.notes, `${entity.uri}-notes`)))
+        ? this.renderCollapsible(nls.localize('ai-focused-editor/entities/field-notes', 'Notes'), React.createElement('p', { className: 'afe-entity-notes' }, ...this.renderMentionText(entity.notes, `${entity.uri}-notes`)))
         : undefined,
       React.createElement('code', { className: 'afe-entity-path' }, entity.path),
       React.createElement(
@@ -177,7 +178,7 @@ export class EntityCardsWidget extends ReactWidget {
           className: 'theia-button',
           onClick: () => this.openEntity(entity)
         },
-        'Open YAML'
+        nls.localize('ai-focused-editor/entities/open-yaml', 'Open YAML')
       )
     );
   }
@@ -239,13 +240,13 @@ export class EntityCardsWidget extends ReactWidget {
         return React.createElement('span', {
           key,
           className: 'afe-entity-mention unknown',
-          title: `Unknown entity: ${mention.kind ? `${mention.kind}:` : ''}${mention.id}`
+          title: nls.localize('ai-focused-editor/entities/unknown-entity', 'Unknown entity: {0}', `${mention.kind ? `${mention.kind}:` : ''}${mention.id}`)
         }, display);
       }
       return React.createElement('span', {
         key,
         className: 'afe-entity-mention',
-        title: `Open ${entity.kind}: ${entity.label}`,
+        title: nls.localize('ai-focused-editor/entities/open-entity', 'Open {0}: {1}', entity.kind, entity.label),
         role: 'link',
         tabIndex: 0,
         onClick: () => this.openEntity(entity),

@@ -3,6 +3,7 @@ import {
   CommandRegistry,
   MenuModelRegistry
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { AiDebugWidget } from './ai-debug-widget';
@@ -12,20 +13,29 @@ import {
 } from './ai-focused-editor-menu';
 
 export namespace AiDebugCommands {
-  export const OPEN: Command = {
-    id: 'ai-focused-editor.aiDebug.open',
-    label: 'AI Focused Editor: Open AI Debug View'
-  };
+  export const OPEN: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.aiDebug.open',
+      label: 'AI Focused Editor: Open AI Debug View'
+    },
+    'ai-focused-editor/ai-config/open-debug'
+  );
 
-  export const REFRESH: Command = {
-    id: 'ai-focused-editor.aiDebug.refresh',
-    label: 'AI Focused Editor: Refresh AI Debug View'
-  };
+  export const REFRESH: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.aiDebug.refresh',
+      label: 'AI Focused Editor: Refresh AI Debug View'
+    },
+    'ai-focused-editor/ai-config/refresh-debug'
+  );
 
-  export const COPY_SNAPSHOT: Command = {
-    id: 'ai-focused-editor.aiDebug.copySnapshot',
-    label: 'AI Focused Editor: Copy AI Debug Snapshot'
-  };
+  export const COPY_SNAPSHOT: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.aiDebug.copySnapshot',
+      label: 'AI Focused Editor: Copy AI Debug Snapshot'
+    },
+    'ai-focused-editor/ai-config/copy-debug-snapshot'
+  );
 }
 
 @injectable()

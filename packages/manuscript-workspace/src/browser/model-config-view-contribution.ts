@@ -3,6 +3,7 @@ import {
   CommandRegistry,
   MenuModelRegistry
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { ModelConfigWidget } from './model-config-widget';
@@ -12,15 +13,21 @@ import {
 } from './ai-focused-editor-menu';
 
 export namespace ModelConfigCommands {
-  export const OPEN: Command = {
-    id: 'ai-focused-editor.modelConfig.open',
-    label: 'AI Focused Editor: Open AI Model Config'
-  };
+  export const OPEN: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.modelConfig.open',
+      label: 'AI Focused Editor: Open AI Model Config'
+    },
+    'ai-focused-editor/ai-config/open-model-config'
+  );
 
-  export const REFRESH: Command = {
-    id: 'ai-focused-editor.modelConfig.refresh',
-    label: 'AI Focused Editor: Refresh AI Model Config'
-  };
+  export const REFRESH: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.modelConfig.refresh',
+      label: 'AI Focused Editor: Refresh AI Model Config'
+    },
+    'ai-focused-editor/ai-config/refresh-model-config'
+  );
 }
 
 @injectable()

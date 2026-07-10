@@ -3,6 +3,7 @@ import {
   CommandRegistry,
   MenuModelRegistry
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import {
   PreferenceScope,
   PreferenceService
@@ -23,20 +24,33 @@ import {
 } from './ai-focused-editor-menu';
 
 export namespace SemanticMarkdownPreviewCommands {
-  export const OPEN: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.preview.open',
-    label: 'AI Focused Editor: Open Semantic Markdown Preview'
-  };
+  // en labels stay inline as the source of truth; ru comes from
+  // i18n/ru/editor.json keyed by `ai-focused-editor/editor/*`. The product-name
+  // prefix lives inside the label (not a `category`), so only a label key is
+  // passed to `Command.toLocalizedCommand`.
+  export const OPEN: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.preview.open',
+      label: 'AI Focused Editor: Open Semantic Markdown Preview'
+    },
+    'ai-focused-editor/editor/preview-open'
+  );
 
-  export const REFRESH: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.preview.refresh',
-    label: 'AI Focused Editor: Refresh Semantic Markdown Preview'
-  };
+  export const REFRESH: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.preview.refresh',
+      label: 'AI Focused Editor: Refresh Semantic Markdown Preview'
+    },
+    'ai-focused-editor/editor/preview-refresh'
+  );
 
-  export const TOGGLE_TAG_CHIPS: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.preview.toggleTagChips',
-    label: 'AI Focused Editor: Toggle Semantic Tag Chips in Preview'
-  };
+  export const TOGGLE_TAG_CHIPS: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.preview.toggleTagChips',
+      label: 'AI Focused Editor: Toggle Semantic Tag Chips in Preview'
+    },
+    'ai-focused-editor/editor/preview-toggle-tag-chips'
+  );
 }
 
 @injectable()
@@ -52,7 +66,7 @@ export class SemanticMarkdownPreviewContribution extends AbstractViewContributio
       id: 'ai-focused-editor.preview.toolbar',
       command: SemanticMarkdownPreviewCommands.OPEN.id,
       icon: 'codicon codicon-open-preview',
-      tooltip: 'Open Markdown Preview',
+      tooltip: nls.localize('ai-focused-editor/editor/preview-toolbar-tooltip', 'Open Markdown Preview'),
       priority: 0,
       isVisible: (widget: Widget) => widget instanceof EditorWidget
         && widget.editor.uri.path.ext.toLowerCase() === '.md'

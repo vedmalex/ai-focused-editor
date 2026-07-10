@@ -6,6 +6,7 @@ import {
   MenuModelRegistry,
   MessageService
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 import URI from '@theia/core/lib/common/uri';
 import {
@@ -49,8 +50,8 @@ import {
   AiFocusedEditorMenus
 } from './ai-focused-editor-menu';
 
-const OPEN_BUILD_ACTION = 'Open Build';
-const COPY_PATH_ACTION = 'Copy Path';
+const OPEN_BUILD_ACTION = nls.localize('ai-focused-editor/build/open-build-action', 'Open Build');
+const COPY_PATH_ACTION = nls.localize('ai-focused-editor/build/copy-path-action', 'Copy Path');
 const OUTPUT_CHANNEL_NAME = 'AI Focused Editor';
 
 interface LastBuildOutput {
@@ -60,37 +61,61 @@ interface LastBuildOutput {
 }
 
 export namespace AiFocusedEditorBookBuildCommands {
-  export const BUILD_MARKDOWN: Command = {
-    id: 'ai-focused-editor.bookBuild.buildMarkdown',
-    label: 'AI Focused Editor: Build Manuscript Markdown'
-  };
+  // en labels stay inline as the source of truth; ru comes from
+  // i18n/ru/build.json keyed by `ai-focused-editor/build/*`.
+  const CATEGORY_KEY = 'ai-focused-editor/build/category';
 
-  export const BUILD_HTML: Command = {
-    id: 'ai-focused-editor.bookBuild.buildHtml',
-    label: 'AI Focused Editor: Build Manuscript HTML'
-  };
+  export const BUILD_MARKDOWN: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.bookBuild.buildMarkdown',
+      label: 'AI Focused Editor: Build Manuscript Markdown'
+    },
+    'ai-focused-editor/build/build-markdown'
+  );
 
-  export const BUILD_EPUB: Command = {
-    id: 'ai-focused-editor.bookBuild.epub',
-    category: 'AI Focused Editor',
-    label: 'Build Manuscript EPUB'
-  };
+  export const BUILD_HTML: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.bookBuild.buildHtml',
+      label: 'AI Focused Editor: Build Manuscript HTML'
+    },
+    'ai-focused-editor/build/build-html'
+  );
 
-  export const BUILD_PDF: Command = {
-    id: 'ai-focused-editor.bookBuild.pdf',
-    category: 'AI Focused Editor',
-    label: 'Build Manuscript PDF'
-  };
+  export const BUILD_EPUB: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.bookBuild.epub',
+      category: 'AI Focused Editor',
+      label: 'Build Manuscript EPUB'
+    },
+    'ai-focused-editor/build/build-epub',
+    CATEGORY_KEY
+  );
 
-  export const OPEN_LAST_BUILD: Command = {
-    id: 'ai-focused-editor.bookBuild.openLastBuild',
-    label: 'AI Focused Editor: Open Last Manuscript Build'
-  };
+  export const BUILD_PDF: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.bookBuild.pdf',
+      category: 'AI Focused Editor',
+      label: 'Build Manuscript PDF'
+    },
+    'ai-focused-editor/build/build-pdf',
+    CATEGORY_KEY
+  );
 
-  export const COPY_LAST_BUILD_PATH: Command = {
-    id: 'ai-focused-editor.bookBuild.copyLastBuildPath',
-    label: 'AI Focused Editor: Copy Last Build Path'
-  };
+  export const OPEN_LAST_BUILD: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.bookBuild.openLastBuild',
+      label: 'AI Focused Editor: Open Last Manuscript Build'
+    },
+    'ai-focused-editor/build/open-last-build'
+  );
+
+  export const COPY_LAST_BUILD_PATH: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.bookBuild.copyLastBuildPath',
+      label: 'AI Focused Editor: Copy Last Build Path'
+    },
+    'ai-focused-editor/build/copy-last-build-path'
+  );
 }
 
 @injectable()
@@ -181,7 +206,11 @@ export class BookBuildContribution implements CommandContribution, MenuContribut
   protected async build(format: BookBuildFormat): Promise<void> {
     const snapshot = await this.manuscriptWorkspace.getSnapshot();
     if (!snapshot.rootUri) {
-      await this.messages.warn(`Open a manuscript workspace before building ${format.toUpperCase()}.`);
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/build/open-workspace-before-build',
+        'Open a manuscript workspace before building {0}.',
+        format.toUpperCase()
+      ));
       return;
     }
 
@@ -204,22 +233,33 @@ export class BookBuildContribution implements CommandContribution, MenuContribut
       });
       if (!taskInfo) {
         channel.appendLine('[book-build] Task did not start.', OutputChannelSeverity.Warning);
-        await this.messages.warn('Book build task did not start.');
+        await this.messages.warn(nls.localize('ai-focused-editor/build/task-did-not-start', 'Book build task did not start.'));
         return;
       }
 
       channel.appendLine(`[book-build] Task started: ${taskInfo.taskId}`);
       this.watchBuildTaskExit(taskInfo, output, channel);
-      await this.messages.info(`${format.toUpperCase()} book build task started. Follow progress in the task terminal or AI Focused Editor output channel.`);
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/build/task-started',
+        '{0} book build task started. Follow progress in the task terminal or AI Focused Editor output channel.',
+        format.toUpperCase()
+      ));
     } catch (error) {
       channel.appendLine(`[book-build] Failed to start task: ${error instanceof Error ? error.message : String(error)}`, OutputChannelSeverity.Error);
-      await this.messages.error(`Book build failed: ${error instanceof Error ? error.message : String(error)}`);
+      await this.messages.error(nls.localize(
+        'ai-focused-editor/build/build-failed-error',
+        'Book build failed: {0}',
+        error instanceof Error ? error.message : String(error)
+      ));
     }
   }
 
   protected async openLastBuild(): Promise<void> {
     if (!this.lastBuild) {
-      await this.messages.warn('Run Build Manuscript Markdown before opening the last build.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/build/run-before-open-last',
+        'Run Build Manuscript Markdown before opening the last build.'
+      ));
       return;
     }
     await this.openBuild(this.lastBuild);
@@ -227,7 +267,10 @@ export class BookBuildContribution implements CommandContribution, MenuContribut
 
   protected async copyLastBuildPath(): Promise<void> {
     if (!this.lastBuild) {
-      await this.messages.warn('Run Build Manuscript Markdown before copying the output path.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/build/run-before-copy-path',
+        'Run Build Manuscript Markdown before copying the output path.'
+      ));
       return;
     }
     await this.copyBuildPath(this.lastBuild);
@@ -239,7 +282,10 @@ export class BookBuildContribution implements CommandContribution, MenuContribut
 
   protected async copyBuildPath(result: LastBuildOutput): Promise<void> {
     await this.clipboard.writeText(result.outputPath);
-    await this.messages.info('Book build output path copied to clipboard.');
+    await this.messages.info(nls.localize(
+      'ai-focused-editor/build/path-copied',
+      'Book build output path copied to clipboard.'
+    ));
   }
 
   protected createBuildTask(rootUri: string, format: BookBuildFormat): BookBuildTaskConfiguration {
@@ -261,7 +307,11 @@ export class BookBuildContribution implements CommandContribution, MenuContribut
         focus: false,
         clear: true
       },
-      detail: `Build the colocated manuscript workspace into ${this.defaultOutputPathFor(format)}.`
+      detail: nls.localize(
+        'ai-focused-editor/build/task-detail',
+        'Build the colocated manuscript workspace into {0}.',
+        this.defaultOutputPathFor(format)
+      )
     };
   }
 
@@ -318,7 +368,7 @@ export class BookBuildContribution implements CommandContribution, MenuContribut
     if (event.code === 0) {
       channel.appendLine(`[book-build] Completed successfully. Output: ${output.outputPath}`);
       const action = await this.messages.info(
-        `Book build completed. Output: ${output.outputPath}`,
+        nls.localize('ai-focused-editor/build/build-completed', 'Book build completed. Output: {0}', output.outputPath),
         OPEN_BUILD_ACTION,
         COPY_PATH_ACTION
       );
@@ -331,9 +381,17 @@ export class BookBuildContribution implements CommandContribution, MenuContribut
     }
 
     const reason = event.signal
-      ? `signal ${event.signal}`
-      : `exit code ${event.code ?? 'unknown'}`;
+      ? nls.localize('ai-focused-editor/build/reason-signal', 'signal {0}', event.signal)
+      : nls.localize(
+          'ai-focused-editor/build/reason-exit-code',
+          'exit code {0}',
+          event.code ?? nls.localize('ai-focused-editor/build/unknown-exit-code', 'unknown')
+        );
     channel.appendLine(`[book-build] Failed with ${reason}.`, OutputChannelSeverity.Error);
-    await this.messages.error(`Book build failed with ${reason}. See the task terminal for details.`);
+    await this.messages.error(nls.localize(
+      'ai-focused-editor/build/build-failed-with-reason',
+      'Book build failed with {0}. See the task terminal for details.',
+      reason
+    ));
   }
 }

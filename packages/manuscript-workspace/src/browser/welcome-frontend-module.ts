@@ -8,6 +8,7 @@ import {
   QuickPickItem
 } from '@theia/core/lib/common';
 import URI from '@theia/core/lib/common/uri';
+import { nls } from '@theia/core/lib/common/nls';
 import { PreferenceService } from '@theia/core/lib/common/preferences';
 import {
   ApplicationShell,
@@ -58,8 +59,8 @@ const NEW_BOOK_ORDER = '-1_new_book';
 
 /** Available languages offered in the wizard's language step. */
 const LANGUAGE_PRESETS: readonly { label: string; code: string }[] = [
-  { label: 'Russian (ru)', code: 'ru' },
-  { label: 'English (en)', code: 'en' }
+  { label: nls.localize('ai-focused-editor/welcome/language-preset-ru', 'Russian (ru)'), code: 'ru' },
+  { label: nls.localize('ai-focused-editor/welcome/language-preset-en', 'English (en)'), code: 'en' }
 ];
 
 /** Outcome of one wizard step: a value, a request to go back, or a cancel (Esc). */
@@ -205,14 +206,16 @@ export class WelcomeContribution
     while (index < totalSteps) {
       if (index === 0) {
         const result = await this.inputStep({
-          title: 'New Book — 1/4: title',
+          title: nls.localize('ai-focused-editor/welcome/wizard-step1-title', 'New Book — 1/4: title'),
           step: 1,
           totalSteps,
-          prompt: 'Book title',
-          placeholder: 'e.g. The Great Novel',
+          prompt: nls.localize('ai-focused-editor/welcome/wizard-title-prompt', 'Book title'),
+          placeholder: nls.localize('ai-focused-editor/welcome/wizard-title-placeholder', 'e.g. The Great Novel'),
           value: state.title,
           showBack: false,
-          validate: value => (value.trim() ? undefined : 'Title cannot be empty.')
+          validate: value => (value.trim()
+            ? undefined
+            : nls.localize('ai-focused-editor/welcome/wizard-title-empty', 'Title cannot be empty.'))
         });
         if (result.type !== 'value') {
           return; // step 1 has no Back, so cancel === abort
@@ -221,11 +224,11 @@ export class WelcomeContribution
         index = 1;
       } else if (index === 1) {
         const result = await this.inputStep({
-          title: 'New Book — 2/4: author',
+          title: nls.localize('ai-focused-editor/welcome/wizard-step2-title', 'New Book — 2/4: author'),
           step: 2,
           totalSteps,
-          prompt: 'Author (optional)',
-          placeholder: 'e.g. Jane Doe',
+          prompt: nls.localize('ai-focused-editor/welcome/wizard-author-prompt', 'Author (optional)'),
+          placeholder: nls.localize('ai-focused-editor/welcome/wizard-author-placeholder', 'e.g. Jane Doe'),
           value: state.author,
           showBack: true
         });
@@ -281,13 +284,17 @@ export class WelcomeContribution
     while (true) {
       const items: LanguagePick[] = [
         ...LANGUAGE_PRESETS.map(preset => ({ label: preset.label, code: preset.code })),
-        { label: 'Other...', description: 'enter a custom language code', other: true }
+        {
+          label: nls.localize('ai-focused-editor/welcome/wizard-language-other-label', 'Other...'),
+          description: nls.localize('ai-focused-editor/welcome/wizard-language-other-description', 'enter a custom language code'),
+          other: true
+        }
       ];
       const picked = await this.pickStep<LanguagePick>({
-        title: 'New Book — 3/4: language',
+        title: nls.localize('ai-focused-editor/welcome/wizard-step3-title', 'New Book — 3/4: language'),
         step: 3,
         totalSteps: 4,
-        placeholder: 'Choose the book language',
+        placeholder: nls.localize('ai-focused-editor/welcome/wizard-language-placeholder', 'Choose the book language'),
         items,
         showBack: true
       });
@@ -301,14 +308,16 @@ export class WelcomeContribution
       // "Other...": free-text code, whose Back returns to this language picker.
       const isCustomCurrent = current.trim() !== '' && !LANGUAGE_PRESETS.some(preset => preset.code === current);
       const free = await this.inputStep({
-        title: 'New Book — 3/4: language',
+        title: nls.localize('ai-focused-editor/welcome/wizard-step3-title', 'New Book — 3/4: language'),
         step: 3,
         totalSteps: 4,
-        prompt: 'Language code',
-        placeholder: 'e.g. fr, de, es, uk',
+        prompt: nls.localize('ai-focused-editor/welcome/wizard-language-code-prompt', 'Language code'),
+        placeholder: nls.localize('ai-focused-editor/welcome/wizard-language-code-placeholder', 'e.g. fr, de, es, uk'),
         value: isCustomCurrent ? current : '',
         showBack: true,
-        validate: value => (value.trim() ? undefined : 'Language code cannot be empty.')
+        validate: value => (value.trim()
+          ? undefined
+          : nls.localize('ai-focused-editor/welcome/wizard-language-code-empty', 'Language code cannot be empty.'))
       });
       if (free.type === 'cancel') {
         return { type: 'cancel' };
@@ -329,7 +338,7 @@ export class WelcomeContribution
     const startFolder = this.workspaceService.tryGetRoots()[0];
     const selection = await this.fileDialogService.showOpenDialog(
       {
-        title: 'New Book — 4/4: choose the parent folder',
+        title: nls.localize('ai-focused-editor/welcome/wizard-step4-choose-parent-title', 'New Book — 4/4: choose the parent folder'),
         canSelectFiles: false,
         canSelectFolders: true,
         canSelectMany: false
@@ -342,23 +351,35 @@ export class WelcomeContribution
     }
 
     const nameResult = await this.inputStep({
-      title: 'New Book — 4/4: folder name',
+      title: nls.localize('ai-focused-editor/welcome/wizard-step4-name-title', 'New Book — 4/4: folder name'),
       step: 4,
       totalSteps: 4,
-      prompt: `New book folder inside ${this.labelProvider.getLongName(parentUri)}`,
-      placeholder: 'book-folder-name',
+      prompt: nls.localize(
+        'ai-focused-editor/welcome/wizard-folder-prompt',
+        'New book folder inside {0}',
+        this.labelProvider.getLongName(parentUri)
+      ),
+      placeholder: nls.localize('ai-focused-editor/welcome/wizard-folder-placeholder', 'book-folder-name'),
       value: defaultName,
       showBack: true,
       validate: async value => {
         const trimmed = value.trim();
         if (!trimmed) {
-          return 'Folder name cannot be empty.';
+          return nls.localize('ai-focused-editor/welcome/wizard-folder-empty', 'Folder name cannot be empty.');
         }
         if (/[\\/]/.test(trimmed)) {
-          return 'Folder name must not contain path separators.';
+          return nls.localize(
+            'ai-focused-editor/welcome/wizard-folder-separators',
+            'Folder name must not contain path separators.'
+          );
         }
         const exists = await this.fileService.exists(parentUri.resolve(trimmed));
-        return exists ? 'A file or folder with this name already exists here.' : undefined;
+        return exists
+          ? nls.localize(
+              'ai-focused-editor/welcome/wizard-folder-exists',
+              'A file or folder with this name already exists here.'
+            )
+          : undefined;
       }
     });
     if (nameResult.type === 'cancel') {
@@ -388,7 +409,11 @@ export class WelcomeContribution
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.messages.error(`Could not create the book: ${detail}`);
+      await this.messages.error(nls.localize(
+        'ai-focused-editor/welcome/wizard-create-failed',
+        'Could not create the book: {0}',
+        detail
+      ));
       return;
     }
     // Reloads the window into the new workspace folder.

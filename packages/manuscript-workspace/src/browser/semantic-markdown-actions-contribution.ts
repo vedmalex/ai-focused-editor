@@ -13,6 +13,7 @@ import {
   MessageService,
   QuickInputService
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import URI from '@theia/core/lib/common/uri';
 import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 import { open, OpenerService } from '@theia/core/lib/browser';
@@ -45,60 +46,97 @@ import {
 type SemanticQuickActionKind = 'char' | 'term' | 'artifact' | 'location';
 
 export namespace SemanticMarkdownActionCommands {
-  export const WRAP_SELECTION_AS_CHARACTER: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.wrapSelectionAsCharacter',
-    label: 'AI Focused Editor: Wrap Selection as Character Tag'
-  };
+  // en labels stay inline as the source of truth; ru comes from
+  // i18n/ru/editor.json keyed by `ai-focused-editor/editor/*`. These commands
+  // carry the product-name prefix inside the label (not a `category`), so only a
+  // label key is passed to `Command.toLocalizedCommand`.
+  export const WRAP_SELECTION_AS_CHARACTER: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.wrapSelectionAsCharacter',
+      label: 'AI Focused Editor: Wrap Selection as Character Tag'
+    },
+    'ai-focused-editor/editor/wrap-selection-as-character'
+  );
 
-  export const WRAP_SELECTION_AS_TERM: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.wrapSelectionAsTerm',
-    label: 'AI Focused Editor: Wrap Selection as Term Tag'
-  };
+  export const WRAP_SELECTION_AS_TERM: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.wrapSelectionAsTerm',
+      label: 'AI Focused Editor: Wrap Selection as Term Tag'
+    },
+    'ai-focused-editor/editor/wrap-selection-as-term'
+  );
 
-  export const WRAP_SELECTION_AS_ARTIFACT: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.wrapSelectionAsArtifact',
-    label: 'AI Focused Editor: Wrap Selection as Artifact Tag'
-  };
+  export const WRAP_SELECTION_AS_ARTIFACT: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.wrapSelectionAsArtifact',
+      label: 'AI Focused Editor: Wrap Selection as Artifact Tag'
+    },
+    'ai-focused-editor/editor/wrap-selection-as-artifact'
+  );
 
-  export const WRAP_SELECTION_AS_LOCATION: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.wrapSelectionAsLocation',
-    label: 'AI Focused Editor: Wrap Selection as Location Tag'
-  };
+  export const WRAP_SELECTION_AS_LOCATION: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.wrapSelectionAsLocation',
+      label: 'AI Focused Editor: Wrap Selection as Location Tag'
+    },
+    'ai-focused-editor/editor/wrap-selection-as-location'
+  );
 
-  export const SAVE_SELECTION_AS_CHARACTER: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.saveSelectionAsCharacter',
-    label: 'AI Focused Editor: Save Selection as New Character...'
-  };
+  export const SAVE_SELECTION_AS_CHARACTER: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.saveSelectionAsCharacter',
+      label: 'AI Focused Editor: Save Selection as New Character...'
+    },
+    'ai-focused-editor/editor/save-selection-as-character'
+  );
 
-  export const SAVE_SELECTION_AS_TERM: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.saveSelectionAsTerm',
-    label: 'AI Focused Editor: Save Selection as New Term...'
-  };
+  export const SAVE_SELECTION_AS_TERM: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.saveSelectionAsTerm',
+      label: 'AI Focused Editor: Save Selection as New Term...'
+    },
+    'ai-focused-editor/editor/save-selection-as-term'
+  );
 
-  export const SAVE_SELECTION_AS_ARTIFACT: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.saveSelectionAsArtifact',
-    label: 'AI Focused Editor: Save Selection as New Artifact...'
-  };
+  export const SAVE_SELECTION_AS_ARTIFACT: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.saveSelectionAsArtifact',
+      label: 'AI Focused Editor: Save Selection as New Artifact...'
+    },
+    'ai-focused-editor/editor/save-selection-as-artifact'
+  );
 
-  export const SAVE_SELECTION_AS_LOCATION: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.saveSelectionAsLocation',
-    label: 'AI Focused Editor: Save Selection as New Location...'
-  };
+  export const SAVE_SELECTION_AS_LOCATION: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.saveSelectionAsLocation',
+      label: 'AI Focused Editor: Save Selection as New Location...'
+    },
+    'ai-focused-editor/editor/save-selection-as-location'
+  );
 
-  export const COPY_TAG_SUMMARY: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.copyTagSummary',
-    label: 'AI Focused Editor: Copy Semantic Tag Summary'
-  };
+  export const COPY_TAG_SUMMARY: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.copyTagSummary',
+      label: 'AI Focused Editor: Copy Semantic Tag Summary'
+    },
+    'ai-focused-editor/editor/copy-tag-summary'
+  );
 
-  export const NORMALIZE_TAGS: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.normalizeTags',
-    label: 'AI Focused Editor: Normalize Semantic Markdown Tags'
-  };
+  export const NORMALIZE_TAGS: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.normalizeTags',
+      label: 'AI Focused Editor: Normalize Semantic Markdown Tags'
+    },
+    'ai-focused-editor/editor/normalize-tags'
+  );
 
-  export const INSERT_FOOTNOTE: Command = {
-    id: 'ai-focused-editor.semanticMarkdown.insertFootnote',
-    label: 'AI Focused Editor: Insert Footnote'
-  };
+  export const INSERT_FOOTNOTE: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.semanticMarkdown.insertFootnote',
+      label: 'AI Focused Editor: Insert Footnote'
+    },
+    'ai-focused-editor/editor/insert-footnote'
+  );
 
   /**
    * Internal jump target used by the footnote link provider's `command:` links;
@@ -221,28 +259,43 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
   protected async wrapSelection(kind: SemanticQuickActionKind): Promise<void> {
     const editor = this.getMarkdownEditor();
     if (!editor) {
-      await this.messages.warn('Open a Markdown editor before wrapping a semantic tag.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/wrap-open-editor',
+        'Open a Markdown editor before wrapping a semantic tag.'
+      ));
       return;
     }
 
     const selectedText = editor.document.getText(editor.selection);
     const label = selectedText.trim();
     if (!label) {
-      await this.messages.warn('Select text before wrapping it as a semantic tag.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/wrap-select-text',
+        'Select text before wrapping it as a semantic tag.'
+      ));
       return;
     }
     if (/[\r\n]/.test(label)) {
-      await this.messages.warn('Semantic tag quick actions support single-line selections only.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/wrap-single-line-only',
+        'Semantic tag quick actions support single-line selections only.'
+      ));
       return;
     }
     if (label.startsWith('[[') && label.endsWith(']]')) {
-      await this.messages.warn('Selection already looks like a semantic tag.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/wrap-already-tag',
+        'Selection already looks like a semantic tag.'
+      ));
       return;
     }
 
     const safeLabel = label.replace(/[|\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
     if (!safeLabel) {
-      await this.messages.warn('Selection cannot be converted to a semantic tag label.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/wrap-invalid-label',
+        'Selection cannot be converted to a semantic tag label.'
+      ));
       return;
     }
 
@@ -259,9 +312,17 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
     });
 
     if (replaced) {
-      await this.messages.info(`Wrapped selection as ${this.getKindLabel(kind)} tag: ${kind}:${id}`);
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/editor/wrap-success',
+        'Wrapped selection as {0} tag: {1}',
+        this.getKindLabel(kind),
+        `${kind}:${id}`
+      ));
     } else {
-      await this.messages.warn('Theia editor did not apply the semantic tag replacement.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/wrap-not-applied',
+        'Theia editor did not apply the semantic tag replacement.'
+      ));
     }
   }
 
@@ -280,29 +341,43 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
   protected async saveSelectionAsEntity(kind: CreatableEntityKind): Promise<void> {
     const editor = this.getMarkdownEditor();
     if (!editor) {
-      await this.messages.warn('Open a Markdown editor before saving a selection as an entity.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/save-open-editor',
+        'Open a Markdown editor before saving a selection as an entity.'
+      ));
       return;
     }
 
     const selection = editor.selection;
     const selectedText = editor.document.getText(selection);
     if (!selectedText.trim()) {
-      await this.messages.warn('Select text before saving it as a new entity.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/save-select-text',
+        'Select text before saving it as a new entity.'
+      ));
       return;
     }
 
     const root = await this.getRoot();
     if (!root) {
-      await this.messages.warn('Open a manuscript workspace before saving a selection as an entity.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/save-open-workspace',
+        'Open a manuscript workspace before saving a selection as an entity.'
+      ));
       return;
     }
 
+    // `kindLabel` is the English entity-kind noun from `common/entity-creation`
+    // (out of scope for ru this wave); passed as `{0}` so the surrounding
+    // sentence localizes while the noun stays as the source-of-truth English.
     const kindLabel = ENTITY_KIND_LABEL[kind];
     const rawName = await this.quickInput.input({
-      title: `Save Selection as New ${kindLabel}`,
-      prompt: `${kindLabel} name`,
+      title: nls.localize('ai-focused-editor/editor/save-entity-title', 'Save Selection as New {0}', kindLabel),
+      prompt: nls.localize('ai-focused-editor/editor/save-entity-name-prompt', '{0} name', kindLabel),
       value: suggestEntityName(selectedText),
-      validateInput: async value => (value.trim() ? undefined : `${kindLabel} name cannot be empty.`)
+      validateInput: async value => (value.trim()
+        ? undefined
+        : nls.localize('ai-focused-editor/editor/save-entity-name-empty', '{0} name cannot be empty.', kindLabel))
     });
     if (rawName === undefined) {
       return;
@@ -336,7 +411,12 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
       }));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.messages.error(`Could not save ${kindLabel.toLowerCase()}: ${detail}`);
+      await this.messages.error(nls.localize(
+        'ai-focused-editor/editor/save-entity-failed',
+        'Could not save {0}: {1}',
+        kindLabel.toLowerCase(),
+        detail
+      ));
       return;
     }
 
@@ -356,42 +436,67 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
     }
 
     await open(this.openerService, fileUri);
-    await this.messages.info(`Saved selection as ${kindLabel.toLowerCase()} ${tagKind}:${finalId}`);
+    await this.messages.info(nls.localize(
+      'ai-focused-editor/editor/save-entity-success',
+      'Saved selection as {0} {1}',
+      kindLabel.toLowerCase(),
+      `${tagKind}:${finalId}`
+    ));
   }
 
   protected async copyTagSummary(): Promise<void> {
     const editor = this.getMarkdownEditor();
     if (!editor) {
-      await this.messages.warn('Open a Markdown editor before copying semantic tag summary.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/copy-open-editor',
+        'Open a Markdown editor before copying semantic tag summary.'
+      ));
       return;
     }
 
     const tags = parseSemanticMarkdown(editor.document.getText()).tags;
     if (tags.length === 0) {
-      await this.messages.warn('No semantic tags found in the active Markdown editor.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/copy-no-tags',
+        'No semantic tags found in the active Markdown editor.'
+      ));
       return;
     }
 
     const lines = [
-      `# Semantic Tags: ${editor.uri.path.base}`,
+      `# ${nls.localize('ai-focused-editor/editor/copy-summary-heading', 'Semantic Tags: {0}', editor.uri.path.base)}`,
       '',
-      ...tags.map(tag => `- ${tag.kind}:${tag.id} -> ${tag.label} (line ${tag.range.start.line + 1})`)
+      ...tags.map(tag => `- ${tag.kind}:${tag.id} -> ${tag.label} (${nls.localize(
+        'ai-focused-editor/editor/copy-summary-line',
+        'line {0}',
+        tag.range.start.line + 1
+      )})`)
     ];
     await this.clipboard.writeText(lines.join('\n'));
-    await this.messages.info(`Copied ${tags.length} semantic tag(s) to clipboard.`);
+    await this.messages.info(nls.localize(
+      'ai-focused-editor/editor/copy-success',
+      'Copied {0} semantic tag(s) to clipboard.',
+      tags.length
+    ));
   }
 
   protected async normalizeTags(): Promise<void> {
     const editor = this.getMarkdownEditor();
     if (!editor) {
-      await this.messages.warn('Open a Markdown editor before normalizing semantic tags.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/normalize-open-editor',
+        'Open a Markdown editor before normalizing semantic tags.'
+      ));
       return;
     }
 
     const text = editor.document.getText();
     const normalized = normalizeSemanticMarkdownTags(text);
     if (normalized === text) {
-      await this.messages.info('Semantic Markdown tags are already normalized.');
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/editor/normalize-already',
+        'Semantic Markdown tags are already normalized.'
+      ));
       return;
     }
 
@@ -404,9 +509,15 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
     });
 
     if (replaced) {
-      await this.messages.info('Semantic Markdown tags normalized.');
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/editor/normalize-done',
+        'Semantic Markdown tags normalized.'
+      ));
     } else {
-      await this.messages.warn('Theia editor did not apply semantic tag normalization.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/normalize-not-applied',
+        'Theia editor did not apply semantic tag normalization.'
+      ));
     }
   }
 
@@ -418,7 +529,10 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
   protected async insertFootnote(): Promise<void> {
     const editor = this.getMarkdownEditor();
     if (!editor) {
-      await this.messages.warn('Open a Markdown editor before inserting a footnote.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/footnote-open-editor',
+        'Open a Markdown editor before inserting a footnote.'
+      ));
       return;
     }
 
@@ -435,7 +549,10 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
       }]
     });
     if (!referenceApplied) {
-      await this.messages.warn('Theia editor did not insert the footnote reference.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/footnote-reference-not-applied',
+        'Theia editor did not insert the footnote reference.'
+      ));
       return;
     }
 
@@ -463,12 +580,19 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
       }]
     });
     if (!definitionApplied) {
-      await this.messages.warn('Theia editor did not insert the footnote definition.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/editor/footnote-definition-not-applied',
+        'Theia editor did not insert the footnote definition.'
+      ));
       return;
     }
 
     this.moveCaretToDefinition(editor, definitionMarker);
-    await this.messages.info(`Inserted footnote [^${number}]; type the note after the marker.`);
+    await this.messages.info(nls.localize(
+      'ai-focused-editor/editor/footnote-inserted',
+      'Inserted footnote [^{0}]; type the note after the marker.',
+      number
+    ));
   }
 
   protected moveCaretToDefinition(editor: TextEditor, definitionMarker: string): void {
@@ -545,13 +669,13 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
   protected getKindLabel(kind: SemanticQuickActionKind): string {
     switch (kind) {
       case 'char':
-        return 'character';
+        return nls.localize('ai-focused-editor/editor/kind-character', 'character');
       case 'term':
-        return 'term';
+        return nls.localize('ai-focused-editor/editor/kind-term', 'term');
       case 'artifact':
-        return 'artifact';
+        return nls.localize('ai-focused-editor/editor/kind-artifact', 'artifact');
       case 'location':
-        return 'location';
+        return nls.localize('ai-focused-editor/editor/kind-location', 'location');
     }
   }
 

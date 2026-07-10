@@ -5,6 +5,7 @@ import {
   MessageService
 } from '@theia/core/lib/common';
 import URI from '@theia/core/lib/common/uri';
+import { nls } from '@theia/core/lib/common/nls';
 import { PreferenceService } from '@theia/core/lib/common/preferences';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { FileDialogService } from '@theia/filesystem/lib/browser';
@@ -99,7 +100,7 @@ interface AliasLegDraft {
 @injectable()
 export class ModelConfigWidget extends ReactWidget {
   static readonly ID = 'ai-focused-editor.model-config';
-  static readonly LABEL = 'AI Model Config';
+  static readonly LABEL = nls.localize('ai-focused-editor/ai-config/model-config-label', 'AI Model Config');
 
   @inject(AiProfilePreferenceService)
   protected readonly aiProfilePreferences!: AiProfilePreferenceService;
@@ -143,7 +144,7 @@ export class ModelConfigWidget extends ReactWidget {
   protected init(): void {
     this.id = ModelConfigWidget.ID;
     this.title.label = ModelConfigWidget.LABEL;
-    this.title.caption = 'AI Focused Editor model/provider configuration';
+    this.title.caption = nls.localize('ai-focused-editor/ai-config/model-config-caption', 'AI Focused Editor model/provider configuration');
     this.title.iconClass = 'fa fa-sliders';
     this.title.closable = true;
     this.addClass('afe-model-config-widget');
@@ -203,13 +204,13 @@ export class ModelConfigWidget extends ReactWidget {
   protected render(): React.ReactNode {
     const status = this.status;
     if (!status) {
-      return React.createElement('div', { className: 'afe-model-config' }, 'Loading AI connection...');
+      return React.createElement('div', { className: 'afe-model-config' }, nls.localize('ai-focused-editor/ai-config/loading', 'Loading AI connection...'));
     }
 
     return React.createElement(
       'div',
       { className: 'afe-model-config' },
-      React.createElement('h3', undefined, 'AI Connections'),
+      React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-config/connections-heading', 'AI Connections')),
       this.renderTopStatus(status),
       this.renderEndpointsSection(),
       this.renderAliasesSection(),
@@ -222,15 +223,17 @@ export class ModelConfigWidget extends ReactWidget {
     const summary = status.summary;
     let message: string;
     if (status.notConfigured) {
-      message = 'No AI connection configured yet — add a profile or alias below.';
+      message = nls.localize('ai-focused-editor/ai-config/status-not-configured', 'No AI connection configured yet — add a profile or alias below.');
     } else if (!status.configured) {
-      message = `Active connection incomplete: ${status.missing.join(', ')}`;
+      message = nls.localize('ai-focused-editor/ai-config/status-incomplete', 'Active connection incomplete: {0}', status.missing.join(', '));
     } else if (summary.aliasMode) {
       const endpoint = summary.activeEndpointLabel || summary.activeEndpoint;
-      const pin = summary.pinnedEndpoint ? `, pinned: ${summary.pinnedEndpoint}` : '';
-      message = `Alias "${summary.activeAliasLabel}" → ${endpoint} ready (${summary.chainLength} endpoint(s) available${pin}).`;
+      const pin = summary.pinnedEndpoint
+        ? nls.localize('ai-focused-editor/ai-config/status-pin-suffix', ', pinned: {0}', summary.pinnedEndpoint)
+        : '';
+      message = nls.localize('ai-focused-editor/ai-config/status-alias-ready', 'Alias "{0}" → {1} ready ({2} endpoint(s) available{3}).', summary.activeAliasLabel, endpoint, summary.chainLength, pin);
     } else {
-      message = `Active profile ready (${summary.chainLength} profile(s) in the failover chain).`;
+      message = nls.localize('ai-focused-editor/ai-config/status-profile-ready', 'Active profile ready ({0} profile(s) in the failover chain).', summary.chainLength);
     }
     return React.createElement(
       'div',
@@ -244,21 +247,23 @@ export class ModelConfigWidget extends ReactWidget {
     return React.createElement(
       'div',
       { className: 'afe-model-config-section' },
-      React.createElement('h3', undefined, 'AI Profiles'),
+      React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-config/profiles-heading', 'AI Profiles')),
       React.createElement(
         'p',
         { className: 'afe-model-config-help' },
-        'Profiles are single provider/model connections. Aliases (above) supersede them: whenever at least one alias exists, resolution runs through the active alias chain, and profiles serve as the fallback when no alias is defined.'
+        nls.localize('ai-focused-editor/ai-config/profiles-help', 'Profiles are single provider/model connections. Aliases (above) supersede them: whenever at least one alias exists, resolution runs through the active alias chain, and profiles serve as the fallback when no alias is defined.')
       ),
       hasProfiles
         ? undefined
         : React.createElement(
             'p',
             { className: 'afe-model-config-help afe-model-config-empty' },
-            'No AI profiles yet — add one below.'
+            nls.localize('ai-focused-editor/ai-config/profiles-empty', 'No AI profiles yet — add one below.')
           ),
       this.renderProfileList(),
-      React.createElement('h4', undefined, this.draft.id ? `Edit Profile: ${this.draft.label || this.draft.id}` : 'New Profile'),
+      React.createElement('h4', undefined, this.draft.id
+        ? nls.localize('ai-focused-editor/ai-config/edit-profile', 'Edit Profile: {0}', this.draft.label || this.draft.id)
+        : nls.localize('ai-focused-editor/ai-config/new-profile', 'New Profile')),
       React.createElement(
         'form',
         {
@@ -268,18 +273,18 @@ export class ModelConfigWidget extends ReactWidget {
             void this.saveDraft();
           }
         },
-        this.renderTextInput('Profile Label', 'label', 'display name, e.g. Local Proxy / Anthropic'),
+        this.renderTextInput(nls.localize('ai-focused-editor/ai-config/field-profile-label', 'Profile Label'), 'label', nls.localize('ai-focused-editor/ai-config/field-profile-label-ph', 'display name, e.g. Local Proxy / Anthropic')),
         this.renderProviderInput(),
         this.renderModelInput(),
         this.renderTransportInput(),
-        this.renderTextInput('Account ID', 'profileId', 'optional ai-connect account id'),
-        this.renderTextInput('Endpoint', 'endpointUrl', 'optional endpoint URL'),
-        this.renderTextInput('Allowed Models', 'allowedModels', 'optional comma-separated shortlist'),
+        this.renderTextInput(nls.localize('ai-focused-editor/ai-config/field-account-id', 'Account ID'), 'profileId', nls.localize('ai-focused-editor/ai-config/field-account-id-ph', 'optional ai-connect account id')),
+        this.renderTextInput(nls.localize('ai-focused-editor/ai-config/field-endpoint', 'Endpoint'), 'endpointUrl', nls.localize('ai-focused-editor/ai-config/field-endpoint-ph', 'optional endpoint URL')),
+        this.renderTextInput(nls.localize('ai-focused-editor/ai-config/field-allowed-models', 'Allowed Models'), 'allowedModels', nls.localize('ai-focused-editor/ai-config/field-allowed-models-ph', 'optional comma-separated shortlist')),
         this.renderSecretInput(),
         React.createElement(
           'div',
           { className: 'afe-model-config-actions' },
-          React.createElement('button', { className: 'theia-button main', type: 'submit' }, 'Save Profile'),
+          React.createElement('button', { className: 'theia-button main', type: 'submit' }, nls.localize('ai-focused-editor/ai-config/save-profile', 'Save Profile')),
           React.createElement(
             'button',
             {
@@ -288,17 +293,17 @@ export class ModelConfigWidget extends ReactWidget {
               disabled: !status.configured,
               onClick: () => this.commandService.executeCommand(AiFocusedEditorCommands.VERIFY_AI_PROFILE.id)
             },
-            'Verify Active'
+            nls.localize('ai-focused-editor/ai-config/verify-active', 'Verify Active')
           ),
           React.createElement(
             'button',
             {
               className: 'theia-button',
               type: 'button',
-              title: 'Fill endpoint and model for a local ai-connect proxy on 127.0.0.1:8045',
+              title: nls.localize('ai-focused-editor/ai-config/use-local-proxy-title', 'Fill endpoint and model for a local ai-connect proxy on 127.0.0.1:8045'),
               onClick: () => this.applyLocalProxyDefaults()
             },
-            'Use Local Proxy'
+            nls.localize('ai-focused-editor/ai-config/use-local-proxy', 'Use Local Proxy')
           ),
           React.createElement(
             'button',
@@ -306,10 +311,12 @@ export class ModelConfigWidget extends ReactWidget {
               className: 'theia-button',
               type: 'button',
               disabled: this.discovering || !this.draft.provider.trim(),
-              title: 'Query the configured endpoint for its available models',
+              title: nls.localize('ai-focused-editor/ai-config/discover-models-title', 'Query the configured endpoint for its available models'),
               onClick: () => { void this.discoverModels(); }
             },
-            this.discovering ? 'Discovering...' : 'Discover Models'
+            this.discovering
+              ? nls.localize('ai-focused-editor/ai-config/discovering', 'Discovering...')
+              : nls.localize('ai-focused-editor/ai-config/discover-models', 'Discover Models')
           )
         )
       ),
@@ -317,7 +324,7 @@ export class ModelConfigWidget extends ReactWidget {
       React.createElement(
         'p',
         { className: 'afe-model-config-help' },
-        'Profiles are saved in workspace settings; API keys are saved per profile in user settings and never echoed back. An API key is only required for the api transport (acp/cli/server authorize through the underlying agent). The failover chain tries the active profile first, then the remaining enabled profiles in list order.'
+        nls.localize('ai-focused-editor/ai-config/profiles-help-2', 'Profiles are saved in workspace settings; API keys are saved per profile in user settings and never echoed back. An API key is only required for the api transport (acp/cli/server authorize through the underlying agent). The failover chain tries the active profile first, then the remaining enabled profiles in list order.')
       )
     );
   }
@@ -363,7 +370,7 @@ export class ModelConfigWidget extends ReactWidget {
           type: 'radio',
           name: 'afe-active-profile',
           checked: descriptor.active,
-          title: 'Set as active profile',
+          title: nls.localize('ai-focused-editor/ai-config/set-active-profile-title', 'Set as active profile'),
           onChange: () => { void this.setActive(descriptor.id); }
         }),
         React.createElement(
@@ -371,35 +378,37 @@ export class ModelConfigWidget extends ReactWidget {
           {
             className: 'afe-model-config-profile-name',
             type: 'button',
-            title: descriptor.configured ? 'Edit this profile' : `Incomplete: ${descriptor.missing.join(', ')}`,
+            title: descriptor.configured
+              ? nls.localize('ai-focused-editor/ai-config/edit-this-profile-title', 'Edit this profile')
+              : nls.localize('ai-focused-editor/ai-config/incomplete-title', 'Incomplete: {0}', descriptor.missing.join(', ')),
             onClick: () => this.selectProfile(descriptor.id)
           },
-          `${descriptor.label} — ${descriptor.provider || '?'} / ${descriptor.model || '?'} (${descriptor.transportKind})${descriptor.configured ? '' : ' ⚠'}${descriptor.enabled ? '' : ' [disabled]'}`
+          `${descriptor.label} — ${descriptor.provider || '?'} / ${descriptor.model || '?'} (${descriptor.transportKind})${descriptor.configured ? '' : ' ⚠'}${descriptor.enabled ? '' : nls.localize('ai-focused-editor/ai-config/disabled-suffix', ' [disabled]')}`
         ),
         React.createElement('button', {
           className: 'theia-button secondary',
           type: 'button',
           disabled: index === 0,
-          title: 'Move up in the failover order',
+          title: nls.localize('ai-focused-editor/ai-config/move-up-title', 'Move up in the failover order'),
           onClick: () => { void this.moveProfile(descriptor.id, -1); }
         }, '↑'),
         React.createElement('button', {
           className: 'theia-button secondary',
           type: 'button',
           disabled: index === this.descriptors.length - 1,
-          title: 'Move down in the failover order',
+          title: nls.localize('ai-focused-editor/ai-config/move-down-title', 'Move down in the failover order'),
           onClick: () => { void this.moveProfile(descriptor.id, 1); }
         }, '↓'),
         React.createElement('button', {
           className: 'theia-button secondary',
           type: 'button',
-          title: 'Clone profile',
+          title: nls.localize('ai-focused-editor/ai-config/clone-profile-title', 'Clone profile'),
           onClick: () => this.cloneProfile(descriptor.id)
         }, '⧉'),
         React.createElement('button', {
           className: 'theia-button secondary',
           type: 'button',
-          title: 'Delete profile',
+          title: nls.localize('ai-focused-editor/ai-config/delete-profile-title', 'Delete profile'),
           onClick: () => { void this.deleteProfile(descriptor.id); }
         }, '✕')
       )),
@@ -410,7 +419,7 @@ export class ModelConfigWidget extends ReactWidget {
           className: 'theia-button secondary',
           type: 'button',
           onClick: () => this.newProfile()
-        }, '+ New Profile')
+        }, nls.localize('ai-focused-editor/ai-config/new-profile-button', '+ New Profile'))
       )
     );
   }
@@ -441,7 +450,7 @@ export class ModelConfigWidget extends ReactWidget {
     this.draft = {
       ...this.toDraft(stored),
       id: this.uniqueProfileId(`${stored.id}-copy`),
-      label: stored.label ? `${stored.label} (copy)` : ''
+      label: stored.label ? nls.localize('ai-focused-editor/ai-config/copy-label', '{0} (copy)', stored.label) : ''
     };
     this.discovery = undefined;
     this.update();
@@ -463,14 +472,14 @@ export class ModelConfigWidget extends ReactWidget {
       this.selectedId = undefined;
     }
     await this.refresh();
-    this.messages.info(`AI profile "${id}" deleted.`);
+    this.messages.info(nls.localize('ai-focused-editor/ai-config/profile-deleted', 'AI profile "{0}" deleted.', id));
   }
 
   protected async saveDraft(): Promise<void> {
     const provider = this.draft.provider.trim();
     const model = this.draft.model.trim();
     if (!provider || !model) {
-      await this.messages.warn('Provider and model are required to save an AI profile.');
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-config/provider-model-required', 'Provider and model are required to save an AI profile.'));
       return;
     }
 
@@ -495,7 +504,7 @@ export class ModelConfigWidget extends ReactWidget {
     }
     this.selectedId = id;
     await this.refresh();
-    await this.messages.info(`AI profile "${profile.label || id}" saved.`);
+    await this.messages.info(nls.localize('ai-focused-editor/ai-config/profile-saved', 'AI profile "{0}" saved.', profile.label || id));
   }
 
   protected parseAllowedModels(value: string): string[] | undefined {
@@ -523,7 +532,7 @@ export class ModelConfigWidget extends ReactWidget {
     const selectValue = isCustom ? CUSTOM_PROVIDER_OPTION : provider;
 
     const children: React.ReactNode[] = [
-      React.createElement('span', { key: 'label' }, 'Provider'),
+      React.createElement('span', { key: 'label' }, nls.localize('ai-focused-editor/ai-config/field-provider', 'Provider')),
       React.createElement(
         'select',
         {
@@ -531,18 +540,18 @@ export class ModelConfigWidget extends ReactWidget {
           value: selectValue,
           onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.onProviderSelected(event.currentTarget.value)
         },
-        React.createElement('option', { key: '', value: '' }, 'select provider'),
+        React.createElement('option', { key: '', value: '' }, nls.localize('ai-focused-editor/ai-config/select-provider-option', 'select provider')),
         ...this.providerCatalog.map(entry =>
           React.createElement('option', { key: entry.providerId, value: entry.providerId }, `${entry.label} (${entry.providerId})`)
         ),
-        React.createElement('option', { key: CUSTOM_PROVIDER_OPTION, value: CUSTOM_PROVIDER_OPTION }, 'custom provider...')
+        React.createElement('option', { key: CUSTOM_PROVIDER_OPTION, value: CUSTOM_PROVIDER_OPTION }, nls.localize('ai-focused-editor/ai-config/custom-provider-option', 'custom provider...'))
       )
     ];
     if (isCustom || selectValue === CUSTOM_PROVIDER_OPTION) {
       children.push(React.createElement('input', {
         key: 'custom',
         value: provider,
-        placeholder: 'custom provider id, e.g. my-agent',
+        placeholder: nls.localize('ai-focused-editor/ai-config/custom-provider-ph', 'custom provider id, e.g. my-agent'),
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateDraft('provider', event.currentTarget.value)
       }));
     }
@@ -554,10 +563,10 @@ export class ModelConfigWidget extends ReactWidget {
     return React.createElement(
       'label',
       { className: 'afe-model-config-field' },
-      React.createElement('span', undefined, 'Model'),
+      React.createElement('span', undefined, nls.localize('ai-focused-editor/ai-config/field-model', 'Model')),
       React.createElement('input', {
         value: this.draft.model,
-        placeholder: 'provider model id',
+        placeholder: nls.localize('ai-focused-editor/ai-config/model-ph', 'provider model id'),
         list: 'afe-model-config-model-options',
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateDraft('model', event.currentTarget.value)
       }),
@@ -575,21 +584,21 @@ export class ModelConfigWidget extends ReactWidget {
     const provider = this.draft.provider.trim();
     const catalogEntry = this.providerCatalog.find(entry => entry.providerId === provider);
     if (!catalogEntry) {
-      return this.renderSelectInput('Transport', 'transportKind', GENERIC_TRANSPORT_KINDS);
+      return this.renderSelectInput(nls.localize('ai-focused-editor/ai-config/field-transport', 'Transport'), 'transportKind', GENERIC_TRANSPORT_KINDS);
     }
 
     const selectedTransportId = this.draft.transportId.trim();
     return React.createElement(
       'label',
       { className: 'afe-model-config-field' },
-      React.createElement('span', undefined, 'Transport'),
+      React.createElement('span', undefined, nls.localize('ai-focused-editor/ai-config/field-transport', 'Transport')),
       React.createElement(
         'select',
         {
           value: selectedTransportId,
           onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.onTransportSelected(catalogEntry, event.currentTarget.value)
         },
-        React.createElement('option', { key: '', value: '' }, `default (${this.draft.transportKind || 'api'})`),
+        React.createElement('option', { key: '', value: '' }, nls.localize('ai-focused-editor/ai-config/transport-default-option', 'default ({0})', this.draft.transportKind || 'api')),
         ...catalogEntry.transports.map(transport =>
           React.createElement(
             'option',
@@ -611,15 +620,15 @@ export class ModelConfigWidget extends ReactWidget {
       return React.createElement(
         'div',
         { className: 'afe-model-config-discovery' },
-        React.createElement('h4', undefined, 'Discovered Models'),
-        React.createElement('p', undefined, discovery.detail || 'No models reported by the endpoint.')
+        React.createElement('h4', undefined, nls.localize('ai-focused-editor/ai-config/discovered-models', 'Discovered Models')),
+        React.createElement('p', undefined, discovery.detail || nls.localize('ai-focused-editor/ai-config/no-models-reported', 'No models reported by the endpoint.'))
       );
     }
 
     return React.createElement(
       'div',
       { className: 'afe-model-config-discovery' },
-      React.createElement('h4', undefined, `Discovered Models (${discovery.models.length})`),
+      React.createElement('h4', undefined, nls.localize('ai-focused-editor/ai-config/discovered-models-count', 'Discovered Models ({0})', discovery.models.length)),
       discovery.detail
         ? React.createElement('p', { className: 'afe-model-config-discovery-detail' }, discovery.detail)
         : undefined,
@@ -634,7 +643,7 @@ export class ModelConfigWidget extends ReactWidget {
             {
               className: 'theia-button secondary',
               type: 'button',
-              title: model.description || `Use ${model.modelId}`,
+              title: model.description || nls.localize('ai-focused-editor/ai-config/use-model-title', 'Use {0}', model.modelId),
               onClick: () => this.updateDraft('model', model.modelId)
             },
             model.contextLength
@@ -646,10 +655,10 @@ export class ModelConfigWidget extends ReactWidget {
             {
               className: 'theia-button secondary',
               type: 'button',
-              title: 'Add to the allowed models shortlist',
+              title: nls.localize('ai-focused-editor/ai-config/add-to-allowed-title', 'Add to the allowed models shortlist'),
               onClick: () => this.addAllowedModel(model.modelId)
             },
-            '+allow'
+            nls.localize('ai-focused-editor/ai-config/add-allow', '+allow')
           )
         ))
       )
@@ -718,12 +727,12 @@ export class ModelConfigWidget extends ReactWidget {
     try {
       this.discovery = await this.aiConnection.discoverModels(profile);
       if (!this.discovery.ok && this.discovery.models.length === 0) {
-        await this.messages.warn(`Model discovery failed: ${this.discovery.detail || 'endpoint did not report models'}`);
+        await this.messages.warn(nls.localize('ai-focused-editor/ai-config/discovery-failed', 'Model discovery failed: {0}', this.discovery.detail || nls.localize('ai-focused-editor/ai-config/endpoint-no-models', 'endpoint did not report models')));
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       this.discovery = { ok: false, models: [], detail };
-      await this.messages.error(`Model discovery failed: ${detail}`);
+      await this.messages.error(nls.localize('ai-focused-editor/ai-config/discovery-failed', 'Model discovery failed: {0}', detail));
     } finally {
       this.discovering = false;
       this.update();
@@ -782,13 +791,17 @@ export class ModelConfigWidget extends ReactWidget {
     return React.createElement(
       'label',
       { className: 'afe-model-config-field' },
-      React.createElement('span', undefined, hasApiKey ? 'API Key (configured)' : 'API Key'),
+      React.createElement('span', undefined, hasApiKey
+        ? nls.localize('ai-focused-editor/ai-config/api-key-configured', 'API Key (configured)')
+        : nls.localize('ai-focused-editor/ai-config/api-key', 'API Key')),
       React.createElement('input', {
         type: 'password',
         value: this.draft.apiKey,
         placeholder: hasApiKey
-          ? 'leave blank to keep current key'
-          : apiTransport ? 'required for api transport' : 'not needed for this transport',
+          ? nls.localize('ai-focused-editor/ai-config/api-key-keep-ph', 'leave blank to keep current key')
+          : apiTransport
+            ? nls.localize('ai-focused-editor/ai-config/api-key-required-ph', 'required for api transport')
+            : nls.localize('ai-focused-editor/ai-config/api-key-not-needed-ph', 'not needed for this transport'),
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateDraft('apiKey', event.currentTarget.value)
       })
     );
@@ -826,11 +839,11 @@ export class ModelConfigWidget extends ReactWidget {
     return React.createElement(
       'div',
       { className: 'afe-model-config-section' },
-      React.createElement('h3', undefined, 'Endpoints'),
+      React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-config/endpoints-heading', 'Endpoints')),
       React.createElement(
         'p',
         { className: 'afe-model-config-help' },
-        'Endpoints are channels (where/how to reach a provider). Combine them into aliases below. API keys are stored per endpoint in user settings; availability windows gate when an endpoint is used.'
+        nls.localize('ai-focused-editor/ai-config/endpoints-help', 'Endpoints are channels (where/how to reach a provider). Combine them into aliases below. API keys are stored per endpoint in user settings; availability windows gate when an endpoint is used.')
       ),
       React.createElement(
         'ul',
@@ -843,7 +856,7 @@ export class ModelConfigWidget extends ReactWidget {
             className: 'theia-button secondary',
             type: 'button',
             onClick: () => this.newEndpoint()
-          }, '+ New Endpoint')
+          }, nls.localize('ai-focused-editor/ai-config/new-endpoint-button', '+ New Endpoint'))
         )
       ),
       this.renderEndpointForm()
@@ -851,19 +864,23 @@ export class ModelConfigWidget extends ReactWidget {
   }
 
   protected renderEndpointRow(endpoint: AiEndpointDescriptor, index: number): React.ReactNode {
-    const badge = endpoint.availableNow ? '● now' : '○ off-window';
+    const badge = endpoint.availableNow
+      ? nls.localize('ai-focused-editor/ai-config/badge-now', '● now')
+      : nls.localize('ai-focused-editor/ai-config/badge-off-window', '○ off-window');
     const badgeTitle = endpoint.availableNow
-      ? 'Available now'
-      : (endpoint.enabled ? 'Outside its availability window right now' : 'Disabled');
+      ? nls.localize('ai-focused-editor/ai-config/available-now-title', 'Available now')
+      : (endpoint.enabled
+        ? nls.localize('ai-focused-editor/ai-config/outside-window-title', 'Outside its availability window right now')
+        : nls.localize('ai-focused-editor/ai-config/disabled-title', 'Disabled'));
     const notes: string[] = [];
     if (!endpoint.enabled) {
-      notes.push('disabled');
+      notes.push(nls.localize('ai-focused-editor/ai-config/note-disabled', 'disabled'));
     }
     if (!endpoint.hasApiKey && (endpoint.transportKind === 'api' || endpoint.transportKind === 'proxy')) {
-      notes.push('no key');
+      notes.push(nls.localize('ai-focused-editor/ai-config/note-no-key', 'no key'));
     }
     if (endpoint.windowWarning) {
-      notes.push('bad window');
+      notes.push(nls.localize('ai-focused-editor/ai-config/note-bad-window', 'bad window'));
     }
     return React.createElement(
       'li',
@@ -878,7 +895,7 @@ export class ModelConfigWidget extends ReactWidget {
         {
           className: 'afe-model-config-profile-name',
           type: 'button',
-          title: 'Edit this endpoint',
+          title: nls.localize('ai-focused-editor/ai-config/edit-endpoint-title', 'Edit this endpoint'),
           onClick: () => this.selectEndpoint(endpoint.id)
         },
         `${endpoint.label} — ${endpoint.provider || '?'} / ${endpoint.transportKind}${notes.length > 0 ? ` [${notes.join(', ')}]` : ''}`
@@ -887,20 +904,20 @@ export class ModelConfigWidget extends ReactWidget {
         className: 'theia-button secondary',
         type: 'button',
         disabled: index === 0,
-        title: 'Move up',
+        title: nls.localize('ai-focused-editor/ai-config/move-up-generic-title', 'Move up'),
         onClick: () => { void this.moveEndpoint(endpoint.id, -1); }
       }, '↑'),
       React.createElement('button', {
         className: 'theia-button secondary',
         type: 'button',
         disabled: index === this.endpoints.length - 1,
-        title: 'Move down',
+        title: nls.localize('ai-focused-editor/ai-config/move-down-generic-title', 'Move down'),
         onClick: () => { void this.moveEndpoint(endpoint.id, 1); }
       }, '↓'),
       React.createElement('button', {
         className: 'theia-button secondary',
         type: 'button',
-        title: 'Delete endpoint',
+        title: nls.localize('ai-focused-editor/ai-config/delete-endpoint-title', 'Delete endpoint'),
         onClick: () => { void this.deleteEndpoint(endpoint.id); }
       }, '✕')
     );
@@ -917,41 +934,45 @@ export class ModelConfigWidget extends ReactWidget {
           void this.saveEndpointDraft();
         }
       },
-      React.createElement('h4', undefined, editing ? `Edit Endpoint: ${this.endpointDraft.label || this.endpointDraft.originalId}` : 'New Endpoint'),
-      this.renderEndpointTextInput('Endpoint ID', 'id', 'unique id, e.g. gateway-claude', editing),
-      this.renderEndpointTextInput('Label', 'label', 'display name'),
+      React.createElement('h4', undefined, editing
+        ? nls.localize('ai-focused-editor/ai-config/edit-endpoint', 'Edit Endpoint: {0}', this.endpointDraft.label || this.endpointDraft.originalId)
+        : nls.localize('ai-focused-editor/ai-config/new-endpoint', 'New Endpoint')),
+      this.renderEndpointTextInput(nls.localize('ai-focused-editor/ai-config/field-endpoint-id', 'Endpoint ID'), 'id', nls.localize('ai-focused-editor/ai-config/field-endpoint-id-ph', 'unique id, e.g. gateway-claude'), editing),
+      this.renderEndpointTextInput(nls.localize('ai-focused-editor/ai-config/field-label', 'Label'), 'label', nls.localize('ai-focused-editor/ai-config/field-label-ph', 'display name')),
       this.renderEndpointProviderInput(),
       this.renderEndpointTransportInput(),
-      this.renderEndpointTextInput('Endpoint URL', 'endpointUrl', 'optional endpoint URL'),
-      this.renderEndpointTextInput('Command', 'command', 'optional command (acp/cli transports)'),
-      this.renderEndpointTextInput('Availability Windows', 'timeWindows', 'e.g. 1-5 09:00-18:00, 6,7 10:00-14:00 (blank = always)'),
+      this.renderEndpointTextInput(nls.localize('ai-focused-editor/ai-config/field-endpoint-url', 'Endpoint URL'), 'endpointUrl', nls.localize('ai-focused-editor/ai-config/field-endpoint-url-ph', 'optional endpoint URL')),
+      this.renderEndpointTextInput(nls.localize('ai-focused-editor/ai-config/field-command', 'Command'), 'command', nls.localize('ai-focused-editor/ai-config/field-command-ph', 'optional command (acp/cli transports)')),
+      this.renderEndpointTextInput(nls.localize('ai-focused-editor/ai-config/field-windows', 'Availability Windows'), 'timeWindows', nls.localize('ai-focused-editor/ai-config/field-windows-ph', 'e.g. 1-5 09:00-18:00, 6,7 10:00-14:00 (blank = always)')),
       this.renderEndpointSecretInput(),
       this.renderEndpointCheckbox(),
-      this.renderEndpointTextInput('Verify Model', 'verifyModel', 'model id to test-connect with'),
+      this.renderEndpointTextInput(nls.localize('ai-focused-editor/ai-config/field-verify-model', 'Verify Model'), 'verifyModel', nls.localize('ai-focused-editor/ai-config/field-verify-model-ph', 'model id to test-connect with')),
       React.createElement(
         'div',
         { className: 'afe-model-config-actions' },
-        React.createElement('button', { className: 'theia-button main', type: 'submit' }, 'Save Endpoint'),
+        React.createElement('button', { className: 'theia-button main', type: 'submit' }, nls.localize('ai-focused-editor/ai-config/save-endpoint', 'Save Endpoint')),
         React.createElement(
           'button',
           {
             className: 'theia-button',
             type: 'button',
             disabled: this.verifyingEndpoint || !this.endpointDraft.provider.trim() || !this.endpointDraft.verifyModel.trim(),
-            title: 'Test-connect this endpoint with the verify model, without saving or activating',
+            title: nls.localize('ai-focused-editor/ai-config/verify-endpoint-title', 'Test-connect this endpoint with the verify model, without saving or activating'),
             onClick: () => { void this.verifyEndpointDraft(); }
           },
-          this.verifyingEndpoint ? 'Verifying...' : 'Verify'
+          this.verifyingEndpoint
+            ? nls.localize('ai-focused-editor/ai-config/verifying', 'Verifying...')
+            : nls.localize('ai-focused-editor/ai-config/verify', 'Verify')
         ),
         React.createElement(
           'button',
           {
             className: 'theia-button',
             type: 'button',
-            title: 'Fill endpoint URL for a local ai-connect proxy on 127.0.0.1:8045',
+            title: nls.localize('ai-focused-editor/ai-config/use-local-proxy-endpoint-title', 'Fill endpoint URL for a local ai-connect proxy on 127.0.0.1:8045'),
             onClick: () => this.applyEndpointLocalProxyDefaults()
           },
-          'Use Local Proxy'
+          nls.localize('ai-focused-editor/ai-config/use-local-proxy', 'Use Local Proxy')
         )
       )
     );
@@ -963,7 +984,7 @@ export class ModelConfigWidget extends ReactWidget {
     const isCustom = provider.length > 0 && !catalogEntry;
     const selectValue = isCustom ? CUSTOM_PROVIDER_OPTION : provider;
     const children: React.ReactNode[] = [
-      React.createElement('span', { key: 'label' }, 'Provider'),
+      React.createElement('span', { key: 'label' }, nls.localize('ai-focused-editor/ai-config/field-provider', 'Provider')),
       React.createElement(
         'select',
         {
@@ -971,18 +992,18 @@ export class ModelConfigWidget extends ReactWidget {
           value: selectValue,
           onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.onEndpointProviderSelected(event.currentTarget.value)
         },
-        React.createElement('option', { key: '', value: '' }, 'select provider'),
+        React.createElement('option', { key: '', value: '' }, nls.localize('ai-focused-editor/ai-config/select-provider-option', 'select provider')),
         ...this.providerCatalog.map(entry =>
           React.createElement('option', { key: entry.providerId, value: entry.providerId }, `${entry.label} (${entry.providerId})`)
         ),
-        React.createElement('option', { key: CUSTOM_PROVIDER_OPTION, value: CUSTOM_PROVIDER_OPTION }, 'custom provider...')
+        React.createElement('option', { key: CUSTOM_PROVIDER_OPTION, value: CUSTOM_PROVIDER_OPTION }, nls.localize('ai-focused-editor/ai-config/custom-provider-option', 'custom provider...'))
       )
     ];
     if (isCustom || selectValue === CUSTOM_PROVIDER_OPTION) {
       children.push(React.createElement('input', {
         key: 'custom',
         value: provider,
-        placeholder: 'custom provider id, e.g. my-agent',
+        placeholder: nls.localize('ai-focused-editor/ai-config/custom-provider-ph', 'custom provider id, e.g. my-agent'),
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateEndpointDraft('provider', event.currentTarget.value)
       }));
     }
@@ -1015,7 +1036,7 @@ export class ModelConfigWidget extends ReactWidget {
       return React.createElement(
         'label',
         { className: 'afe-model-config-field' },
-        React.createElement('span', undefined, 'Transport'),
+        React.createElement('span', undefined, nls.localize('ai-focused-editor/ai-config/field-transport', 'Transport')),
         React.createElement(
           'select',
           {
@@ -1029,14 +1050,14 @@ export class ModelConfigWidget extends ReactWidget {
     return React.createElement(
       'label',
       { className: 'afe-model-config-field' },
-      React.createElement('span', undefined, 'Transport'),
+      React.createElement('span', undefined, nls.localize('ai-focused-editor/ai-config/field-transport', 'Transport')),
       React.createElement(
         'select',
         {
           value: this.endpointDraft.transportId.trim(),
           onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.onEndpointTransportSelected(catalogEntry, event.currentTarget.value)
         },
-        React.createElement('option', { key: '', value: '' }, `default (${this.endpointDraft.transportKind || 'api'})`),
+        React.createElement('option', { key: '', value: '' }, nls.localize('ai-focused-editor/ai-config/transport-default-option', 'default ({0})', this.endpointDraft.transportKind || 'api')),
         ...catalogEntry.transports.map(transport =>
           React.createElement(
             'option',
@@ -1080,13 +1101,17 @@ export class ModelConfigWidget extends ReactWidget {
     return React.createElement(
       'label',
       { className: 'afe-model-config-field' },
-      React.createElement('span', undefined, hasApiKey ? 'API Key (configured)' : 'API Key'),
+      React.createElement('span', undefined, hasApiKey
+        ? nls.localize('ai-focused-editor/ai-config/api-key-configured', 'API Key (configured)')
+        : nls.localize('ai-focused-editor/ai-config/api-key', 'API Key')),
       React.createElement('input', {
         type: 'password',
         value: this.endpointDraft.apiKey,
         placeholder: hasApiKey
-          ? 'leave blank to keep current key'
-          : apiTransport ? 'required for api transport' : 'not needed for this transport',
+          ? nls.localize('ai-focused-editor/ai-config/api-key-keep-ph', 'leave blank to keep current key')
+          : apiTransport
+            ? nls.localize('ai-focused-editor/ai-config/api-key-required-ph', 'required for api transport')
+            : nls.localize('ai-focused-editor/ai-config/api-key-not-needed-ph', 'not needed for this transport'),
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateEndpointDraft('apiKey', event.currentTarget.value)
       })
     );
@@ -1101,7 +1126,7 @@ export class ModelConfigWidget extends ReactWidget {
         checked: this.endpointDraft.enabled,
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateEndpointDraft('enabled', event.currentTarget.checked)
       }),
-      React.createElement('span', undefined, 'Enabled')
+      React.createElement('span', undefined, nls.localize('ai-focused-editor/ai-config/enabled', 'Enabled'))
     );
   }
 
@@ -1143,7 +1168,7 @@ export class ModelConfigWidget extends ReactWidget {
   protected async saveEndpointDraft(): Promise<void> {
     const provider = this.endpointDraft.provider.trim();
     if (!provider) {
-      await this.messages.warn('A provider is required to save an endpoint.');
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-config/endpoint-provider-required', 'A provider is required to save an endpoint.'));
       return;
     }
     const isNew = !this.endpointDraft.originalId;
@@ -1157,7 +1182,7 @@ export class ModelConfigWidget extends ReactWidget {
     }
     this.selectedEndpointId = id;
     await this.refresh();
-    await this.messages.info(`Endpoint "${endpoint.label || id}" saved.`);
+    await this.messages.info(nls.localize('ai-focused-editor/ai-config/endpoint-saved', 'Endpoint "{0}" saved.', endpoint.label || id));
 
     // Verify-on-configure: after saving a NEW endpoint, auto-run a non-blocking
     // verify ping (result surfaces as a notification).
@@ -1173,7 +1198,7 @@ export class ModelConfigWidget extends ReactWidget {
       this.endpointDraft = this.createEmptyEndpointDraft();
     }
     await this.refresh();
-    await this.messages.info(`Endpoint "${id}" deleted.`);
+    await this.messages.info(nls.localize('ai-focused-editor/ai-config/endpoint-deleted', 'Endpoint "{0}" deleted.', id));
   }
 
   protected async moveEndpoint(id: string, delta: -1 | 1): Promise<void> {
@@ -1185,7 +1210,7 @@ export class ModelConfigWidget extends ReactWidget {
     const provider = this.endpointDraft.provider.trim();
     const model = this.endpointDraft.verifyModel.trim();
     if (!provider || !model) {
-      await this.messages.warn('Provider and a verify model are required to verify an endpoint.');
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-config/endpoint-verify-required', 'Provider and a verify model are required to verify an endpoint.'));
       return;
     }
     const endpoint = this.endpointDraftToStored(this.endpointDraft.id.trim() || provider);
@@ -1197,7 +1222,7 @@ export class ModelConfigWidget extends ReactWidget {
     const profile = this.aiProfilePreferences.buildEndpointProbeProfile(endpoint, model, overrideSecret);
     this.verifyingEndpoint = true;
     this.update();
-    const progress = background ? undefined : await this.messages.showProgress({ text: `Verifying endpoint "${endpoint.id}"...` });
+    const progress = background ? undefined : await this.messages.showProgress({ text: nls.localize('ai-focused-editor/ai-config/verifying-endpoint-progress', 'Verifying endpoint "{0}"...', endpoint.id) });
     try {
       const result = await this.aiConnection.generate(profile, {
         messages: [
@@ -1207,10 +1232,10 @@ export class ModelConfigWidget extends ReactWidget {
         parameters: { maxTokens: 8, temperature: 0 },
         logContext: { command: 'ai-focused-editor.ai.verifyEndpoint', endpointId: endpoint.id }
       });
-      await this.messages.info(`Endpoint "${endpoint.id}" verified via ${result.route?.provider ?? profile.provider}/${result.route?.model ?? model}: ${this.previewText(result.text)}`);
+      await this.messages.info(nls.localize('ai-focused-editor/ai-config/endpoint-verified', 'Endpoint "{0}" verified via {1}/{2}: {3}', endpoint.id, result.route?.provider ?? profile.provider, result.route?.model ?? model, this.previewText(result.text)));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.messages.error(`Endpoint "${endpoint.id}" verification failed: ${detail}`);
+      await this.messages.error(nls.localize('ai-focused-editor/ai-config/endpoint-verify-failed', 'Endpoint "{0}" verification failed: {1}', endpoint.id, detail));
     } finally {
       progress?.cancel();
       this.verifyingEndpoint = false;
@@ -1300,11 +1325,11 @@ export class ModelConfigWidget extends ReactWidget {
     return React.createElement(
       'div',
       { className: 'afe-model-config-section' },
-      React.createElement('h3', undefined, 'Aliases'),
+      React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-config/aliases-heading', 'Aliases')),
       React.createElement(
         'p',
         { className: 'afe-model-config-help' },
-        'Aliases are ordered chains of endpoint → model legs tried in failover order. The active alias (radio) is the default; endpoints that are disabled or outside their availability window are skipped.'
+        nls.localize('ai-focused-editor/ai-config/aliases-help', 'Aliases are ordered chains of endpoint → model legs tried in failover order. The active alias (radio) is the default; endpoints that are disabled or outside their availability window are skipped.')
       ),
       React.createElement(
         'ul',
@@ -1316,14 +1341,14 @@ export class ModelConfigWidget extends ReactWidget {
         { className: 'afe-model-config-actions' },
         React.createElement('input', {
           value: this.newAliasId,
-          placeholder: 'new alias id, e.g. fable',
+          placeholder: nls.localize('ai-focused-editor/ai-config/new-alias-ph', 'new alias id, e.g. fable'),
           onChange: (event: React.ChangeEvent<HTMLInputElement>) => { this.newAliasId = event.currentTarget.value; this.update(); }
         }),
         React.createElement('button', {
           className: 'theia-button secondary',
           type: 'button',
           onClick: () => { void this.addAlias(); }
-        }, '+ Add Alias')
+        }, nls.localize('ai-focused-editor/ai-config/add-alias-button', '+ Add Alias'))
       )
     );
   }
@@ -1339,29 +1364,29 @@ export class ModelConfigWidget extends ReactWidget {
           type: 'radio',
           name: 'afe-active-alias',
           checked: alias.active,
-          title: 'Set as active alias',
+          title: nls.localize('ai-focused-editor/ai-config/set-active-alias-title', 'Set as active alias'),
           onChange: () => { void this.setActiveAlias(alias.id); }
         }),
         React.createElement('span', { className: 'afe-alias-name' },
-          `${alias.label} (${alias.availableLegs}/${alias.chain.length} available now)${alias.enabled ? '' : ' [disabled]'}`),
+          `${alias.label} (${alias.availableLegs}/${alias.chain.length} ${nls.localize('ai-focused-editor/ai-config/available-now-label', 'available now')})${alias.enabled ? '' : nls.localize('ai-focused-editor/ai-config/disabled-suffix', ' [disabled]')}`),
         React.createElement('button', {
           className: 'theia-button secondary',
           type: 'button',
           disabled: index === 0,
-          title: 'Move alias up',
+          title: nls.localize('ai-focused-editor/ai-config/move-alias-up-title', 'Move alias up'),
           onClick: () => { void this.moveAlias(alias.id, -1); }
         }, '↑'),
         React.createElement('button', {
           className: 'theia-button secondary',
           type: 'button',
           disabled: index === this.aliases.length - 1,
-          title: 'Move alias down',
+          title: nls.localize('ai-focused-editor/ai-config/move-alias-down-title', 'Move alias down'),
           onClick: () => { void this.moveAlias(alias.id, 1); }
         }, '↓'),
         React.createElement('button', {
           className: 'theia-button secondary',
           type: 'button',
-          title: 'Delete alias',
+          title: nls.localize('ai-focused-editor/ai-config/delete-alias-title', 'Delete alias'),
           onClick: () => { void this.deleteAlias(alias.id); }
         }, '✕')
       ),
@@ -1371,25 +1396,25 @@ export class ModelConfigWidget extends ReactWidget {
         ...alias.chain.map((leg, legIndex) => React.createElement(
           'li',
           { key: `${leg.endpointId}-${legIndex}`, className: 'afe-alias-leg' },
-          React.createElement('span', { className: 'afe-alias-leg-text' }, `${leg.endpointId} → ${leg.model || '(no model)'}`),
+          React.createElement('span', { className: 'afe-alias-leg-text' }, `${leg.endpointId} → ${leg.model || nls.localize('ai-focused-editor/ai-config/no-model', '(no model)')}`),
           React.createElement('button', {
             className: 'theia-button secondary',
             type: 'button',
             disabled: legIndex === 0,
-            title: 'Move leg up',
+            title: nls.localize('ai-focused-editor/ai-config/move-leg-up-title', 'Move leg up'),
             onClick: () => { void this.moveAliasLeg(alias.id, legIndex, -1); }
           }, '↑'),
           React.createElement('button', {
             className: 'theia-button secondary',
             type: 'button',
             disabled: legIndex === alias.chain.length - 1,
-            title: 'Move leg down',
+            title: nls.localize('ai-focused-editor/ai-config/move-leg-down-title', 'Move leg down'),
             onClick: () => { void this.moveAliasLeg(alias.id, legIndex, 1); }
           }, '↓'),
           React.createElement('button', {
             className: 'theia-button secondary',
             type: 'button',
-            title: 'Remove leg',
+            title: nls.localize('ai-focused-editor/ai-config/remove-leg-title', 'Remove leg'),
             onClick: () => { void this.removeAliasLeg(alias.id, legIndex); }
           }, '✕')
         )),
@@ -1409,21 +1434,21 @@ export class ModelConfigWidget extends ReactWidget {
           value: draft.endpointId,
           onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.updateLegDraft(alias.id, 'endpointId', event.currentTarget.value)
         },
-        React.createElement('option', { key: '', value: '' }, 'select endpoint'),
+        React.createElement('option', { key: '', value: '' }, nls.localize('ai-focused-editor/ai-config/select-endpoint-option', 'select endpoint')),
         ...this.endpoints.map(endpoint =>
           React.createElement('option', { key: endpoint.id, value: endpoint.id }, `${endpoint.label} (${endpoint.id})`)
         )
       ),
       React.createElement('input', {
         value: draft.model,
-        placeholder: 'model id',
+        placeholder: nls.localize('ai-focused-editor/ai-config/leg-model-ph', 'model id'),
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateLegDraft(alias.id, 'model', event.currentTarget.value)
       }),
       React.createElement('button', {
         className: 'theia-button secondary',
         type: 'button',
         onClick: () => { void this.addAliasLeg(alias.id); }
-      }, '+ leg')
+      }, nls.localize('ai-focused-editor/ai-config/add-leg-button', '+ leg'))
     );
   }
 
@@ -1438,13 +1463,13 @@ export class ModelConfigWidget extends ReactWidget {
     await this.aiProfilePreferences.upsertAlias({ id, label: this.newAliasId.trim() || undefined, chain: [] });
     this.newAliasId = '';
     await this.refresh();
-    await this.messages.info(`Alias "${id}" added.`);
+    await this.messages.info(nls.localize('ai-focused-editor/ai-config/alias-added', 'Alias "{0}" added.', id));
   }
 
   protected async deleteAlias(id: string): Promise<void> {
     await this.aiProfilePreferences.deleteAlias(id);
     await this.refresh();
-    await this.messages.info(`Alias "${id}" deleted.`);
+    await this.messages.info(nls.localize('ai-focused-editor/ai-config/alias-deleted', 'Alias "{0}" deleted.', id));
   }
 
   protected async moveAlias(id: string, delta: -1 | 1): Promise<void> {
@@ -1462,7 +1487,7 @@ export class ModelConfigWidget extends ReactWidget {
     const endpointId = draft.endpointId.trim();
     const model = draft.model.trim();
     if (!endpointId || !model) {
-      await this.messages.warn('Select an endpoint and enter a model id to add a chain leg.');
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-config/add-leg-required', 'Select an endpoint and enter a model id to add a chain leg.'));
       return;
     }
     await this.aiProfilePreferences.addAliasLeg(aliasId, { endpointId, model });
@@ -1505,18 +1530,18 @@ export class ModelConfigWidget extends ReactWidget {
         className: 'theia-button secondary',
         type: 'button',
         onClick: () => { void this.importV1Settings(); }
-      }, 'Import ai-editor v1 Settings...'),
+      }, nls.localize('ai-focused-editor/ai-config/import-v1', 'Import ai-editor v1 Settings...')),
       React.createElement(
         'span',
         { className: 'afe-model-config-help' },
-        'Reads .config/rag-endpoints.json + rag-aliases.json and creates endpoints (keys → user settings) and aliases.'
+        nls.localize('ai-focused-editor/ai-config/import-v1-help', 'Reads .config/rag-endpoints.json + rag-aliases.json and creates endpoints (keys → user settings) and aliases.')
       )
     );
   }
 
   protected async importV1Settings(): Promise<void> {
     const selection = await this.fileDialogService.showOpenDialog({
-      title: 'Import ai-editor v1 Settings (pick the .config folder or the two JSON files)',
+      title: nls.localize('ai-focused-editor/ai-config/import-v1-dialog-title', 'Import ai-editor v1 Settings (pick the .config folder or the two JSON files)'),
       canSelectFiles: true,
       canSelectFolders: true,
       canSelectMany: true
@@ -1527,7 +1552,7 @@ export class ModelConfigWidget extends ReactWidget {
     const selected = Array.isArray(selection) ? selection : [selection];
     const located = await this.locateV1Files(selected);
     if (!located.endpointsUri && !located.aliasesUri) {
-      await this.messages.warn('Could not find rag-endpoints.json or rag-aliases.json in the selection.');
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-config/import-v1-not-found', 'Could not find rag-endpoints.json or rag-aliases.json in the selection.'));
       return;
     }
 
@@ -1547,7 +1572,7 @@ export class ModelConfigWidget extends ReactWidget {
 
     await this.refresh();
     await this.messages.info(
-      `Imported ${result.endpoints.length} endpoint(s), ${result.aliases.length} alias(es), ${Object.keys(result.keys).length} key(s) from ai-editor v1.`
+      nls.localize('ai-focused-editor/ai-config/import-v1-done', 'Imported {0} endpoint(s), {1} alias(es), {2} key(s) from ai-editor v1.', result.endpoints.length, result.aliases.length, Object.keys(result.keys).length)
     );
   }
 
@@ -1588,7 +1613,7 @@ export class ModelConfigWidget extends ReactWidget {
       return JSON.parse(content.value) as T;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.messages.warn(`Could not read ${uri.path.base}: ${detail}`);
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-config/read-file-failed', 'Could not read {0}: {1}', uri.path.base, detail));
       return undefined;
     }
   }

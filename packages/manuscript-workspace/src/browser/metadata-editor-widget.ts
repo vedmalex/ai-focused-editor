@@ -1,5 +1,6 @@
 import URI from '@theia/core/lib/common/uri';
 import { MessageService } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { Navigatable } from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
@@ -60,8 +61,12 @@ export class MetadataEditorWidget extends ReactWidget implements Navigatable {
   configure(uri: URI): void {
     this.uri = uri;
     this.id = `${MetadataEditorWidget.FACTORY_ID}:${uri.toString()}`;
-    this.title.label = MetadataEditorWidget.LABEL;
-    this.title.caption = `Book metadata form: ${uri.path.fsPath()}`;
+    this.title.label = nls.localize('ai-focused-editor/book-config/metadata-title', MetadataEditorWidget.LABEL);
+    this.title.caption = nls.localize(
+      'ai-focused-editor/book-config/metadata-caption',
+      'Book metadata form: {0}',
+      uri.path.fsPath()
+    );
     this.title.iconClass = 'fa fa-book';
     this.title.closable = true;
     this.addClass('afe-form-editor-widget');
@@ -223,17 +228,28 @@ export class MetadataEditorWidget extends ReactWidget implements Navigatable {
   protected async save(): Promise<void> {
     const problems = validateMetadata(this.fields);
     if (problems.some(problem => problem.severity === 'error')) {
-      await this.messageService.error('Fix the highlighted metadata problems before saving.');
+      await this.messageService.error(nls.localize(
+        'ai-focused-editor/book-config/fix-problems-before-save',
+        'Fix the highlighted metadata problems before saving.'
+      ));
       return;
     }
     try {
       const content = this.serialize();
       await this.fileService.write(this.uri, content);
       await this.load();
-      await this.messageService.info(`Saved ${this.uri.path.base}.`);
+      await this.messageService.info(nls.localize(
+        'ai-focused-editor/book-config/saved',
+        'Saved {0}.',
+        this.uri.path.base
+      ));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.messageService.error(`Could not save metadata: ${detail}`);
+      await this.messageService.error(nls.localize(
+        'ai-focused-editor/book-config/save-metadata-failed',
+        'Could not save metadata: {0}',
+        detail
+      ));
     }
   }
 
@@ -247,7 +263,7 @@ export class MetadataEditorWidget extends ReactWidget implements Navigatable {
 
   protected render(): React.ReactNode {
     if (this.loading || !this.uri) {
-      return React.createElement('div', { className: 'afe-form-editor' }, 'Loading metadata...');
+      return React.createElement('div', { className: 'afe-form-editor' }, nls.localize('ai-focused-editor/book-config/loading-metadata', 'Loading metadata...'));
     }
 
     const problems = validateMetadata(this.fields);
@@ -257,35 +273,53 @@ export class MetadataEditorWidget extends ReactWidget implements Navigatable {
       React.createElement(
         'div',
         { className: 'afe-form-editor-header' },
-        React.createElement('h3', undefined, 'Book Metadata')
+        React.createElement('h3', undefined, nls.localize('ai-focused-editor/book-config/metadata-title', 'Book Metadata'))
       ),
       this.parseError
         ? React.createElement(
           'div',
           { className: 'afe-form-editor-problem error' },
-          `YAML parse warning: ${this.parseError}`
+          nls.localize('ai-focused-editor/book-config/yaml-parse-warning', 'YAML parse warning: {0}', this.parseError)
         )
         : undefined,
       this.renderProblems(problems),
       React.createElement(
         'div',
         { className: 'afe-form-editor-section' },
-        this.renderInput('Title', 'title', 'book title', true),
-        this.renderInput('Author', 'author', 'author name', false),
-        this.renderInput('Language', 'language', 'e.g. en, ru', true),
+        this.renderInput(
+          nls.localize('ai-focused-editor/book-config/field-title', 'Title'),
+          'title',
+          nls.localize('ai-focused-editor/book-config/field-title-placeholder', 'book title'),
+          true
+        ),
+        this.renderInput(
+          nls.localize('ai-focused-editor/book-config/field-author', 'Author'),
+          'author',
+          nls.localize('ai-focused-editor/book-config/field-author-placeholder', 'author name'),
+          false
+        ),
+        this.renderInput(
+          nls.localize('ai-focused-editor/book-config/field-language', 'Language'),
+          'language',
+          nls.localize('ai-focused-editor/book-config/field-language-placeholder', 'e.g. en, ru'),
+          true
+        ),
         this.renderCoverField()
       ),
       React.createElement(
         'div',
         { className: 'afe-form-editor-section' },
-        React.createElement('h4', { className: 'afe-form-editor-subhead' }, 'Other keys'),
+        React.createElement('h4', { className: 'afe-form-editor-subhead' }, nls.localize('ai-focused-editor/book-config/other-keys', 'Other keys')),
         React.createElement(
           'p',
           { className: 'afe-form-editor-help' },
-          'Any other top-level scalar keys in metadata.yaml. Nested structures (lists/maps) are preserved but not shown here.'
+          nls.localize(
+            'ai-focused-editor/book-config/other-keys-help',
+            'Any other top-level scalar keys in metadata.yaml. Nested structures (lists/maps) are preserved but not shown here.'
+          )
         ),
         this.fields.unknown.length === 0
-          ? React.createElement('p', { className: 'afe-form-editor-empty' }, 'No other keys.')
+          ? React.createElement('p', { className: 'afe-form-editor-empty' }, nls.localize('ai-focused-editor/book-config/no-other-keys', 'No other keys.'))
           : React.createElement(
             'ul',
             { className: 'afe-form-editor-rows' },
@@ -294,7 +328,7 @@ export class MetadataEditorWidget extends ReactWidget implements Navigatable {
         React.createElement(
           'button',
           { className: 'theia-button secondary', type: 'button', onClick: () => this.addUnknown() },
-          'Add key'
+          nls.localize('ai-focused-editor/book-config/add-key', 'Add key')
         )
       ),
       React.createElement(
@@ -303,18 +337,23 @@ export class MetadataEditorWidget extends ReactWidget implements Navigatable {
         React.createElement(
           'button',
           { className: 'theia-button main', type: 'button', onClick: () => { void this.save(); } },
-          this.dirty ? 'Save*' : 'Save'
+          this.dirty
+            ? nls.localize('ai-focused-editor/book-config/save-dirty', 'Save*')
+            : nls.localize('ai-focused-editor/book-config/save', 'Save')
         ),
         React.createElement(
           'button',
           { className: 'theia-button secondary', type: 'button', onClick: () => { void this.load(); } },
-          'Reload from disk'
+          nls.localize('ai-focused-editor/book-config/reload-from-disk', 'Reload from disk')
         )
       ),
       React.createElement(
         'p',
         { className: 'afe-form-editor-help' },
-        'Saving rewrites only edited keys and preserves the file header, comments, and unknown structures. Use "Open With..." to edit the raw file.'
+        nls.localize(
+          'ai-focused-editor/book-config/metadata-help-bottom',
+          'Saving rewrites only edited keys and preserves the file header, comments, and unknown structures. Use "Open With..." to edit the raw file.'
+        )
       )
     );
   }
@@ -361,10 +400,10 @@ export class MetadataEditorWidget extends ReactWidget implements Navigatable {
     return React.createElement(
       'label',
       { className: 'afe-form-editor-field' },
-      React.createElement('span', undefined, 'Cover'),
+      React.createElement('span', undefined, nls.localize('ai-focused-editor/book-config/field-cover', 'Cover')),
       React.createElement('input', {
         value: this.fields.cover,
-        placeholder: 'workspace-relative image path, e.g. cover.png',
+        placeholder: nls.localize('ai-focused-editor/book-config/field-cover-placeholder', 'workspace-relative image path, e.g. cover.png'),
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateField('cover', event.currentTarget.value)
       }),
       this.renderCoverHint()
@@ -374,11 +413,11 @@ export class MetadataEditorWidget extends ReactWidget implements Navigatable {
   protected renderCoverHint(): React.ReactNode {
     switch (this.coverStatus) {
       case 'checking':
-        return React.createElement('span', { className: 'afe-form-editor-hint' }, 'Checking...');
+        return React.createElement('span', { className: 'afe-form-editor-hint' }, nls.localize('ai-focused-editor/book-config/cover-checking', 'Checking...'));
       case 'exists':
-        return React.createElement('span', { className: 'afe-form-editor-hint ok' }, 'File found.');
+        return React.createElement('span', { className: 'afe-form-editor-hint ok' }, nls.localize('ai-focused-editor/book-config/cover-found', 'File found.'));
       case 'missing':
-        return React.createElement('span', { className: 'afe-form-editor-hint warn' }, 'File not found at this path.');
+        return React.createElement('span', { className: 'afe-form-editor-hint warn' }, nls.localize('ai-focused-editor/book-config/cover-missing', 'File not found at this path.'));
       default:
         return undefined;
     }
@@ -391,13 +430,13 @@ export class MetadataEditorWidget extends ReactWidget implements Navigatable {
       React.createElement('input', {
         className: 'afe-form-editor-kv-key',
         value: key,
-        placeholder: 'key',
+        placeholder: nls.localize('ai-focused-editor/book-config/kv-key-placeholder', 'key'),
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateUnknown(index, 'key', event.currentTarget.value)
       }),
       React.createElement('input', {
         className: 'afe-form-editor-kv-value',
         value,
-        placeholder: 'value',
+        placeholder: nls.localize('ai-focused-editor/book-config/kv-value-placeholder', 'value'),
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateUnknown(index, 'value', event.currentTarget.value)
       }),
       React.createElement(
@@ -405,10 +444,10 @@ export class MetadataEditorWidget extends ReactWidget implements Navigatable {
         {
           className: 'theia-button secondary afe-form-editor-delete',
           type: 'button',
-          title: 'Delete this key',
+          title: nls.localize('ai-focused-editor/book-config/delete-key-title', 'Delete this key'),
           onClick: () => this.deleteUnknown(index)
         },
-        'Delete'
+        nls.localize('ai-focused-editor/book-config/delete', 'Delete')
       )
     );
   }

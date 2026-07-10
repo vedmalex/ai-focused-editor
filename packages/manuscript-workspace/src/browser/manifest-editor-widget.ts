@@ -1,5 +1,6 @@
 import URI from '@theia/core/lib/common/uri';
 import { MessageService } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import { Navigatable } from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
@@ -61,8 +62,12 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
   configure(uri: URI): void {
     this.uri = uri;
     this.id = `${ManifestEditorWidget.FACTORY_ID}:${uri.toString()}`;
-    this.title.label = ManifestEditorWidget.LABEL;
-    this.title.caption = `Manifest form: ${uri.path.fsPath()}`;
+    this.title.label = nls.localize('ai-focused-editor/book-config/manifest-title', ManifestEditorWidget.LABEL);
+    this.title.caption = nls.localize(
+      'ai-focused-editor/book-config/manifest-caption',
+      'Manifest form: {0}',
+      uri.path.fsPath()
+    );
     this.title.iconClass = 'fa fa-list-ol';
     this.title.closable = true;
     this.addClass('afe-form-editor-widget');
@@ -190,10 +195,18 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
       const content = this.serialize();
       await this.fileService.write(this.uri, content);
       await this.load();
-      await this.messageService.info(`Saved ${this.uri.path.base}.`);
+      await this.messageService.info(nls.localize(
+        'ai-focused-editor/book-config/saved',
+        'Saved {0}.',
+        this.uri.path.base
+      ));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.messageService.error(`Could not save manifest: ${detail}`);
+      await this.messageService.error(nls.localize(
+        'ai-focused-editor/book-config/save-manifest-failed',
+        'Could not save manifest: {0}',
+        detail
+      ));
     }
   }
 
@@ -207,7 +220,7 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
 
   protected render(): React.ReactNode {
     if (this.loading || !this.uri) {
-      return React.createElement('div', { className: 'afe-form-editor' }, 'Loading manifest...');
+      return React.createElement('div', { className: 'afe-form-editor' }, nls.localize('ai-focused-editor/book-config/loading-manifest', 'Loading manifest...'));
     }
 
     const problems = validateManifestRows(this.rows);
@@ -217,24 +230,27 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
       React.createElement(
         'div',
         { className: 'afe-form-editor-header' },
-        React.createElement('h3', undefined, 'Manifest'),
+        React.createElement('h3', undefined, nls.localize('ai-focused-editor/book-config/manifest-title', 'Manifest')),
         React.createElement('span', { className: 'afe-form-editor-count' }, `${this.rows.length}`)
       ),
       React.createElement(
         'p',
         { className: 'afe-form-editor-help' },
-        'Edit titles and the build "include" flag here; drag rows to reorder or nest them (drop on a part to move inside it). Adding chapters stays in the manuscript navigator tree.'
+        nls.localize(
+          'ai-focused-editor/book-config/manifest-help-top',
+          'Edit titles and the build "include" flag here; drag rows to reorder or nest them (drop on a part to move inside it). Adding chapters stays in the manuscript navigator tree.'
+        )
       ),
       this.parseError
         ? React.createElement(
           'div',
           { className: 'afe-form-editor-problem error' },
-          `YAML parse warning: ${this.parseError}`
+          nls.localize('ai-focused-editor/book-config/yaml-parse-warning', 'YAML parse warning: {0}', this.parseError)
         )
         : undefined,
       this.renderProblems(problems),
       this.rows.length === 0
-        ? React.createElement('p', { className: 'afe-form-editor-empty' }, 'The manifest has no content entries yet. Add a chapter from the navigator tree.')
+        ? React.createElement('p', { className: 'afe-form-editor-empty' }, nls.localize('ai-focused-editor/book-config/manifest-empty', 'The manifest has no content entries yet. Add a chapter from the navigator tree.'))
         : React.createElement(
           'ul',
           { className: 'afe-form-editor-tree' },
@@ -246,18 +262,23 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
         React.createElement(
           'button',
           { className: 'theia-button main', type: 'button', onClick: () => { void this.save(); } },
-          this.dirty ? 'Save*' : 'Save'
+          this.dirty
+            ? nls.localize('ai-focused-editor/book-config/save-dirty', 'Save*')
+            : nls.localize('ai-focused-editor/book-config/save', 'Save')
         ),
         React.createElement(
           'button',
           { className: 'theia-button secondary', type: 'button', onClick: () => { void this.load(); } },
-          'Reload from disk'
+          nls.localize('ai-focused-editor/book-config/reload-from-disk', 'Reload from disk')
         )
       ),
       React.createElement(
         'p',
         { className: 'afe-form-editor-help' },
-        'Saving writes pure YAML and preserves the version key, comments, and entry order. Use "Open With..." to edit the raw file.'
+        nls.localize(
+          'ai-focused-editor/book-config/manifest-help-bottom',
+          'Saving writes pure YAML and preserves the version key, comments, and entry order. Use "Open With..." to edit the raw file.'
+        )
       )
     );
   }
@@ -274,7 +295,10 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
       return;
     }
     if (this.dirty) {
-      this.messageService.warn('Save or reload the manifest before reordering rows.');
+      this.messageService.warn(nls.localize(
+        'ai-focused-editor/book-config/reorder-save-first',
+        'Save or reload the manifest before reordering rows.'
+      ));
       return;
     }
 
@@ -284,7 +308,11 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
 
     const result = await this.manuscriptWorkspace.moveEntry(sourcePath, moveTarget);
     if (!result.ok) {
-      this.messageService.warn(`Move failed: ${result.message ?? 'unknown error'}`);
+      this.messageService.warn(nls.localize(
+        'ai-focused-editor/book-config/move-failed',
+        'Move failed: {0}',
+        result.message ?? nls.localize('ai-focused-editor/book-config/unknown-error', 'unknown error')
+      ));
       return;
     }
     await this.load();
@@ -335,10 +363,10 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
         },
         onDragEnd: () => { this.dragPath = undefined; }
       },
-      React.createElement('span', { className: 'afe-form-editor-drag-handle codicon codicon-gripper', title: 'Drag to reorder' }),
+      React.createElement('span', { className: 'afe-form-editor-drag-handle codicon codicon-gripper', title: nls.localize('ai-focused-editor/book-config/drag-to-reorder', 'Drag to reorder') }),
       React.createElement(
         'label',
-        { className: 'afe-form-editor-include', title: 'Include in build' },
+        { className: 'afe-form-editor-include', title: nls.localize('ai-focused-editor/book-config/include-in-build', 'Include in build') },
         React.createElement('input', {
           type: 'checkbox',
           checked: row.include,
@@ -351,7 +379,7 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
         React.createElement('input', {
           className: 'afe-form-editor-tree-title',
           value: row.title,
-          placeholder: 'title',
+          placeholder: nls.localize('ai-focused-editor/book-config/manifest-title-placeholder', 'title'),
           onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateTitle(index, event.currentTarget.value)
         }),
         React.createElement('span', { className: 'afe-form-editor-tree-path', title: row.path }, row.path)

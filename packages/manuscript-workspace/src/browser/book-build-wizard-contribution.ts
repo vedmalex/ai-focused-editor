@@ -10,6 +10,7 @@ import {
   QuickInputService,
   QuickPickItem
 } from '@theia/core/lib/common';
+import { nls } from '@theia/core/lib/common/nls';
 import URI from '@theia/core/lib/common/uri';
 import {
   open,
@@ -41,11 +42,17 @@ import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import { AFE_MANUSCRIPT_SECTION_CONTEXT_KEY } from './manuscript-tree';
 
 export namespace BookBuildWizardCommands {
-  export const WIZARD: Command = {
-    id: 'ai-focused-editor.bookBuild.wizard',
-    category: 'AI Focused Editor',
-    label: 'Build Book...'
-  };
+  // en labels stay inline as the source of truth; ru comes from
+  // i18n/ru/build.json keyed by `ai-focused-editor/build/*`.
+  export const WIZARD: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.bookBuild.wizard',
+      category: 'AI Focused Editor',
+      label: 'Build Book...'
+    },
+    'ai-focused-editor/build/wizard',
+    'ai-focused-editor/build/category'
+  );
 }
 
 /** Human-readable label per build format (also the `Open <label>` action text). */
@@ -165,7 +172,7 @@ export class BookBuildWizardContribution
       id: 'ai-focused-editor.bookBuild.toolbar.wizard',
       command: BookBuildWizardCommands.WIZARD.id,
       icon: 'codicon codicon-rocket',
-      tooltip: 'Build / Publish Book...',
+      tooltip: nls.localize('ai-focused-editor/build/wizard-toolbar-tooltip', 'Build / Publish Book...'),
       priority: 0,
       isVisible: (widget: Widget) => widget instanceof ManuscriptTreeWidget
     });
@@ -175,7 +182,10 @@ export class BookBuildWizardContribution
     const snapshot = await this.manuscriptWorkspace.getSnapshot();
     const rootUri = snapshot.rootUri;
     if (!rootUri) {
-      await this.messages.warn('Open a manuscript workspace before building the book.');
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/build/open-workspace-before-wizard',
+        'Open a manuscript workspace before building the book.'
+      ));
       return;
     }
 
@@ -188,7 +198,10 @@ export class BookBuildWizardContribution
         return;
       }
       if (picked.length === 0) {
-        await this.messages.info('Select at least one format to build.');
+        await this.messages.info(nls.localize(
+          'ai-focused-editor/build/select-at-least-one',
+          'Select at least one format to build.'
+        ));
         continue;
       }
       selection = picked;
@@ -225,11 +238,11 @@ export class BookBuildWizardContribution
 
     return new Promise<BookBuildFormat[] | undefined>(resolve => {
       const quickPick = this.quickInput.createQuickPick<FormatPickItem>();
-      quickPick.title = 'Build Book — 1/2: formats';
+      quickPick.title = nls.localize('ai-focused-editor/build/wizard-step1-title', 'Build Book — 1/2: formats');
       quickPick.step = 1;
       quickPick.totalSteps = 2;
       quickPick.canSelectMany = true;
-      quickPick.placeholder = 'Select the output formats to build';
+      quickPick.placeholder = nls.localize('ai-focused-editor/build/wizard-step1-placeholder', 'Select the output formats to build');
       quickPick.items = items;
       quickPick.selectedItems = items.filter(item => currentSet.has(item.format));
 
@@ -262,12 +275,12 @@ export class BookBuildWizardContribution
         description: FORMAT_OUTPUT_PATH[format],
         action: 'summary'
       })),
-      { label: '$(rocket) Start build', action: 'start' },
-      { label: '$(arrow-left) Back', action: 'back' }
+      { label: nls.localize('ai-focused-editor/build/start-build', '$(rocket) Start build'), action: 'start' },
+      { label: nls.localize('ai-focused-editor/build/back', '$(arrow-left) Back'), action: 'back' }
     ];
 
     const picked = await this.quickInput.showQuickPick(items, {
-      title: 'Build Book — 2/2: confirm',
+      title: nls.localize('ai-focused-editor/build/wizard-step2-title', 'Build Book — 2/2: confirm'),
       step: 2,
       totalSteps: 2,
       placeholder: this.describeBook(meta)
@@ -282,20 +295,31 @@ export class BookBuildWizardContribution
     for (const format of formats) {
       try {
         const result = await this.progressService.withProgress(
-          `Building ${FORMAT_LABEL[format]}...`,
+          nls.localize('ai-focused-editor/build/building-progress', 'Building {0}...', FORMAT_LABEL[format]),
           'notification',
           () => this.invokeBuild(format, request)
         );
         const errors = result.diagnostics.filter(diagnostic => diagnostic.severity === 'error');
         if (errors.length > 0) {
-          const detail = errors.map(diagnostic => diagnostic.message).join('; ') || 'build reported errors';
-          await this.messages.error(`${FORMAT_LABEL[format]} build failed: ${detail}`);
+          const detail = errors.map(diagnostic => diagnostic.message).join('; ')
+            || nls.localize('ai-focused-editor/build/build-reported-errors', 'build reported errors');
+          await this.messages.error(nls.localize(
+            'ai-focused-editor/build/format-build-failed',
+            '{0} build failed: {1}',
+            FORMAT_LABEL[format],
+            detail
+          ));
           continue;
         }
         built.push({ format, outputUri: result.outputUri, outputPath: result.outputPath });
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        await this.messages.error(`${FORMAT_LABEL[format]} build failed: ${detail}`);
+        await this.messages.error(nls.localize(
+          'ai-focused-editor/build/format-build-failed',
+          '{0} build failed: {1}',
+          FORMAT_LABEL[format],
+          detail
+        ));
       }
     }
 
@@ -303,10 +327,11 @@ export class BookBuildWizardContribution
       return;
     }
 
-    const copyPathsAction = 'Copy Paths';
-    const openActions = built.map(output => `Open ${FORMAT_LABEL[output.format]}`);
+    const copyPathsAction = nls.localize('ai-focused-editor/build/copy-paths-action', 'Copy Paths');
+    const openActions = built.map(output =>
+      nls.localize('ai-focused-editor/build/open-format-action', 'Open {0}', FORMAT_LABEL[output.format]));
     const chosen = await this.messages.info(
-      `Book built: ${built.length} format(s)`,
+      nls.localize('ai-focused-editor/build/book-built-count', 'Book built: {0} format(s)', built.length),
       ...openActions,
       copyPathsAction
     );
@@ -315,10 +340,14 @@ export class BookBuildWizardContribution
     }
     if (chosen === copyPathsAction) {
       await this.clipboard.writeText(built.map(output => output.outputPath).join('\n'));
-      await this.messages.info('Book build output paths copied to clipboard.');
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/build/paths-copied',
+        'Book build output paths copied to clipboard.'
+      ));
       return;
     }
-    const target = built.find(output => `Open ${FORMAT_LABEL[output.format]}` === chosen);
+    const target = built.find(output =>
+      nls.localize('ai-focused-editor/build/open-format-action', 'Open {0}', FORMAT_LABEL[output.format]) === chosen);
     if (target) {
       await open(this.openerService, new URI(target.outputUri));
     }
@@ -361,11 +390,23 @@ export class BookBuildWizardContribution
 
   protected describeBook(meta: BookMeta): string {
     if (meta.title && meta.author) {
-      return `${meta.title} — ${meta.author} · choose "Start build" to begin`;
+      return nls.localize(
+        'ai-focused-editor/build/describe-title-author',
+        '{0} — {1} · choose "Start build" to begin',
+        meta.title,
+        meta.author
+      );
     }
     if (meta.title) {
-      return `${meta.title} · choose "Start build" to begin`;
+      return nls.localize(
+        'ai-focused-editor/build/describe-title',
+        '{0} · choose "Start build" to begin',
+        meta.title
+      );
     }
-    return 'Review the formats, then choose "Start build" to begin';
+    return nls.localize(
+      'ai-focused-editor/build/describe-default',
+      'Review the formats, then choose "Start build" to begin'
+    );
   }
 }
