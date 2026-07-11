@@ -13,6 +13,7 @@ export const AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT = 'aiFocusedEditor.ai.pinnedEn
 export const AI_FOCUSED_EDITOR_AI_REQUEST_LOG = 'aiFocusedEditor.ai.requestLog';
 export const AI_FOCUSED_EDITOR_PREVIEW_SHOW_TAG_CHIPS = 'aiFocusedEditor.preview.showTagChips';
 export const AI_FOCUSED_EDITOR_WELCOME_SHOW_ON_STARTUP = 'aiFocusedEditor.welcome.showOnStartup';
+export const AI_FOCUSED_EDITOR_LIBRARY_PATH = 'aiFocusedEditor.library.path';
 
 export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
   title: 'AI Focused Editor',
@@ -113,6 +114,12 @@ export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
       type: 'boolean',
       default: true,
       description: nls.localize('ai-focused-editor/ai-config/pref-welcome-desc', 'Show the AI Focused Editor welcome page on startup when no files are open. Turn this off to start straight in the editor.')
+    },
+    [AI_FOCUSED_EDITOR_LIBRARY_PATH]: {
+      type: 'string',
+      default: '',
+      scope: PreferenceScope.User,
+      description: nls.localize('ai-focused-editor/ai-config/pref-library-path-desc', 'Folder that holds your books. When set, the welcome page shows a "My Books" catalog built by scanning this folder\'s immediate subfolders (one or two levels deep) for book folders (a folder containing manifest.yaml). Leave empty to hide the catalog. Set it from the welcome page with "Choose books folder...".')
     }
   }
 };

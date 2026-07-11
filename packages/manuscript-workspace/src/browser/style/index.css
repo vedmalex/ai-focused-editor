@@ -2407,6 +2407,102 @@
   width: auto;
 }
 
+/* ---------- welcome: "My Books" catalog ---------- */
+
+.afe-welcome-catalog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.afe-welcome-catalog-pick {
+  min-width: 0;
+  padding: 4px 10px;
+}
+
+.afe-welcome-catalog-empty {
+  margin: 0;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-welcome-catalog-hint {
+  align-items: flex-start;
+}
+
+/*
+ * Responsive card grid: as many ~150px columns as fit, wrapping on narrow
+ * screens down to a single column. Dovetails with the mobile/narrow layout.
+ */
+.afe-welcome-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 14px;
+}
+
+.afe-welcome-book-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  border-radius: 6px;
+  background: var(--theia-editorWidget-background, var(--theia-editor-background));
+  color: var(--theia-foreground);
+  cursor: pointer;
+  text-align: left;
+}
+
+.afe-welcome-book-card:hover {
+  background: var(--theia-list-hoverBackground, rgba(128, 128, 128, 0.12));
+  border-color: var(--theia-focusBorder);
+}
+
+.afe-welcome-book-card:focus-visible {
+  outline: 1px solid var(--theia-focusBorder);
+  outline-offset: -1px;
+}
+
+.afe-welcome-book-cover {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--theia-editor-background);
+}
+
+.afe-welcome-book-cover-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.4em;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-welcome-book-title {
+  font-weight: 600;
+  color: var(--theia-textLink-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.afe-welcome-book-author {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .afe-welcome-catalog-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+}
+
 /* ---------- office document preview ---------- */
 
 .afe-office-preview {

@@ -3,6 +3,8 @@ import { CommandRegistry } from '@theia/core/lib/common/command';
 import { PreferenceScope, PreferenceService } from '@theia/core/lib/common/preferences';
 import { LabelProvider } from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { FileDialogService } from '@theia/filesystem/lib/browser';
+import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import URI from '@theia/core/lib/common/uri';
 import { nls } from '@theia/core/lib/common/nls';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
@@ -13,7 +15,16 @@ import {
   postConstruct
 } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
-import { AI_FOCUSED_EDITOR_WELCOME_SHOW_ON_STARTUP } from './ai-focused-editor-preferences';
+import { parse } from 'yaml';
+import {
+  BookCatalogEntry,
+  buildBookCatalog,
+  RawBookCandidate
+} from '../common/book-catalog';
+import {
+  AI_FOCUSED_EDITOR_LIBRARY_PATH,
+  AI_FOCUSED_EDITOR_WELCOME_SHOW_ON_STARTUP
+} from './ai-focused-editor-preferences';
 
 /**
  * Commands surfaced by the welcome page. Defined here (not in the frontend
@@ -57,6 +68,25 @@ const BOOK_DOCTOR_COMMAND_ID = 'ai-focused-editor.book.doctor';
 const MAX_RECENT = 5;
 
 /**
+ * How many directory levels below the configured library folder we scan for
+ * books. `1` = the library's immediate subfolders; `2` also descends one level
+ * further (e.g. `library/<author>/<book>`) for folders that are not themselves
+ * books — we never descend into a folder that already holds a `manifest.yaml`.
+ */
+const LIBRARY_SCAN_DEPTH = 2;
+
+/** Encode raw bytes as base64 without overflowing the call stack on big buffers. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+  }
+  return btoa(binary);
+}
+
+/**
  * The AI Focused Editor welcome page: a writer-first landing surface shown on
  * startup when no files are open, and reachable any time from the Manuscript
  * menu. It offers the primary entry points (New Book wizard, Open Folder, Book
@@ -85,8 +115,20 @@ export class WelcomeWidget extends ReactWidget {
   @inject(LabelProvider)
   protected readonly labelProvider!: LabelProvider;
 
+  @inject(FileService)
+  protected readonly fileService!: FileService;
+
+  @inject(FileDialogService)
+  protected readonly fileDialogService!: FileDialogService;
+
   /** Newest-first recent workspace URIs, loaded asynchronously after construction. */
   protected recent: string[] = [];
+
+  /** Books discovered under the configured library folder (sorted by title). */
+  protected catalog: BookCatalogEntry[] = [];
+
+  /** False until the first library scan settles (drives the "Scanning…" line). */
+  protected catalogLoaded = false;
 
   @postConstruct()
   protected init(): void {
@@ -100,10 +142,13 @@ export class WelcomeWidget extends ReactWidget {
     this.toDispose.push(this.preferenceService.onPreferenceChanged(change => {
       if (change.preferenceName === AI_FOCUSED_EDITOR_WELCOME_SHOW_ON_STARTUP) {
         this.update();
+      } else if (change.preferenceName === AI_FOCUSED_EDITOR_LIBRARY_PATH) {
+        void this.loadCatalog();
       }
     }));
 
     void this.loadRecent();
+    void this.loadCatalog();
     this.update();
   }
 
@@ -120,12 +165,98 @@ export class WelcomeWidget extends ReactWidget {
     return this.preferenceService.get<boolean>(AI_FOCUSED_EDITOR_WELCOME_SHOW_ON_STARTUP, true) !== false;
   }
 
+  /** Configured library folder as a URI string, or '' when unset. */
+  protected get libraryPath(): string {
+    return (this.preferenceService.get<string>(AI_FOCUSED_EDITOR_LIBRARY_PATH, '') ?? '').trim();
+  }
+
+  /**
+   * Scan the configured library folder for books and rebuild {@link catalog}.
+   * A no-op-safe: an unset path clears the catalog; any scan error leaves an
+   * empty catalog rather than throwing into React.
+   */
+  protected async loadCatalog(): Promise<void> {
+    const configured = this.libraryPath;
+    this.catalogLoaded = false;
+    this.update();
+    if (!configured) {
+      this.catalog = [];
+      this.catalogLoaded = true;
+      this.update();
+      return;
+    }
+    try {
+      const candidates = await this.scanLibrary(new URI(configured), LIBRARY_SCAN_DEPTH);
+      this.catalog = buildBookCatalog(candidates);
+    } catch {
+      this.catalog = [];
+    }
+    this.catalogLoaded = true;
+    this.update();
+  }
+
+  /**
+   * Walk up to {@link LIBRARY_SCAN_DEPTH} directory levels below `root`,
+   * collecting every folder that directly contains a `manifest.yaml`. A book
+   * folder is a leaf: we never descend into it, so a book's own subfolders can
+   * never masquerade as books.
+   */
+  protected async scanLibrary(root: URI, maxDepth: number): Promise<RawBookCandidate[]> {
+    const found: RawBookCandidate[] = [];
+    const visit = async (dir: URI, depth: number): Promise<void> => {
+      const stat = await this.fileService.resolve(dir).catch(() => undefined);
+      if (!stat?.isDirectory || !stat.children) {
+        return;
+      }
+      for (const child of stat.children) {
+        if (!child.isDirectory) {
+          continue;
+        }
+        if (await this.fileService.exists(child.resource.resolve('manifest.yaml'))) {
+          found.push(await this.readCandidate(child.resource));
+        } else if (depth < maxDepth) {
+          await visit(child.resource, depth + 1);
+        }
+      }
+    };
+    await visit(root, 1);
+    return found;
+  }
+
+  /**
+   * Read a confirmed book folder's `metadata.yaml` (tolerant of a missing or
+   * malformed file) and, when present, inline its `cover.png` as a base64
+   * `data:` URI so the thumbnail renders in both browser and Electron without a
+   * separate asset route.
+   */
+  protected async readCandidate(folder: URI): Promise<RawBookCandidate> {
+    let metadata: unknown;
+    try {
+      const text = (await this.fileService.read(folder.resolve('metadata.yaml'))).value;
+      metadata = parse(text);
+    } catch {
+      metadata = undefined;
+    }
+    let coverUri: string | undefined;
+    const coverFile = folder.resolve('cover.png');
+    try {
+      if (await this.fileService.exists(coverFile)) {
+        const bytes = (await this.fileService.readFile(coverFile)).value.buffer;
+        coverUri = `data:image/png;base64,${bytesToBase64(bytes)}`;
+      }
+    } catch {
+      coverUri = undefined;
+    }
+    return { path: folder.toString(), metadata, coverUri };
+  }
+
   protected render(): React.ReactNode {
     return React.createElement(
       'div',
       { className: 'afe-welcome-body', tabIndex: -1 },
       this.renderHeader(),
       this.renderStart(),
+      this.renderCatalog(),
       this.renderRecent(),
       this.renderFooter()
     );
@@ -223,6 +354,135 @@ export class WelcomeWidget extends ReactWidget {
       React.createElement('span', { className: `afe-welcome-action-icon ${iconClass}` }),
       React.createElement('span', undefined, label)
     );
+  }
+
+  /**
+   * The "My Books" section, rendered ABOVE Recent. When no library folder is
+   * configured it collapses to a one-line hint offering to pick one; once
+   * configured it shows the scanned grid (or an empty-state / scanning line)
+   * with a button to change the folder.
+   */
+  protected renderCatalog(): React.ReactNode {
+    const title = nls.localize('ai-focused-editor/welcome/section-my-books', 'My Books');
+    if (!this.libraryPath) {
+      return React.createElement(
+        'section',
+        { className: 'afe-welcome-section afe-welcome-catalog afe-welcome-catalog-hint' },
+        React.createElement('h2', { className: 'afe-welcome-section-title' }, title),
+        React.createElement(
+          'p',
+          { className: 'afe-welcome-catalog-empty' },
+          nls.localize(
+            'ai-focused-editor/welcome/catalog-hint',
+            'Point at a folder that holds your books to see them all here.'
+          )
+        ),
+        this.renderPickFolderButton(
+          nls.localize('ai-focused-editor/welcome/catalog-choose-folder', 'Choose books folder...')
+        )
+      );
+    }
+    return React.createElement(
+      'section',
+      { className: 'afe-welcome-section afe-welcome-catalog' },
+      React.createElement(
+        'div',
+        { className: 'afe-welcome-catalog-head' },
+        React.createElement('h2', { className: 'afe-welcome-section-title' }, title),
+        this.renderPickFolderButton(
+          nls.localize('ai-focused-editor/welcome/catalog-change-folder', 'Change folder...')
+        )
+      ),
+      this.renderCatalogBody()
+    );
+  }
+
+  protected renderCatalogBody(): React.ReactNode {
+    if (!this.catalogLoaded) {
+      return React.createElement(
+        'p',
+        { className: 'afe-welcome-catalog-empty' },
+        nls.localize('ai-focused-editor/welcome/catalog-scanning', 'Scanning for books...')
+      );
+    }
+    if (this.catalog.length === 0) {
+      return React.createElement(
+        'p',
+        { className: 'afe-welcome-catalog-empty' },
+        nls.localize(
+          'ai-focused-editor/welcome/catalog-none',
+          'No books found in this folder. Books are folders that contain a manifest.yaml.'
+        )
+      );
+    }
+    return React.createElement(
+      'div',
+      { className: 'afe-welcome-catalog-grid' },
+      ...this.catalog.map(entry => this.renderBookCard(entry))
+    );
+  }
+
+  protected renderBookCard(entry: BookCatalogEntry): React.ReactNode {
+    const cover = entry.coverUri
+      ? React.createElement('img', {
+          className: 'afe-welcome-book-cover',
+          src: entry.coverUri,
+          alt: ''
+        })
+      : React.createElement('span', {
+          className: 'afe-welcome-book-cover afe-welcome-book-cover-placeholder codicon codicon-book'
+        });
+    return React.createElement(
+      'button',
+      {
+        key: entry.path,
+        className: 'afe-welcome-book-card',
+        type: 'button',
+        title: nls.localize('ai-focused-editor/welcome/catalog-open-book', 'Open {0}', entry.title),
+        onClick: () => this.openWorkspace(entry.path)
+      },
+      cover,
+      React.createElement('span', { className: 'afe-welcome-book-title' }, entry.title),
+      entry.author
+        ? React.createElement('span', { className: 'afe-welcome-book-author' }, entry.author)
+        : undefined
+    );
+  }
+
+  protected renderPickFolderButton(label: string): React.ReactNode {
+    return React.createElement(
+      'button',
+      {
+        className: 'theia-button afe-welcome-action secondary afe-welcome-catalog-pick',
+        type: 'button',
+        onClick: () => this.chooseLibraryFolder()
+      },
+      React.createElement('span', { className: 'afe-welcome-action-icon codicon codicon-library' }),
+      React.createElement('span', undefined, label)
+    );
+  }
+
+  /** Folder picker that writes the chosen path to the library preference. */
+  protected async chooseLibraryFolder(): Promise<void> {
+    const startFolder = this.workspaceService.tryGetRoots()[0];
+    const selection = await this.fileDialogService.showOpenDialog(
+      {
+        title: nls.localize(
+          'ai-focused-editor/welcome/catalog-pick-title',
+          'Choose the folder that holds your books'
+        ),
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false
+      },
+      startFolder
+    );
+    const picked = Array.isArray(selection) ? selection[0] : selection;
+    if (!picked) {
+      return;
+    }
+    // The onPreferenceChanged listener re-runs the scan when this lands.
+    await this.preferenceService.set(AI_FOCUSED_EDITOR_LIBRARY_PATH, picked.toString(), PreferenceScope.User);
   }
 
   protected renderRecent(): React.ReactNode {
