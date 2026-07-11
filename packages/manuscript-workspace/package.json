@@ -114,6 +114,9 @@
     },
     {
       "frontend": "lib/browser/mcp-controls-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/auth-qr-frontend-module"
     }
   ]
 }

@@ -1,9 +1,13 @@
-import { BackendApplicationContribution } from '@theia/core/lib/node';
+import { BackendApplicationContribution, CliContribution } from '@theia/core/lib/node';
+import { WsRequestValidatorContribution } from '@theia/core/lib/node/ws-request-validators';
 import { injectable, ContainerModule } from '@theia/core/shared/inversify';
 import { ConnectionHandler } from '@theia/core/lib/common/messaging/handler';
 import { RpcConnectionHandler } from '@theia/core/lib/common/messaging/proxy-factory';
 import { LocalizationContribution } from '@theia/core/lib/node/i18n/localization-contribution';
 import { TaskRunnerContribution } from '@theia/task/lib/node/task-runner';
+import { BrowserAuthConfiguration } from './browser-auth-configuration';
+import { BrowserAuthService } from './browser-auth-service';
+import { BrowserAuthCliContribution } from './browser-auth-cli-contribution';
 import { ManuscriptRuLocalizationContribution } from './i18n/manuscript-ru-localization-contribution';
 import {
   AiModeRegistryBackendService,
@@ -119,6 +123,18 @@ export default new ContainerModule(bind => {
     )
   ).inSingletonScope();
   bind(BackendApplicationContribution).to(ManuscriptWorkspaceBackendContribution).inSingletonScope();
+  // Optional shared-secret browser-auth gate (DISABLED BY DEFAULT; Electron
+  // never gates; localhost is frictionless unless --auth). The single
+  // BrowserAuthService instance serves BOTH the HTTP middleware (via
+  // BackendApplicationContribution) and the WebSocket-upgrade validator (via
+  // WsRequestValidatorContribution) so a session minted over HTTP is honoured
+  // on the RPC socket.
+  bind(BrowserAuthConfiguration).toSelf().inSingletonScope();
+  bind(BrowserAuthService).toSelf().inSingletonScope();
+  bind(BackendApplicationContribution).toService(BrowserAuthService);
+  bind(WsRequestValidatorContribution).toService(BrowserAuthService);
+  bind(BrowserAuthCliContribution).toSelf().inSingletonScope();
+  bind(CliContribution).toService(BrowserAuthCliContribution);
   // Registers our ru dictionary (i18n/ru/*.json) with the core localization
   // registry. `languagePack: true` on the descriptor is what makes ru actually
   // apply on the frontend AND surface in 'Configure Display Language'.
