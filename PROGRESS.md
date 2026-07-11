@@ -241,9 +241,17 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **Two-stage verification** (better than v1, which only had a GET /models alert): per-endpoint `Check Connection` (reachability + model list; discovered models merge into the form as chips), per-alias check with PER-LEG verdicts — connection ✓/✗, model in catalog ✓/✗/?, 1–8-token test generation through that specific leg; time-window skips render as «пропущен», overall verdict follows failover semantics. Pure verdict assembly in `common/ai-verification.ts` (16 tests), RPC isolated in a browser service.
 - Tests: 549 across 30 files; `verify:full` green (both smokes in-pipeline, 10/10 UI flows incl. reworked AFE-05).
 
+## Wave 22 — Doctor report, base prompts, chat presets (shipped)
+
+- **Doctor**: полный markdown-отчёт (untitled, разделы Исправимо/Замечания без обрезаний); при нуле фиксов отчёт открывается сразу, пикер не показывается.
+- **Базовые промпты**: 8 режимов, дистиллированных из kavi/gv-скилов (толкование терминов с IAST, корректура, герменевтика Шад-линга, вада-оппонент, эссе, подготовка к печати, практические уроки, просодия) — поставляются с приложением; трёхслойные переопределения built-in → `~/.ai-focused-editor` → книга (origin-бейджи, Override, `Edit Global AI Modes…`, `enabled: false`).
+- **Чат по-человечески**: команда «Возможности AI-чата…» с пресетами на понятном языке (Минимум / Мир книги / Исследование / Всё для книги) поверх сохраняемых per-agent выборов панели возможностей; функции с человеческими именами; каркас новой книги сеет `.prompts/skills/style-guide/SKILL.md` — Theia 1.73 сама находит книжные скилы для `{{skill:…}}`.
+- Chat naming fix: @mention показывает label режима, промпт-фрагменты несут имя/описание.
+- Tests: 568 across 31 files; 10/10 flows.
+
 ## Backlog (queued)
 
-0. **Electron smoke pipeline flake** (diagnosed, mitigated, not root-caused): only inside `verify:full` right after builds, the electron backend occasionally prints its yargs usage + an unhandled null rejection and the window dies; standalone and `bun run test:electron` always pass. Smoke has 3 launch retries with backoff and captures the main-process output tail for the next occurrence.
+0. **Electron smoke pipeline flake — SOLVED**: the dev-mode backend fork collided with Playwright's electron debug argv (yargs usage + null rejection, window died). The smoke now launches with `NODE_ENV=production` (also more representative); interactive `theia start` was never affected.
 
 1. Full LSP transport if live validation ever needs cross-file incremental analysis (current backend-RPC path covers the active-document case).
 2. Drop the git fork when a platform-compatible `@theia/git` ships.
