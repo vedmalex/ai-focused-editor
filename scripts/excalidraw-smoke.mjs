@@ -6,10 +6,15 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import net from 'node:net';
 import { chromium } from 'playwright';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 const repoRoot = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
 const appDir = join(repoRoot, 'apps/browser');
 const sampleRoot = join(repoRoot, 'examples/sample-book');
+// Opening the file rewrites its `source` field (Theia autoSave + Excalidraw's
+// mount-time onChange), so snapshot and restore it to keep the tree clean.
+const fixturePath = join(sampleRoot, 'sources/world-map.excalidraw');
+const fixtureBackup = readFileSync(fixturePath, 'utf8');
 
 function getFreePort() {
   return new Promise(resolve => {
@@ -92,4 +97,5 @@ try {
 } finally {
   await browser?.close().catch(() => {});
   server.kill('SIGTERM');
+  try { writeFileSync(fixturePath, fixtureBackup); } catch {}
 }
