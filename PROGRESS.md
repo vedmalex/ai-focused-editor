@@ -253,6 +253,18 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 
 - **`aiFocusedEditor.ai.requestLog`** (off/metadata/full): per-leg JSONL records in `ai/chat/requests-<date>.jsonl` — source, alias, endpoint, model, duration, tokens, outcome (incl. skipped-window/disabled); `full` adds 64KB-capped request/response bodies. Hooks in the failover walk and the streaming chat path, best-effort (never fails a request), 5MB/day cap. AI Debug gains a «Запросы» section with per-leg chips, alias/endpoint filters, open/clear journal actions and a one-click enable hint. 579 tests.
 
+## Wave 24 — Doctor restores old folders (shipped)
+
+- A deleted manifest is reconstructed from every discovered manuscript markdown (workspace-wide, service dirs excluded; folders → parts, titles from first headings, natural sort); unreferenced files become one atomic «Добавить в манифест» append fix; restored metadata takes the folder name as the book title. 22 reconstruction tests.
+
+## Wave 25 — Office document preview (shipped)
+
+- `.docx` (mammoth → DOMPurify-sanitized HTML with images), `.xlsx/.xls/.ods` (worksheet tabs, 1000×50-capped tables), `.pptx` (numbered text-card slides); legacy `.doc/.ppt` get a friendly unsupported view. Office files list in SOURCES with fitting icons; `Analyze Source Document...` reads `.docx`. Lazy-required parsers keep bundles lean; 50MB guard; 33 helper tests.
+
+## Wave 26 — Chat context: any artifact (shipped)
+
+- `#chapter`/`#entity` gained argument completion + pickers; new `#source:` (extracted text even from PDF/docx, 24K cap, graceful degrade) and `#note:` (hand-authored briefs/plans from `knowledge/`); «Добавить в контекст чата…» category picker; «Send to AI Chat» in the tree and Sources rows; knowledge note templates (бриф/план/содержание). 629 tests; 10/10 flows.
+
 ## Backlog (queued)
 
 0. **Electron smoke pipeline flake — largely solved**: dev-mode backend fork collided with Playwright's debug argv → the smoke runs `NODE_ENV=production` and is green standalone, after builds, and via `bun run`. A residual in-pipeline-only failure (window dies with ZERO main output, only inside the full `verify:full` chain) still appears sporadically; retries + output capture stay in place to characterize it.
