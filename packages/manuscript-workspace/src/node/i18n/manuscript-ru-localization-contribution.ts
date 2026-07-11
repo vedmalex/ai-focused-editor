@@ -27,6 +27,7 @@ import gitRu from './ru/git.json';
 import chatCapabilitiesRu from './ru/chat-capabilities.json';
 import chatContextRu from './ru/chat-context.json';
 import officeRu from './ru/office.json';
+import excalidrawRu from './ru/excalidraw.json';
 import mcpRu from './ru/mcp.json';
 import authRu from './ru/auth.json';
 import mobileRu from './ru/mobile.json';
@@ -57,7 +58,7 @@ const AREA_BUNDLES: unknown[] = [
   createRu, buildRu, bookConfigRu, sourcesRu, entitiesRu,
   aiConfigRu, aiLogRu, aiModesRu, editorRu, doctorRu, welcomeRu,
   workspaceRu, knowledgeRu, gitRu, chatCapabilitiesRu, chatContextRu, officeRu,
-  mobileRu, mcpRu, authRu
+  excalidrawRu, mobileRu, mcpRu, authRu
 ];
 
 @injectable()

@@ -1,0 +1,10 @@
+{
+  "ai-focused-editor": {
+    "excalidraw": {
+      "caption": "Excalidraw: {0}",
+      "open-handler-label": "Редактор диаграмм Excalidraw",
+      "loading": "Загрузка Excalidraw...",
+      "error": "Не удалось открыть диаграмму: {0}"
+    }
+  }
+}

@@ -204,6 +204,8 @@ describe('allowed material types', () => {
     expect(isAllowedMaterialFile('sheet.ods')).toBe(true);
     expect(isAllowedMaterialFile('deck.pptx')).toBe(true);
     expect(isAllowedMaterialFile('old.ppt')).toBe(true);
+    expect(isAllowedMaterialFile('scene.excalidraw')).toBe(true);
+    expect(isAllowedMaterialFile('Diagram.EXCALIDRAW')).toBe(true);
     expect(isAllowedMaterialFile('.gitignore')).toBe(false);
     expect(isAllowedMaterialFile('.DS_Store')).toBe(false);
     expect(isAllowedMaterialFile('binary.exe')).toBe(false);

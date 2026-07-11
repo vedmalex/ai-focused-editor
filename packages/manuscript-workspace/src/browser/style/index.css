@@ -2503,6 +2503,36 @@
   }
 }
 
+/* ---------- excalidraw diagram editor ---------- */
+
+.afe-excalidraw-widget {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.afe-excalidraw-canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+
+/* Excalidraw measures its host element; it needs a concrete height. */
+.afe-excalidraw-canvas > .excalidraw {
+  height: 100%;
+}
+
+.afe-excalidraw-status {
+  padding: 12px 16px;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.afe-excalidraw-status.error {
+  color: var(--theia-errorForeground);
+}
+
 /* ---------- office document preview ---------- */
 
 .afe-office-preview {

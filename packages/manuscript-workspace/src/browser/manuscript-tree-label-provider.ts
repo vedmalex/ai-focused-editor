@@ -105,6 +105,9 @@ export class ManuscriptTreeLabelProvider implements LabelProviderContribution {
       if (lower.endsWith('.pptx') || lower.endsWith('.ppt')) {
         return `codicon codicon-preview ${accent}`;
       }
+      if (lower.endsWith('.excalidraw')) {
+        return `codicon codicon-pencil ${accent}`;
+      }
       if (IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext))) {
         return `codicon codicon-file-media ${accent}`;
       }

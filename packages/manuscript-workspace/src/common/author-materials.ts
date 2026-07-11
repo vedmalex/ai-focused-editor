@@ -64,6 +64,8 @@ const ALLOWED_MATERIAL_EXTENSIONS = [
   '.xlsx', '.xls', '.ods', '.pptx', '.ppt',
   // images
   '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.tif', '.tiff', '.bmp',
+  // diagrams (editable via the excalidraw-editor widget)
+  '.excalidraw',
   // structural
   '.yaml', '.yml', '.json', '.jsonl'
 ];

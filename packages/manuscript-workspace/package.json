@@ -15,6 +15,7 @@
   "dependencies": {
     "@ai-focused-editor/book-export": "0.1.0",
     "@ai-focused-editor/semantic-markdown": "workspace:*",
+    "@excalidraw/excalidraw": "0.18.1",
     "@theia/ai-chat": "1.73.1",
     "@theia/ai-core": "1.73.1",
     "@theia/ai-mcp": "1.73.1",
@@ -63,6 +64,9 @@
     },
     {
       "frontend": "lib/browser/office-preview-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/excalidraw-editor-frontend-module"
     },
     {
       "frontend": "lib/browser/citation-editor-frontend-module"
