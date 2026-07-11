@@ -249,9 +249,13 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - Chat naming fix: @mention показывает label режима, промпт-фрагменты несут имя/описание.
 - Tests: 568 across 31 files; 10/10 flows.
 
+## Wave 23 — AI request journal (shipped)
+
+- **`aiFocusedEditor.ai.requestLog`** (off/metadata/full): per-leg JSONL records in `ai/chat/requests-<date>.jsonl` — source, alias, endpoint, model, duration, tokens, outcome (incl. skipped-window/disabled); `full` adds 64KB-capped request/response bodies. Hooks in the failover walk and the streaming chat path, best-effort (never fails a request), 5MB/day cap. AI Debug gains a «Запросы» section with per-leg chips, alias/endpoint filters, open/clear journal actions and a one-click enable hint. 579 tests.
+
 ## Backlog (queued)
 
-0. **Electron smoke pipeline flake — SOLVED**: the dev-mode backend fork collided with Playwright's electron debug argv (yargs usage + null rejection, window died). The smoke now launches with `NODE_ENV=production` (also more representative); interactive `theia start` was never affected.
+0. **Electron smoke pipeline flake — largely solved**: dev-mode backend fork collided with Playwright's debug argv → the smoke runs `NODE_ENV=production` and is green standalone, after builds, and via `bun run`. A residual in-pipeline-only failure (window dies with ZERO main output, only inside the full `verify:full` chain) still appears sporadically; retries + output capture stay in place to characterize it.
 
 1. Full LSP transport if live validation ever needs cross-file incremental analysis (current backend-RPC path covers the active-document case).
 2. Drop the git fork when a platform-compatible `@theia/git` ships.
