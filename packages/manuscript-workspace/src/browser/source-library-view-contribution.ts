@@ -45,6 +45,7 @@ import {
   ExcerptRecord
 } from '../common/source-analysis';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
+import { AiRequestLogService } from './ai-request-log-service';
 import {
   AiHistoryRecord,
   AiHistoryService
@@ -174,6 +175,9 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
 
   @inject(AiProfilePreferenceService)
   protected readonly aiProfilePreferences!: AiProfilePreferenceService;
+
+  @inject(AiRequestLogService)
+  protected readonly requestLog!: AiRequestLogService;
 
   @inject(AiModeRegistry)
   protected readonly aiModes!: AiModeRegistry;
@@ -431,7 +435,7 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
           documentUri,
           workspaceRootUri: root.toString()
         }
-      });
+      }, this.requestLog.createRecorder(SourceLibraryCommands.ANALYZE.id, documentUri));
 
       const analysis = coerceSourceAnalysis(result.text);
       // Read a fresh snapshot for id continuation and citation dedupe.

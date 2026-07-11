@@ -41,6 +41,7 @@ import {
 } from '../common';
 import type { AliasCheckVerdict, AliasLegVerdict, NarrativeEntityService as NarrativeEntityServiceType } from '../common';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
+import { AiRequestLogService } from './ai-request-log-service';
 import { AiVerificationService } from './ai-verification-service';
 import {
   AiHistoryRecord,
@@ -159,6 +160,9 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
 
   @inject(AiProfilePreferenceService)
   protected readonly aiProfilePreferences!: AiProfilePreferenceService;
+
+  @inject(AiRequestLogService)
+  protected readonly requestLog!: AiRequestLogService;
 
   @inject(AiVerificationService)
   protected readonly aiVerification!: AiVerificationService;
@@ -337,7 +341,7 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
           command: AiFocusedEditorCommands.SUGGEST_COREFERENCE.id,
           documentUri: editor.uri.toString()
         }
-      });
+      }, this.requestLog.createRecorder(AiFocusedEditorCommands.SUGGEST_COREFERENCE.id));
 
       const updatedText = this.extractMarkdownPayload(result.text);
       if (!updatedText || updatedText === originalText) {
@@ -561,7 +565,7 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
           documentUri: editor.uri.toString(),
           workspaceRootUri: snapshot.rootUri
         }
-      });
+      }, this.requestLog.createRecorder(AiFocusedEditorCommands.IMPROVE_SELECTION.id));
 
       const improvedText = result.text.trim();
       if (!improvedText) {
@@ -775,7 +779,7 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
           command: AiFocusedEditorCommands.CHECK_CONSISTENCY.id,
           workspaceRootUri: snapshot.rootUri
         }
-      });
+      }, this.requestLog.createRecorder(AiFocusedEditorCommands.CHECK_CONSISTENCY.id));
 
       const findings = this.parseConsistencyFindings(result.text);
       if (findings === undefined) {

@@ -24,6 +24,7 @@ import {
 } from '../common';
 import { AiHistoryService } from './ai-history-service';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
+import { AiRequestLogService, AiRequestLogSession } from './ai-request-log-service';
 
 @injectable()
 export class AiConnectTheiaLanguageModel implements LanguageModel {
@@ -46,6 +47,9 @@ export class AiConnectTheiaLanguageModel implements LanguageModel {
 
   @inject(AiHistoryService)
   protected readonly aiHistory!: AiHistoryService;
+
+  @inject(AiRequestLogService)
+  protected readonly requestLog!: AiRequestLogService;
 
   async request(request: UserRequest, cancellationToken?: CancellationToken): Promise<LanguageModelResponse> {
     const chain = await this.aiProfilePreferences.getFailoverChain();
@@ -75,8 +79,10 @@ export class AiConnectTheiaLanguageModel implements LanguageModel {
       token.onCancellationRequested(() => abortController.abort());
     }
 
+    const logSession = this.requestLog.beginRequest(request.agentId || 'chat');
+
     return {
-      stream: this.streamResponseParts(chain, request, generateRequest, abortController.signal)
+      stream: this.streamResponseParts(chain, request, generateRequest, abortController.signal, logSession)
     };
   }
 
@@ -89,10 +95,13 @@ export class AiConnectTheiaLanguageModel implements LanguageModel {
     chain: AiConnectionProfile[],
     request: UserRequest,
     generateRequest: AiGenerateRequest,
-    signal: AbortSignal
+    signal: AbortSignal,
+    logSession?: AiRequestLogSession
   ): AsyncIterable<LanguageModelStreamResponsePart> {
     const failures: string[] = [];
     for (const [index, profile] of chain.entries()) {
+      const legIndex = (logSession?.attemptedBase ?? 0) + index;
+      const startedAt = Date.now();
       let emitted = false;
       try {
         for await (const event of this.aiConnection.streamText(profile, generateRequest, { signal })) {
@@ -104,6 +113,7 @@ export class AiConnectTheiaLanguageModel implements LanguageModel {
             continue;
           }
 
+          logSession?.record(legIndex, profile, 'ok', Date.now() - startedAt, generateRequest, event.result);
           await this.tryAppendChatEvent(request, event.result, generateRequest);
           const usage = this.toTheiaUsage(event.result.usage);
           if (usage) {
@@ -113,6 +123,7 @@ export class AiConnectTheiaLanguageModel implements LanguageModel {
         return;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        logSession?.record(legIndex, profile, 'error', Date.now() - startedAt, generateRequest, undefined, message);
         failures.push(`${profile.label ?? profile.id ?? profile.provider}: ${message}`);
         const isLast = index === chain.length - 1;
         if (emitted || signal.aborted || isLast) {

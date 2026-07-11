@@ -5,7 +5,7 @@ import type {
   AiGenerateRequest,
   AiGenerateResult
 } from './ai-connection-protocol';
-import { generateWithFailover } from './ai-failover';
+import { AiFailoverLegEvent, generateWithFailover } from './ai-failover';
 
 function createService(behaviour: (profile: AiConnectionProfile) => AiGenerateResult | Error): AiConnectionService {
   return {
@@ -64,5 +64,32 @@ describe('generateWithFailover', () => {
   test('throws immediately for an empty chain', async () => {
     const service = createService(() => new Error('unreachable'));
     await expect(generateWithFailover(service, [], REQUEST)).rejects.toThrow('No configured AI profiles');
+  });
+
+  test('reports one recorder event per attempted leg with outcomes', async () => {
+    const service = createService(profile => profile.id === 'a'
+      ? new Error('rate limited')
+      : { text: 'ok', warnings: [], attempts: [] });
+    const events: AiFailoverLegEvent[] = [];
+    await generateWithFailover(service, [
+      { id: 'a', provider: 'openai' },
+      { id: 'b', provider: 'anthropic' }
+    ], REQUEST, event => events.push(event));
+
+    expect(events.map(event => event.outcome)).toEqual(['error', 'ok']);
+    expect(events.map(event => event.index)).toEqual([0, 1]);
+    expect(events[0].error).toBe('rate limited');
+    expect(events[1].result?.text).toBe('ok');
+    expect(events.every(event => typeof event.durationMs === 'number')).toBe(true);
+  });
+
+  test('a recorder that reports each leg still sees all failures on total failure', async () => {
+    const service = createService(profile => new Error(`down: ${profile.id}`));
+    const events: AiFailoverLegEvent[] = [];
+    await expect(generateWithFailover(service, [
+      { id: 'a', provider: 'openai' },
+      { id: 'b', provider: 'anthropic' }
+    ], REQUEST, event => events.push(event))).rejects.toThrow('All 2 AI profile(s) failed');
+    expect(events.map(event => event.outcome)).toEqual(['error', 'error']);
   });
 });

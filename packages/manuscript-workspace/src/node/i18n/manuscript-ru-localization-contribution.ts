@@ -16,6 +16,7 @@ import bookConfigRu from './ru/book-config.json';
 import sourcesRu from './ru/sources.json';
 import entitiesRu from './ru/entities.json';
 import aiConfigRu from './ru/ai-config.json';
+import aiLogRu from './ru/ai-log.json';
 import aiModesRu from './ru/ai-modes.json';
 import editorRu from './ru/editor.json';
 import doctorRu from './ru/doctor.json';
@@ -49,7 +50,7 @@ const RU: LanguageInfo = {
 const AREA_BUNDLES: unknown[] = [
   manuscriptTreeRu, menuRu,
   createRu, buildRu, bookConfigRu, sourcesRu, entitiesRu,
-  aiConfigRu, aiModesRu, editorRu, doctorRu, welcomeRu,
+  aiConfigRu, aiLogRu, aiModesRu, editorRu, doctorRu, welcomeRu,
   workspaceRu, knowledgeRu, gitRu, chatCapabilitiesRu
 ];
 

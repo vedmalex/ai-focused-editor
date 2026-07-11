@@ -32,6 +32,7 @@ import {
   type KnowledgeMeta
 } from '../common/knowledge-generation';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
+import { AiRequestLogService } from './ai-request-log-service';
 import {
   AiHistoryRecord,
   AiHistoryService
@@ -164,6 +165,9 @@ export class KnowledgeGenerationContribution implements CommandContribution, Men
   @inject(AiProfilePreferenceService)
   protected readonly aiProfilePreferences!: AiProfilePreferenceService;
 
+  @inject(AiRequestLogService)
+  protected readonly requestLog!: AiRequestLogService;
+
   @inject(AiModeRegistry)
   protected readonly aiModes!: AiModeRegistry;
 
@@ -285,7 +289,7 @@ export class KnowledgeGenerationContribution implements CommandContribution, Men
           documentUri,
           workspaceRootUri: root.toString()
         }
-      });
+      }, this.requestLog.createRecorder(config.command.id, documentUri));
 
       const meta: KnowledgeMeta = {
         chapter: chapterPath,

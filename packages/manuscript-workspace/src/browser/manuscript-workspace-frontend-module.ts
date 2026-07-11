@@ -74,6 +74,7 @@ import {
   ManuscriptListChaptersTool
 } from './manuscript-tools-contribution';
 import { AiHistoryService } from './ai-history-service';
+import { AiRequestLogService } from './ai-request-log-service';
 import { MarkdownLanguageContribution } from './markdown-language-contribution';
 import { AiModePromptFragmentContribution } from './ai-mode-prompt-fragment-contribution';
 import { ManuscriptTreeItemFactory } from './manuscript-tree-item-factory';
@@ -160,6 +161,7 @@ export default new ContainerModule(bind => {
   bind(CommandContribution).toService(GitActionsContribution);
   bind(MenuContribution).toService(GitActionsContribution);
   bind(AiHistoryService).toSelf().inSingletonScope();
+  bind(AiRequestLogService).toSelf().inSingletonScope();
   bind(LabelProviderContribution).toService(ManuscriptTreeLabelProvider);
   bind(PreferenceContribution).toConstantValue(AiFocusedEditorPreferenceContribution);
   bindViewContribution(bind, ManuscriptTreeViewContribution);

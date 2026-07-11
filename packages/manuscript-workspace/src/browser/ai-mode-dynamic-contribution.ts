@@ -35,6 +35,7 @@ import {
   wordAtOffset
 } from '../common';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
+import { AiRequestLogService } from './ai-request-log-service';
 import { AiHistoryService } from './ai-history-service';
 import { AiConnectTheiaLanguageModel } from './ai-connect-theia-language-model';
 
@@ -78,6 +79,9 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
 
   @inject(AiProfilePreferenceService)
   protected readonly aiProfilePreferences!: AiProfilePreferenceService;
+
+  @inject(AiRequestLogService)
+  protected readonly requestLog!: AiRequestLogService;
 
   @inject(AiModeRegistry)
   protected readonly aiModes!: AiModeRegistry;
@@ -455,7 +459,7 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
           aiModeId: mode.id,
           documentUri
         }
-      });
+      }, this.requestLog.createRecorder(commandId, documentUri));
 
       const generated = result.text.trim();
       if (!generated) {
