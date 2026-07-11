@@ -94,7 +94,31 @@ export namespace AuthorMaterialsCommands {
     'ai-focused-editor/create/add-source-file',
     CATEGORY_KEY
   );
+  export const NEW_DIAGRAM: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.authorMaterials.newDiagram', category: CATEGORY, label: 'New Diagram...' },
+    'ai-focused-editor/create/new-diagram',
+    CATEGORY_KEY
+  );
 }
+
+/**
+ * A blank, valid Excalidraw scene. The `.excalidraw` open handler (priority 500)
+ * opens this in the diagram editor; the widget's loader tolerates an empty scene
+ * too, but seeding the canonical shape keeps the file self-describing and lets
+ * "Open With..." render sensible raw JSON.
+ */
+const BLANK_EXCALIDRAW_SCENE = JSON.stringify(
+  {
+    type: 'excalidraw',
+    version: 2,
+    source: 'ai-focused-editor',
+    elements: [],
+    appState: { gridSize: null, viewBackgroundColor: '#ffffff' },
+    files: {}
+  },
+  undefined,
+  2
+) + '\n';
 
 /** Command for each creatable entity kind, keyed for iteration. */
 const ENTITY_COMMAND: Record<CreatableEntityKind, Command> = {
@@ -279,6 +303,10 @@ export class AuthorMaterialsCreateContribution
       execute: () => this.addSourceFile(),
       isEnabled: () => this.hasWorkspace()
     });
+    commands.registerCommand(AuthorMaterialsCommands.NEW_DIAGRAM, {
+      execute: () => this.createDiagram(),
+      isEnabled: () => this.hasWorkspace()
+    });
   }
 
   registerMenus(menus: MenuModelRegistry): void {
@@ -315,7 +343,8 @@ export class AuthorMaterialsCreateContribution
       ...CREATABLE_ENTITY_KINDS.map(kind => ({ command: ENTITY_COMMAND[kind], section: ENTITY_SECTION[kind] })),
       { command: AuthorMaterialsCommands.NEW_CITATION, section: 'citations' },
       { command: AuthorMaterialsCommands.NEW_KNOWLEDGE_NOTE, section: 'knowledge' },
-      { command: AuthorMaterialsCommands.ADD_SOURCE_FILE, section: 'sources' }
+      { command: AuthorMaterialsCommands.ADD_SOURCE_FILE, section: 'sources' },
+      { command: AuthorMaterialsCommands.NEW_DIAGRAM, section: 'sources' }
     ];
   }
 
@@ -588,6 +617,57 @@ export class AuthorMaterialsCreateContribution
       ));
     }
     this.messages.info(summary.join(' '));
+  }
+
+  /**
+   * Create a blank Excalidraw diagram (`sources/<slug>.excalidraw`) from a
+   * prompted name and open it in the diagram editor (the `.excalidraw` open
+   * handler wins at priority 500). Diagrams live alongside other research
+   * material under `sources/`.
+   */
+  protected async createDiagram(): Promise<void> {
+    const root = await this.getRoot();
+    if (!root) {
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/create/diagram-no-workspace',
+        'Open a manuscript workspace before creating a diagram.'
+      ));
+      return;
+    }
+
+    const name = await this.quickInput.input({
+      title: nls.localize('ai-focused-editor/create/diagram-title', 'New Diagram'),
+      prompt: nls.localize('ai-focused-editor/create/diagram-prompt', 'Diagram name'),
+      placeHolder: nls.localize('ai-focused-editor/create/diagram-placeholder', 'e.g. Story map'),
+      validateInput: async value => (value.trim()
+        ? undefined
+        : nls.localize('ai-focused-editor/create/diagram-empty', 'Diagram name cannot be empty.'))
+    });
+    const trimmed = name?.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const slug = createSemanticEntityId('diagram', trimmed);
+    const existing = await this.collectExistingRelPaths(root, 'sources');
+    const relPath = uniqueRelativePath(`sources/${slug}.excalidraw`, candidate => existing.has(candidate));
+
+    await this.ensureFolder(root.resolve('sources'));
+
+    const fileUri = root.resolve(relPath);
+    try {
+      await this.fileService.create(fileUri, BLANK_EXCALIDRAW_SCENE, { overwrite: false });
+    } catch (error) {
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/create/diagram-failed',
+        'Could not create diagram: {0}',
+        this.detail(error)
+      ));
+      return;
+    }
+
+    await this.openAndRefresh(fileUri);
+    this.messages.info(nls.localize('ai-focused-editor/create/diagram-created', 'Created diagram "{0}".', trimmed));
   }
 
   /**
