@@ -18,11 +18,41 @@
 import { parse } from 'yaml';
 import {
   BookScaffoldEntry,
+  bookScaffoldEntries,
   buildChapterMarkdown,
   isNewBookOnlyEntry,
   missingScaffoldEntries
 } from './book-scaffold';
 import { ManifestRow, normalizeManifestPath } from './book-config-forms';
+import {
+  buildManifestYaml,
+  reconstructManifestEntries,
+  type DiscoveredManuscriptFile,
+  type ReconstructedEntry
+} from './manifest-reconstruction';
+
+/**
+ * Manifest reconstruction metadata attached to the special `manifest.yaml` fix.
+ * Its presence tells the browser to (a) render a localized label carrying the
+ * discovered file count + sample paths, and (b) for `append`, MERGE the entries
+ * into the existing manifest comment-preservingly rather than create a file.
+ */
+export interface ManifestReconstructionFix {
+  /**
+   * `recreate` — the manifest is missing; the fix's `seed` is a fresh manifest
+   *   built from the discovered content (a plain file create).
+   * `append`   — the manifest exists; the browser reads it and appends `entries`
+   *   (comment-preserving) — there is no `seed`, and the file is never rewritten
+   *   wholesale.
+   */
+  mode: 'recreate' | 'append';
+  /** Entries to write (recreate) / append (append). */
+  entries: ReconstructedEntry[];
+  /** Number of discovered (recreate) / newly-added (append) files. */
+  fileCount: number;
+  /** First few workspace-relative paths, for the label/report. */
+  samplePaths: string[];
+}
 
 /** An auto-fixable gap the doctor offers to create (folder or seeded file). */
 export interface BookDoctorFix {
@@ -30,16 +60,18 @@ export interface BookDoctorFix {
   path: string;
   /** Whether to create a directory or a seeded file. */
   kind: 'folder' | 'file';
-  /** Seed content for `file` fixes (absent for folders). */
+  /** Seed content for `file` fixes (absent for folders; absent for `append`). */
   seed?: string;
   /** Human-readable summary of what will be created (QuickPick description). */
   description: string;
+  /** Present on the `manifest.yaml` reconstruction/append fix (see above). */
+  manifest?: ManifestReconstructionFix;
 }
 
 /** A report-only observation the doctor surfaces but never auto-changes. */
 export interface BookDoctorFinding {
   /** Category, for grouping/telemetry. */
-  kind: 'unreferenced-content' | 'metadata' | 'parse-error';
+  kind: 'metadata' | 'parse-error';
   /** Short label (path or one-line summary). */
   label: string;
   /** Longer explanation, shown in the QuickPick detail row. */
@@ -70,8 +102,18 @@ export interface BookDoctorInput {
   manifestExists: boolean;
   /** Parsed manifest rows (empty when the manifest is missing/unparseable). */
   manifestRows: ManifestRow[];
-  /** Workspace-relative `content/**` Markdown paths found on disk. */
-  contentMarkdownPaths: string[];
+  /**
+   * Every discovered manuscript `.md` candidate across the workspace (the browser
+   * walk of `**\/*.md` minus the excluded/hidden dirs), each with its first ATX
+   * heading when found. Drives manifest reconstruction (missing manifest) and the
+   * "add unreferenced files to the manifest" fix (existing manifest).
+   */
+  manuscriptCandidates?: DiscoveredManuscriptFile[];
+  /**
+   * Workspace folder name — used to seed a missing `metadata.yaml` title when the
+   * doctor restores an old book (better than the `Untitled` scaffold default).
+   */
+  folderName?: string;
   /** Metadata fields, present only when `metadata.yaml` exists. */
   metadata?: BookDoctorMetadata;
   /** Raw `sources/citations.yaml` text, present only when the file exists. */
@@ -161,31 +203,93 @@ export function manifestChapterFixes(
   return fixes;
 }
 
+/** First few candidate paths, for the reconstruction fix's label/report. */
+const SAMPLE_PATH_LIMIT = 5;
+
 /**
- * Check 2b — Orphan content: every `content/**` Markdown file on disk that the
- * manifest does not reference becomes a report-only finding (the doctor never
- * edits the manifest; it suggests adding the file via the manifest editor).
+ * Check 2b(1) — Missing manifest reconstruction: when `manifest.yaml` is absent
+ * but manuscript content exists on disk, offer a single fixable that recreates
+ * the manifest from the discovered files (directories → parts, `.md` → chapters).
+ * This REPLACES the empty-seed `manifest.yaml` scaffold fix for the restore case;
+ * the empty seed remains only when there is no content at all. Returns undefined
+ * when the manifest already exists or there is nothing to reconstruct.
  */
-export function unreferencedContentFindings(
-  contentMarkdownPaths: string[],
-  rows: ManifestRow[]
-): BookDoctorFinding[] {
-  const referenced = new Set(rows.map(row => normalizeManifestPath(row.path)));
-  const findings: BookDoctorFinding[] = [];
-  for (const raw of contentMarkdownPaths) {
-    const path = normalizeManifestPath(raw);
-    if (!path || referenced.has(path)) {
-      continue;
-    }
-    findings.push({
-      kind: 'unreferenced-content',
-      label: path,
-      detail:
-        `${path} exists under content/ but is not listed in the manifest. ` +
-        'Add it in the Manifest editor to include it in the book build.'
-    });
+export function manifestRecreateFix(
+  manifestExists: boolean,
+  candidates: DiscoveredManuscriptFile[]
+): BookDoctorFix | undefined {
+  if (manifestExists || candidates.length === 0) {
+    return undefined;
   }
-  return findings;
+  const entries = reconstructManifestEntries(candidates);
+  if (entries.length === 0) {
+    return undefined;
+  }
+  return {
+    path: 'manifest.yaml',
+    kind: 'file',
+    seed: buildManifestYaml(entries),
+    description: `Recreate the manifest from ${candidates.length} discovered content file(s).`,
+    manifest: {
+      mode: 'recreate',
+      entries,
+      fileCount: candidates.length,
+      samplePaths: candidates.slice(0, SAMPLE_PATH_LIMIT).map(candidate => candidate.path)
+    }
+  };
+}
+
+/**
+ * Check 2b(2) — Unreferenced content: when `manifest.yaml` exists but discovered
+ * `.md` candidates are not listed in it, offer a single fixable that APPENDS them
+ * (comment-preserving) to the manifest — a new chapter lands at the end of its
+ * existing parent part, a new part at the end of `content`. This supersedes the
+ * old report-only "orphan content" finding. Returns undefined when every
+ * candidate is already referenced.
+ */
+export function manifestAppendFix(
+  manifestExists: boolean,
+  candidates: DiscoveredManuscriptFile[],
+  rows: ManifestRow[]
+): BookDoctorFix | undefined {
+  if (!manifestExists) {
+    return undefined;
+  }
+  const referenced = new Set(rows.map(row => normalizeManifestPath(row.path)));
+  const unreferenced = candidates.filter(
+    candidate => !referenced.has(normalizeManifestPath(candidate.path))
+  );
+  if (unreferenced.length === 0) {
+    return undefined;
+  }
+  const entries = reconstructManifestEntries(unreferenced);
+  if (entries.length === 0) {
+    return undefined;
+  }
+  return {
+    path: 'manifest.yaml',
+    kind: 'file',
+    description: `Add ${unreferenced.length} unreferenced content file(s) to the manifest.`,
+    manifest: {
+      mode: 'append',
+      entries,
+      fileCount: unreferenced.length,
+      samplePaths: unreferenced.slice(0, SAMPLE_PATH_LIMIT).map(candidate => candidate.path)
+    }
+  };
+}
+
+/**
+ * The `metadata.yaml` seed to use when the doctor restores an old book: the same
+ * scaffold seed the New Book wizard would emit, but titled with the workspace
+ * FOLDER NAME instead of `Untitled`. Reuses `bookScaffoldEntries({ title })` so
+ * the wizard's default shape is untouched — only the doctor threads a title in.
+ */
+export function reconstructionMetadataSeed(folderName: string): string {
+  const entry = bookScaffoldEntries({ title: folderName }).find(
+    scaffold => scaffold.path === 'metadata.yaml'
+  );
+  return entry?.seed ?? '';
 }
 
 /**
@@ -255,10 +359,20 @@ export function excerptsParseFinding(content: string): BookDoctorFinding | undef
 
 /**
  * Compose the full {@link BookDoctorReport} from resolved inputs. Fixes are
- * de-duplicated by path (scaffold entries first, then manifest chapter files),
- * preserving the parents-before-children order the scaffold guarantees so a
- * consumer can create them sequentially. Findings are appended in check order:
- * orphan content, metadata, then the sources parse checks.
+ * de-duplicated by path, preserving the parents-before-children order the
+ * scaffold guarantees so a consumer can create them sequentially.
+ *
+ * Manifest handling adapts to the workspace state:
+ *  - manifest MISSING + content on disk → the reconstruction fix is pushed FIRST
+ *    so it wins the `manifest.yaml` slot over the empty-seed scaffold fix (the
+ *    empty seed survives only when there is no content at all);
+ *  - manifest EXISTS → its missing chapter files are offered, and any discovered
+ *    files it does not reference become a single append fix (superseding the old
+ *    report-only orphan finding);
+ *  - a missing `metadata.yaml` is re-seeded with the workspace folder name when
+ *    the doctor is restoring an old book (content present + folder name known).
+ *
+ * Findings are appended in check order: metadata, then the sources parse checks.
  */
 export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorReport {
   const fixes: BookDoctorFix[] = [];
@@ -270,19 +384,39 @@ export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorRepo
     }
   };
 
+  const candidates = input.manuscriptCandidates ?? [];
+
+  // Missing-manifest reconstruction claims the `manifest.yaml` slot first, so the
+  // empty-seed scaffold fix below is de-duplicated out when content exists.
+  const recreate = manifestRecreateFix(input.manifestExists, candidates);
+  if (recreate) {
+    push(recreate);
+  }
+
   for (const fix of scaffoldFixes(input.scaffoldEntries, input.exists, input.contentHasMarkdown)) {
     push(fix);
   }
+
+  // Restore an old book with a friendlier metadata title (folder name, not
+  // `Untitled`) when metadata.yaml is being freshly seeded and content exists.
+  if (candidates.length > 0 && input.folderName) {
+    const metadataFix = fixes.find(fix => fix.path === 'metadata.yaml');
+    if (metadataFix && metadataFix.kind === 'file') {
+      metadataFix.seed = reconstructionMetadataSeed(input.folderName);
+    }
+  }
+
   if (input.manifestExists) {
     for (const fix of manifestChapterFixes(input.manifestRows, input.exists)) {
       push(fix);
     }
+    const append = manifestAppendFix(input.manifestExists, candidates, input.manifestRows);
+    if (append) {
+      push(append);
+    }
   }
 
   const findings: BookDoctorFinding[] = [];
-  if (input.manifestExists) {
-    findings.push(...unreferencedContentFindings(input.contentMarkdownPaths, input.manifestRows));
-  }
   if (input.metadata) {
     findings.push(...metadataFindings(input.metadata));
   }

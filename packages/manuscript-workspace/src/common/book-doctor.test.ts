@@ -7,10 +7,11 @@ import {
   citationsParseFinding,
   deriveChapterTitle,
   excerptsParseFinding,
+  manifestAppendFix,
   manifestChapterFixes,
+  manifestRecreateFix,
   metadataFindings,
-  scaffoldFixes,
-  unreferencedContentFindings
+  scaffoldFixes
 } from './book-doctor';
 
 /** Build an `exists` predicate from a fixed set of present paths. */
@@ -90,22 +91,56 @@ describe('manifestChapterFixes', () => {
   });
 });
 
-describe('unreferencedContentFindings', () => {
+describe('manifestRecreateFix', () => {
+  test('rebuilds the manifest from discovered content when it is missing', () => {
+    const fix = manifestRecreateFix(false, [
+      { path: 'content/chapter-01.md', firstHeading: 'Intro' },
+      { path: 'content/part-01/chapter-02.md' }
+    ]);
+    expect(fix?.path).toBe('manifest.yaml');
+    expect(fix?.kind).toBe('file');
+    expect(fix?.manifest?.mode).toBe('recreate');
+    expect(fix?.manifest?.fileCount).toBe(2);
+    // The seed is a real manifest the reader accepts.
+    const rows = flattenManifestRows(parse(fix?.seed ?? ''));
+    expect(rows.map(row => row.path)).toEqual([
+      'content/chapter-01.md',
+      'content/part-01',
+      'content/part-01/chapter-02.md'
+    ]);
+  });
+
+  test('is undefined when the manifest already exists or there is no content', () => {
+    expect(manifestRecreateFix(true, [{ path: 'content/a.md' }])).toBeUndefined();
+    expect(manifestRecreateFix(false, [])).toBeUndefined();
+  });
+});
+
+describe('manifestAppendFix', () => {
   const rows = flattenManifestRows(
     parse('version: 1\ncontent:\n  - path: content/chapter-01.md\n')
   );
 
-  test('reports on-disk markdown the manifest does not list', () => {
-    const findings = unreferencedContentFindings(
-      ['content/chapter-01.md', 'content/orphan.md', 'content/notes/scratch.md'],
-      rows
-    );
-    expect(findings.map(finding => finding.label)).toEqual(['content/orphan.md', 'content/notes/scratch.md']);
-    expect(findings[0].kind).toBe('unreferenced-content');
+  test('offers an append fix for discovered files the manifest does not list', () => {
+    const fix = manifestAppendFix(true, [
+      { path: 'content/chapter-01.md' },
+      { path: 'content/orphan.md' },
+      { path: 'content/notes/scratch.md' }
+    ], rows);
+    expect(fix?.path).toBe('manifest.yaml');
+    expect(fix?.manifest?.mode).toBe('append');
+    expect(fix?.manifest?.fileCount).toBe(2);
+    expect(fix?.manifest?.samplePaths).toEqual(['content/orphan.md', 'content/notes/scratch.md']);
+    // No seed — the browser merges the entries into the existing manifest.
+    expect(fix?.seed).toBeUndefined();
   });
 
-  test('is empty when every content file is referenced', () => {
-    expect(unreferencedContentFindings(['content/chapter-01.md'], rows)).toEqual([]);
+  test('is undefined when every discovered file is already referenced', () => {
+    expect(manifestAppendFix(true, [{ path: 'content/chapter-01.md' }], rows)).toBeUndefined();
+  });
+
+  test('is undefined when the manifest is missing (reconstruction handles that)', () => {
+    expect(manifestAppendFix(false, [{ path: 'content/orphan.md' }], rows)).toBeUndefined();
   });
 });
 
@@ -166,7 +201,7 @@ describe('assembleBookDoctorReport', () => {
       contentHasMarkdown: false,
       manifestExists: true,
       manifestRows,
-      contentMarkdownPaths: [],
+      manuscriptCandidates: [],
       metadata: { title: '', author: 'Someone' },
       citationsContent: 'version: 1\ncitations: []\n',
       excerptsContent: 'not json\n'
@@ -180,17 +215,67 @@ describe('assembleBookDoctorReport', () => {
     expect(report.findings.some(finding => finding.kind === 'parse-error')).toBe(true);
   });
 
-  test('skips manifest-coverage checks when the manifest is absent', () => {
+  test('recreates a missing manifest from discovered content (and drops the empty seed)', () => {
+    const report = assembleBookDoctorReport({
+      scaffoldEntries: bookScaffoldEntries(),
+      exists: existsIn(['metadata.yaml', 'content']),
+      contentHasMarkdown: true,
+      manifestExists: false,
+      manifestRows: [],
+      manuscriptCandidates: [{ path: 'content/chapter-07.md', firstHeading: 'Seven' }],
+      folderName: 'My Restored Book'
+    });
+    const manifestFix = report.fixes.find(fix => fix.path === 'manifest.yaml');
+    expect(manifestFix?.manifest?.mode).toBe('recreate');
+    // The empty-seed scaffold manifest is superseded, not offered twice.
+    expect(report.fixes.filter(fix => fix.path === 'manifest.yaml')).toHaveLength(1);
+    expect(manifestFix?.seed).toContain('content/chapter-07.md');
+  });
+
+  test('re-seeds a missing metadata.yaml with the workspace folder name when restoring', () => {
+    const report = assembleBookDoctorReport({
+      scaffoldEntries: bookScaffoldEntries(),
+      exists: existsIn(['content']),
+      contentHasMarkdown: true,
+      manifestExists: false,
+      manifestRows: [],
+      manuscriptCandidates: [{ path: 'content/chapter-01.md' }],
+      folderName: 'War and Peace'
+    });
+    const metadataFix = report.fixes.find(fix => fix.path === 'metadata.yaml');
+    expect(metadataFix?.seed).toContain('title: War and Peace');
+  });
+
+  test('offers an append fix for unreferenced content when the manifest exists', () => {
+    const report = assembleBookDoctorReport({
+      scaffoldEntries: bookScaffoldEntries(),
+      exists: existsIn(ALL_SCAFFOLD_PATHS),
+      contentHasMarkdown: true,
+      manifestExists: true,
+      manifestRows: flattenManifestRows(
+        parse('version: 1\ncontent:\n  - path: content/chapter-01.md\n')
+      ),
+      manuscriptCandidates: [{ path: 'content/chapter-01.md' }, { path: 'content/orphan.md' }],
+      metadata: { title: 'Book', author: 'Author' }
+    });
+    const appendFix = report.fixes.find(fix => fix.path === 'manifest.yaml');
+    expect(appendFix?.manifest?.mode).toBe('append');
+    expect(appendFix?.manifest?.samplePaths).toEqual(['content/orphan.md']);
+    // The orphan is a FIX now, not a report-only finding.
+    expect(report.findings).toEqual([]);
+  });
+
+  test('skips manifest-coverage checks when the manifest is absent and there is no content', () => {
     const report = assembleBookDoctorReport({
       scaffoldEntries: bookScaffoldEntries(),
       exists: existsIn(ALL_SCAFFOLD_PATHS),
       contentHasMarkdown: true,
       manifestExists: false,
       manifestRows: [],
-      contentMarkdownPaths: ['content/orphan.md'],
+      manuscriptCandidates: [],
       metadata: { title: 'Book', author: 'Author' }
     });
-    // No manifest => no orphan-content findings, no chapter fixes.
+    // No content => nothing to reconstruct, no chapter fixes, no findings.
     expect(report.findings).toEqual([]);
     expect(report.fixes).toEqual([]);
   });

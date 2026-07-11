@@ -38,6 +38,12 @@ import {
   type BookDoctorFix,
   type BookDoctorReport
 } from '../common/book-doctor';
+import {
+  appendEntriesToManifest,
+  extractFirstHeading,
+  isExcludedDiscoveryDir,
+  type DiscoveredManuscriptFile
+} from '../common/manifest-reconstruction';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import { AFE_MANUSCRIPT_SECTION_CONTEXT_KEY } from './manuscript-tree';
@@ -205,8 +211,14 @@ export class BookDoctorContribution
     const root = new URI(rootUri);
     const scaffoldEntries = bookScaffoldEntries();
 
-    const contentMarkdownPaths = await this.collectContentMarkdown(root);
-    const contentHasMarkdown = contentMarkdownPaths.length > 0;
+    // Discover every manuscript candidate across the workspace (not only
+    // content/), so an old folder with chapters at the root or in arbitrary
+    // folders is fully picked up.
+    const manuscriptCandidates = await this.collectManuscriptCandidates(root);
+    const contentHasMarkdown = manuscriptCandidates.some(candidate =>
+      normalizeManifestPath(candidate.path).startsWith('content/')
+    );
+    const folderName = root.path.base;
 
     // Manifest (gates the coverage checks).
     const manifestUri = root.resolve('manifest.yaml');
@@ -242,7 +254,8 @@ export class BookDoctorContribution
       contentHasMarkdown,
       manifestExists,
       manifestRows,
-      contentMarkdownPaths,
+      manuscriptCandidates,
+      folderName,
       metadata,
       citationsContent,
       excerptsContent
@@ -265,26 +278,41 @@ export class BookDoctorContribution
     return existing;
   }
 
-  /** Recursively collect workspace-relative `content/**` Markdown paths (sorted). */
-  protected async collectContentMarkdown(root: URI): Promise<string[]> {
-    const results: string[] = [];
-    await this.walkMarkdown(root, root.resolve('content'), results);
-    results.sort();
+  /**
+   * Recursively collect workspace-relative `.md` candidates, pruning the excluded
+   * and hidden directories (build/, knowledge/, sources/, entities/, ai/, .git/,
+   * …). Each candidate carries the first ATX heading extracted from the file's
+   * leading bytes (~2 KB) so a restored chapter's real title becomes its manifest
+   * title. Sorted by path for a stable report.
+   */
+  protected async collectManuscriptCandidates(root: URI): Promise<DiscoveredManuscriptFile[]> {
+    const results: DiscoveredManuscriptFile[] = [];
+    await this.walkCandidates(root, root, results);
+    results.sort((a, b) => a.path.localeCompare(b.path));
     return results;
   }
 
-  protected async walkMarkdown(root: URI, dir: URI, out: string[]): Promise<void> {
+  protected async walkCandidates(root: URI, dir: URI, out: DiscoveredManuscriptFile[]): Promise<void> {
     const stat = await this.fileService.resolve(dir).catch(() => undefined);
     for (const child of stat?.children ?? []) {
       if (child.isDirectory) {
-        await this.walkMarkdown(root, child.resource, out);
+        if (isExcludedDiscoveryDir(child.resource.path.base)) {
+          continue;
+        }
+        await this.walkCandidates(root, child.resource, out);
       } else if (child.isFile) {
         const relative = root.relative(child.resource)?.toString();
         if (relative && relative.toLowerCase().endsWith('.md')) {
-          out.push(relative);
+          out.push({ path: relative, firstHeading: await this.readFirstHeading(child.resource) });
         }
       }
     }
+  }
+
+  /** Read the file's leading bytes and extract the first ATX heading, if any. */
+  protected async readFirstHeading(uri: URI): Promise<string | undefined> {
+    const text = await this.readTextIfExists(uri);
+    return text === undefined ? undefined : extractFirstHeading(text.slice(0, 2048));
   }
 
   protected async readManifestRows(uri: URI): Promise<ManifestRow[]> {
@@ -324,10 +352,33 @@ export class BookDoctorContribution
    * report where the complete, untruncated findings are readable. Resolves the
    * chosen outcome: apply the fixes, open the report, or cancel (Esc).
    */
+  /**
+   * QuickPick/report label for a fix: plain fixes show their path; the manifest
+   * reconstruction/append fix shows a localized label carrying the file count so
+   * ru/en both read naturally (the pure module's English `description` stays the
+   * fallback tooltip).
+   */
+  protected fixLabel(fix: BookDoctorFix): string {
+    if (fix.manifest) {
+      return fix.manifest.mode === 'recreate'
+        ? nls.localize(
+            'ai-focused-editor/doctor/reconstruct-fix',
+            'Recreate the manifest from content ({0} file(s))',
+            fix.manifest.fileCount
+          )
+        : nls.localize(
+            'ai-focused-editor/doctor/append-fix',
+            'Add to the manifest ({0} file(s))',
+            fix.manifest.fileCount
+          );
+    }
+    return fix.path;
+  }
+
   protected pickFixes(report: BookDoctorReport): Promise<DoctorPickOutcome> {
     const fixItems: DoctorPickItem[] = report.fixes.map(fix => ({
-      label: fix.path,
-      description: fix.description,
+      label: this.fixLabel(fix),
+      description: fix.manifest ? fix.manifest.samplePaths.join(', ') : fix.description,
       fix
     }));
     const findingItems: DoctorPickItem[] = report.findings.map(finding => ({
@@ -450,7 +501,23 @@ export class BookDoctorContribution
       ));
       lines.push('');
       for (const fix of report.fixes) {
-        lines.push(`- \`${fix.path}\` — ${fix.description}`);
+        if (fix.manifest) {
+          // Reconstruction/append: show the localized label, the file count, and
+          // the first few discovered paths so the report is self-explanatory.
+          lines.push(`- **${this.fixLabel(fix)}** — \`${fix.path}\``);
+          for (const sample of fix.manifest.samplePaths) {
+            lines.push(`  - \`${sample}\``);
+          }
+          if (fix.manifest.fileCount > fix.manifest.samplePaths.length) {
+            lines.push(`  - ${nls.localize(
+              'ai-focused-editor/doctor/report-more-files',
+              '…and {0} more',
+              fix.manifest.fileCount - fix.manifest.samplePaths.length
+            )}`);
+          }
+        } else {
+          lines.push(`- \`${fix.path}\` — ${fix.description}`);
+        }
       }
     }
     lines.push('');
@@ -501,7 +568,16 @@ export class BookDoctorContribution
     for (const fix of fixes) {
       const uri = root.resolve(fix.path);
       try {
-        if (fix.kind === 'folder') {
+        if (fix.manifest?.mode === 'append') {
+          // Append-only: merge the new entries into the EXISTING manifest,
+          // preserving its comments/format — never a wholesale rewrite.
+          const existing = await this.readTextIfExists(uri);
+          if (existing === undefined) {
+            skipped += 1;
+            continue;
+          }
+          await this.fileService.write(uri, appendEntriesToManifest(existing, fix.manifest.entries));
+        } else if (fix.kind === 'folder') {
           await this.fileService.createFolder(uri);
         } else {
           if (await this.fileService.exists(uri)) {
