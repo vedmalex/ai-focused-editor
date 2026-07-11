@@ -66,3 +66,11 @@ Source: virtual (source-content mode, copy). Registered as theia-platform-overvi
 - Created 8 summary pages and 10 concept pages (dependency-injection, contribution-points, theia-extensions, frontend-backend-separation, theia-ai-agents, language-models, prompt-fragments, context-variables, preferences-system, widgets-and-views).
 - Theia AI page re-extracted at full fidelity (priority #1 for AI Focused Editor).
 - theia-docs-hub landing page failed extraction (navigation-only page); revisit if needed.
+
+## 2026-07-11 — Feature map refreshed (waves 11–30)
+- Rewrote ai-focused-editor-feature-map to current code state: form editors (entity/citation/excerpts/ai-modes/manifest/metadata), semantic-link + footnote navigation, artifact creation from tree/selection, Book Doctor + manifest reconstruction, welcome page + New Book wizard + My Books catalog, manuscript-view toolbar.
+- AI stack: endpoint+alias two-level model (profiles removed) + two-stage verification, AI request log, base-modes.yaml three-layer override, chat capability presets, chat artifact context (#source/#note).
+- Viewers: office preview (docx/xlsx/pptx), markdown image inlining, Excalidraw editor.
+- Platform: ru/en localization (nls per-area dicts), MCP (@theia/ai-mcp + server controls), browser auth (password+QR, off by default), writing mode + mobile layer, Cyrillic transliteration in slugs, @theia/git fork, entities grouped under one tree node.
+- Test Inventory updated to real numbers: 669 pass / 0 fail / 37 files (was 297/20). UI flow pack now 10 scenarios (AFE-01..AFE-10).
+- Verified against source + `bun test packages`; index.md date bumped.
