@@ -269,6 +269,13 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 
 - `@theia/ai-mcp@1.73.1` in both targets: servers via `ai-features.mcp.mcpServers` (command/args/env, autostart-after-restart), tools surface as `mcp_<server>_<tool>` functions + a prompt fragment per server + an MCP group in the capabilities panel. `docs/mcp.md` carries a paste-ready **bs-search** recipe (11 search/RAG tools; `bash -lc` cwd workaround). The Start/Stop management widget would need `@theia/ai-ide` — flagged as a separate decision.
 
+## Wave 28 — MCP controls, writing mode, i18n completion (shipped)
+
+- **«Серверы MCP…»**: список настроенных серверов с состоянием и autostart, ручной старт/стоп по клику (интерактивный путь — OAuth-серверы открывают вход), отчёт о числе инструментов; «Добавить сервер…»/«Открыть настройки MCP…». Работает без `@theia/ai-ide`.
+- **Режим письма**: команда + тумблер на вкладке редактора (панели сворачиваются с восстановлением раскладки); viewport-мета для телефонов, разовая подсказка на узких экранах, крупные тач-цели под `max-width:900px + pointer:coarse`.
+- **i18n добит**: валидаторы `common/` шлют стабильные коды проблем с параметрами (английские сообщения байт-в-байт — тесты нетронуты), формы и отчёт доктора рендерят русский по кодам; AI Debug дочищен.
+- Tests: 637 across 34 files; build + browser smoke + 10/10 flows on the final tree.
+
 ## Backlog (queued)
 
 0. **Electron smoke pipeline flake — largely solved**: dev-mode backend fork collided with Playwright's debug argv → the smoke runs `NODE_ENV=production` and is green standalone, after builds, and via `bun run`. A residual in-pipeline-only failure (window dies with ZERO main output, only inside the full `verify:full` chain) still appears sporadically; retries + output capture stay in place to characterize it.
