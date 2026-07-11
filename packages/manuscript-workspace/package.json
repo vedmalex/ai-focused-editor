@@ -17,6 +17,7 @@
     "@ai-focused-editor/semantic-markdown": "workspace:*",
     "@theia/ai-chat": "1.73.1",
     "@theia/ai-core": "1.73.1",
+    "@theia/ai-mcp": "1.73.1",
     "@theia/core": "1.73.1",
     "@theia/editor": "1.73.1",
     "@theia/filesystem": "1.73.1",
@@ -110,6 +111,9 @@
     },
     {
       "frontend": "lib/browser/chat-capability-presets-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/mcp-controls-frontend-module"
     }
   ]
 }

@@ -1,0 +1,35 @@
+{
+  "ai-focused-editor": {
+    "mcp": {
+      "command": "Серверы MCP…",
+      "title": "Серверы MCP",
+      "placeholder": "Выберите сервер, чтобы запустить или остановить его, либо выберите действие",
+      "unavailable": "Поддержка MCP недоступна в этой сборке.",
+      "list-failed": "Не удалось получить список серверов MCP: {0}",
+      "section-servers": "Настроенные серверы",
+      "no-servers": "Серверы MCP ещё не настроены.",
+      "no-servers-detail": "Используйте «Добавить сервер…» ниже, чтобы настроить первый сервер MCP.",
+      "section-actions": "Действия",
+      "add-server": "Добавить сервер…",
+      "open-settings": "Открыть настройки MCP…",
+      "state-running": "запущен",
+      "state-stopped": "остановлен",
+      "autostart-on": "автостарт вкл",
+      "autostart-off": "автостарт выкл",
+      "status-errored-detail": "ошибка: {0}",
+      "status-errored": "ошибка",
+      "status-auth-required": "требуется вход",
+      "click-to-stop": "Нажмите, чтобы остановить сервер.",
+      "click-to-start": "Нажмите, чтобы запустить сервер.",
+      "starting-progress": "Запуск сервера MCP «{0}»…",
+      "stopping-progress": "Остановка сервера MCP «{0}»…",
+      "start-failed": "Не удалось запустить сервер MCP «{0}»: {1}",
+      "stop-failed": "Не удалось остановить сервер MCP «{0}»: {1}",
+      "started-with-tools": "Сервер MCP «{0}» запущен (доступно инструментов: {1}).",
+      "started": "Сервер MCP «{0}» запущен.",
+      "stopped": "Сервер MCP «{0}» остановлен.",
+      "add-unavailable": "Диалог «Добавить сервер MCP» недоступен. Добавьте серверы через настройки MCP.",
+      "settings-unavailable": "Панель настроек недоступна."
+    }
+  }
+}
