@@ -282,6 +282,11 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 30 — Excalidraw diagram editor (spike → feature, shipped)
+
+- De-risking spike succeeded and became the feature: `@excalidraw/excalidraw` 0.18.1 bundles under `theia build` (which is **esbuild** here, not webpack), rendered in a `ReactWidget` + Navigatable + Saveable opening `.excalidraw` at priority 500 (lazy component load, theme-synced, save via `serializeAsJSON`). Offline-safe assets: `scripts/copy-excalidraw-assets.mjs` (a committed build step, since `apps/*/esbuild.mjs` is regenerated/gitignored) copies fonts + css into the served root and the widget sets `EXCALIDRAW_ASSET_PATH` — **live-verified**: canvas mounts, 0 CDN hits, 0 asset 404. `.excalidraw` lists in SOURCES; `scripts/excalidraw-smoke.mjs` renders a fixture on demand. Use: hand-drawn world maps, character graphs, plot timelines in the book folder under git.
+- **Follow-ups**: esbuild code-splitting so the lazy import leaves the startup bundle (currently inlined, dev bundle large; prod minified ~1.5MB gz); guard the mount-time `onChange` so opening a diagram doesn't mark it dirty (autoSave rewrites `source` on open); electron asset-copy + verification (spike covered the browser target).
+
 ## Backlog (queued)
 
 0. **Electron smoke pipeline flake — largely solved**: dev-mode backend fork collided with Playwright's debug argv → the smoke runs `NODE_ENV=production` and is green standalone, after builds, and via `bun run`. A residual in-pipeline-only failure (window dies with ZERO main output, only inside the full `verify:full` chain) still appears sporadically; retries + output capture stay in place to characterize it.
