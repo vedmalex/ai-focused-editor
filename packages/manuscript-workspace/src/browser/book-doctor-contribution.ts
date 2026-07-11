@@ -9,7 +9,8 @@ import {
   ProgressService,
   QuickInputService,
   QuickPickItem,
-  QuickPickSeparator
+  QuickPickSeparator,
+  UntitledResourceResolver
 } from '@theia/core/lib/common';
 import URI from '@theia/core/lib/common/uri';
 import { nls } from '@theia/core/lib/common/nls';
@@ -19,6 +20,7 @@ import {
   TabBarToolbarContribution,
   TabBarToolbarRegistry
 } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
+import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { inject, injectable } from '@theia/core/shared/inversify';
@@ -64,7 +66,15 @@ const TREE_BOOK_MENU_WHEN =
 interface DoctorPickItem extends QuickPickItem {
   /** Present on fixable rows; absent on informational finding rows. */
   fix?: BookDoctorFix;
+  /** Marks the sentinel row that opens the full Markdown report. */
+  openReport?: boolean;
 }
+
+/** Outcome of the fix picker: apply the chosen fixes, open the report, or cancel. */
+type DoctorPickOutcome =
+  | { kind: 'apply'; fixes: BookDoctorFix[] }
+  | { kind: 'report' }
+  | { kind: 'cancel' };
 
 /**
  * "Book Doctor" — inspects the open manuscript workspace, reports what is
@@ -100,6 +110,12 @@ export class BookDoctorContribution
 
   @inject(WidgetManager)
   protected readonly widgetManager!: WidgetManager;
+
+  @inject(EditorManager)
+  protected readonly editorManager!: EditorManager;
+
+  @inject(UntitledResourceResolver)
+  protected readonly untitledResources!: UntitledResourceResolver;
 
   registerCommands(registry: CommandRegistry): void {
     registry.registerCommand(BookDoctorCommands.DOCTOR, {
@@ -158,11 +174,27 @@ export class BookDoctorContribution
       return;
     }
 
-    const selection = await this.pickFixes(report);
-    if (selection === undefined) {
+    // No auto-fixes: skip the (empty) picker entirely and go straight to the
+    // full report so the complete, untruncated findings are readable.
+    if (report.fixes.length === 0) {
+      await this.openReport(report);
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/doctor/findings-only',
+        'No auto-fixes available. Opened the full report with {0} informational finding(s).',
+        report.findings.length
+      ));
       return;
     }
-    await this.applyFixes(new URI(rootUri), selection, report);
+
+    const outcome = await this.pickFixes(report);
+    if (outcome.kind === 'cancel') {
+      return;
+    }
+    if (outcome.kind === 'report') {
+      await this.openReport(report);
+      return;
+    }
+    await this.applyFixes(new URI(rootUri), outcome.fixes, report);
   }
 
   /* ----------------------------------------------------------------------- */
@@ -288,9 +320,11 @@ export class BookDoctorContribution
    * Multi-select QuickPick: fixable problems are preselected creation rows;
    * informational findings are appended under a separator and are read-only
    * (picking them is a no-op — the accept handler keeps only rows carrying a
-   * `fix`). Resolves the chosen fixes, or `undefined` when cancelled (Esc).
+   * `fix`). A trailing sentinel row (`openReport`) opens the full Markdown
+   * report where the complete, untruncated findings are readable. Resolves the
+   * chosen outcome: apply the fixes, open the report, or cancel (Esc).
    */
-  protected pickFixes(report: BookDoctorReport): Promise<BookDoctorFix[] | undefined> {
+  protected pickFixes(report: BookDoctorReport): Promise<DoctorPickOutcome> {
     const fixItems: DoctorPickItem[] = report.fixes.map(fix => ({
       label: fix.path,
       description: fix.description,
@@ -300,11 +334,18 @@ export class BookDoctorContribution
       label: finding.label,
       detail: nls.localize(
         'ai-focused-editor/doctor/finding-detail',
-        'Informational — selecting has no effect. {0}',
-        finding.detail
+        'Informational — selecting has no effect. Open the full report to read the complete message.'
       ),
       alwaysShow: true
     }));
+    // Sentinel action row (mirrors the switchAlias pattern): opens the full
+    // report instead of applying a fix. It carries no `fix`, so the accept
+    // handler never counts it as a creation.
+    const reportItem: DoctorPickItem = {
+      label: nls.localize('ai-focused-editor/doctor/open-report-item', '$(file-text) Open full report...'),
+      openReport: true,
+      alwaysShow: true
+    };
 
     const items: Array<DoctorPickItem | QuickPickSeparator> = [...fixItems];
     if (findingItems.length > 0) {
@@ -314,8 +355,10 @@ export class BookDoctorContribution
       });
       items.push(...findingItems);
     }
+    items.push({ type: 'separator', label: '' });
+    items.push(reportItem);
 
-    return new Promise<BookDoctorFix[] | undefined>(resolve => {
+    return new Promise<DoctorPickOutcome>(resolve => {
       const quickPick = this.quickInput.createQuickPick<DoctorPickItem>();
       quickPick.title = nls.localize(
         'ai-focused-editor/doctor/pick-title',
@@ -324,35 +367,121 @@ export class BookDoctorContribution
       quickPick.canSelectMany = true;
       quickPick.matchOnDescription = true;
       quickPick.matchOnDetail = true;
-      quickPick.placeholder = report.fixes.length > 0
-        ? nls.localize(
-            'ai-focused-editor/doctor/pick-placeholder',
-            'Checked items will be created; informational findings are read-only'
-          )
-        : nls.localize(
-            'ai-focused-editor/doctor/pick-placeholder-empty',
-            'No auto-fixes available — review the informational findings, then close'
-          );
+      quickPick.placeholder = nls.localize(
+        'ai-focused-editor/doctor/pick-placeholder',
+        'Checked items will be created; informational findings are read-only'
+      );
       quickPick.items = items;
       quickPick.selectedItems = fixItems;
 
-      let accepted = false;
+      let outcome: DoctorPickOutcome = { kind: 'cancel' };
+      // Selecting the sentinel row acts like a button: open the report and
+      // dismiss the picker (multi-select toggles selection on click, so this
+      // fires before any accept).
+      quickPick.onDidChangeSelection(selection => {
+        if (selection.some(item => item.openReport)) {
+          outcome = { kind: 'report' };
+          quickPick.hide();
+        }
+      });
       quickPick.onDidAccept(() => {
-        accepted = true;
         const chosen = quickPick.selectedItems
           .map(item => item.fix)
           .filter((fix): fix is BookDoctorFix => fix !== undefined);
+        outcome = { kind: 'apply', fixes: chosen };
         quickPick.hide();
-        resolve(chosen);
       });
       quickPick.onDidHide(() => {
         quickPick.dispose();
-        if (!accepted) {
-          resolve(undefined);
-        }
+        resolve(outcome);
       });
       quickPick.show();
     });
+  }
+
+  /* ----------------------------------------------------------------------- */
+  /* Full report (untitled Markdown, preview-friendly)                       */
+  /* ----------------------------------------------------------------------- */
+
+  /**
+   * Render the report as Markdown and open it in an in-memory (untitled)
+   * editor. Untitled keeps it non-intrusive — nothing is written to the
+   * workspace — while giving every finding its complete, untruncated message.
+   */
+  protected async openReport(report: BookDoctorReport): Promise<void> {
+    const markdown = this.buildReportMarkdown(report);
+    const resource = await this.untitledResources.createUntitledResource(markdown, '.md');
+    await this.editorManager.open(resource.uri, { mode: 'activate' });
+  }
+
+  /**
+   * Compose the full Markdown report. Section headers and the summary line are
+   * localized (the display wrapper); each finding's own message/path text is
+   * rendered verbatim from `common/book-doctor.ts` so it stays complete and
+   * untruncated.
+   */
+  protected buildReportMarkdown(report: BookDoctorReport): string {
+    const lines: string[] = [];
+    lines.push(`# ${nls.localize('ai-focused-editor/doctor/report-title', 'Book Doctor — full report')}`);
+    lines.push('');
+    lines.push(nls.localize(
+      'ai-focused-editor/doctor/report-summary',
+      'Health: {0} fixable, {1} informational finding(s).',
+      report.fixes.length,
+      report.findings.length
+    ));
+    lines.push('');
+
+    lines.push(`## ${nls.localize(
+      'ai-focused-editor/doctor/report-section-fixes',
+      'Fixable ({0})',
+      report.fixes.length
+    )}`);
+    lines.push('');
+    if (report.fixes.length === 0) {
+      lines.push(nls.localize(
+        'ai-focused-editor/doctor/report-no-fixes',
+        'No auto-fixes available.'
+      ));
+    } else {
+      lines.push(nls.localize(
+        'ai-focused-editor/doctor/report-fixes-intro',
+        'The following will be created — nothing is ever deleted or overwritten:'
+      ));
+      lines.push('');
+      for (const fix of report.fixes) {
+        lines.push(`- \`${fix.path}\` — ${fix.description}`);
+      }
+    }
+    lines.push('');
+
+    lines.push(`## ${nls.localize(
+      'ai-focused-editor/doctor/report-section-findings',
+      'Findings ({0})',
+      report.findings.length
+    )}`);
+    lines.push('');
+    if (report.findings.length === 0) {
+      lines.push(nls.localize(
+        'ai-focused-editor/doctor/report-no-findings',
+        'No informational findings.'
+      ));
+    } else {
+      lines.push(nls.localize(
+        'ai-focused-editor/doctor/report-findings-intro',
+        'Informational only — the doctor never changes these automatically:'
+      ));
+      lines.push('');
+      for (const finding of report.findings) {
+        lines.push(`### ${finding.label}`);
+        lines.push('');
+        lines.push(finding.detail);
+        lines.push('');
+      }
+    }
+    lines.push('');
+
+    return lines.join('\n');
   }
 
   /**
