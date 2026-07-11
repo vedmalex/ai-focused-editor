@@ -276,6 +276,12 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **i18n добит**: валидаторы `common/` шлют стабильные коды проблем с параметрами (английские сообщения байт-в-байт — тесты нетронуты), формы и отчёт доктора рендерят русский по кодам; AI Debug дочищен.
 - Tests: 637 across 34 files; build + browser smoke + 10/10 flows on the final tree.
 
+## Wave 29 — Browser auth + My Books catalog (shipped)
+
+- **Optional shared-secret auth** (off by default; `--auth`/env, scrypt salted hash in `~/.ai-focused-editor/auth.json`, never in project folders). Rides Theia's own hook points: `EarlyExpressMiddleware` for HTTP (login page / 401) and `WsRequestValidatorContribution.allowWsUpgrade` for the RPC socket — the websocket hole is closed. Signed HttpOnly SameSite=Lax session cookie, Secure behind TLS; loopback and the electron target never gate. **Show Login QR** command: one-time 2-min single-use token → dependency-free QR (verified against a reference encoder) for phone login. `docs/auth.md` covers Caddy TLS. No user database — Theia backend is single-user; multi-user/permissions is a deliberate cloud-layer deferral.
+- **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
+- Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
+
 ## Backlog (queued)
 
 0. **Electron smoke pipeline flake — largely solved**: dev-mode backend fork collided with Playwright's debug argv → the smoke runs `NODE_ENV=production` and is green standalone, after builds, and via `bun run`. A residual in-pipeline-only failure (window dies with ZERO main output, only inside the full `verify:full` chain) still appears sporadically; retries + output capture stay in place to characterize it.
