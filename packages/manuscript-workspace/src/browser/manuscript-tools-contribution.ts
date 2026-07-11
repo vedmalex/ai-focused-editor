@@ -1,4 +1,5 @@
 import { inject, injectable } from '@theia/core/shared/inversify';
+import { nls } from '@theia/core/lib/common/nls';
 import type { ToolProvider, ToolRequest } from '@theia/ai-core';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import URI from '@theia/core/lib/common/uri';
@@ -29,8 +30,13 @@ export class ManuscriptFindEntitiesTool implements ToolProvider {
   getTool(): ToolRequest {
     return {
       id: ManuscriptFindEntitiesTool.ID,
-      name: ManuscriptFindEntitiesTool.ID,
-      description: 'Search the manuscript knowledge base for characters, terms, artifacts, and locations by name, alias, epithet, or id. Returns matching entity cards.',
+      // A friendly, localized human label for the chat capabilities panel; the
+      // stable `id` above is what the prompt template and selections reference.
+      name: nls.localize('ai-focused-editor/chat-capabilities/tool-find-entities-name', 'Find Entities'),
+      description: nls.localize(
+        'ai-focused-editor/chat-capabilities/tool-find-entities-description',
+        'Search the manuscript knowledge base for characters, terms, artifacts, and locations by name, alias, epithet, or id. Returns matching entity cards.'
+      ),
       parameters: {
         type: 'object',
         properties: {
@@ -98,8 +104,11 @@ export class ManuscriptListChaptersTool implements ToolProvider {
   getTool(): ToolRequest {
     return {
       id: ManuscriptListChaptersTool.ID,
-      name: ManuscriptListChaptersTool.ID,
-      description: 'List the manuscript chapters and parts in manifest order, with workspace-relative paths, titles, and build inclusion.',
+      name: nls.localize('ai-focused-editor/chat-capabilities/tool-list-chapters-name', 'List Chapters'),
+      description: nls.localize(
+        'ai-focused-editor/chat-capabilities/tool-list-chapters-description',
+        'List the manuscript chapters and parts in manifest order, with workspace-relative paths, titles, and build inclusion.'
+      ),
       parameters: {
         type: 'object',
         properties: {},
@@ -142,8 +151,11 @@ export class ManuscriptGetChapterTool implements ToolProvider {
   getTool(): ToolRequest {
     return {
       id: ManuscriptGetChapterTool.ID,
-      name: ManuscriptGetChapterTool.ID,
-      description: 'Read a manuscript chapter by its workspace-relative path (as returned by manuscript_list_chapters). Returns the Markdown text.',
+      name: nls.localize('ai-focused-editor/chat-capabilities/tool-get-chapter-name', 'Read Chapter'),
+      description: nls.localize(
+        'ai-focused-editor/chat-capabilities/tool-get-chapter-description',
+        'Read a manuscript chapter by its workspace-relative path (as returned by manuscript_list_chapters). Returns the Markdown text.'
+      ),
       parameters: {
         type: 'object',
         properties: {

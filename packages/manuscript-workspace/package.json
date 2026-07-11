@@ -100,6 +100,9 @@
     },
     {
       "frontend": "lib/browser/welcome-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/chat-capability-presets-frontend-module"
     }
   ]
 }

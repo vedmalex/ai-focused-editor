@@ -95,6 +95,30 @@ const STARTER_CITATIONS_YAML = 'version: 1\ncitations: []\n';
 /** `ai/prompts/custom-modes.yaml` seed — an empty custom-mode registry (`{ version: 1, modes: [] }`). */
 const STARTER_CUSTOM_MODES_YAML = 'version: 1\nmodes: []\n';
 
+/**
+ * `.prompts/skills/style-guide/SKILL.md` seed — a worked example skill. The
+ * YAML frontmatter (`name` + `description`) is what Theia's DefaultSkillService
+ * reads; the Markdown body explains the discovery mechanism so authors can copy
+ * the folder to make their own book skills.
+ */
+const STARTER_STYLE_GUIDE_SKILL_MD = `---
+name: style-guide
+description: Стилевые правила этой книги
+---
+
+# Style guide
+
+This is an example **workspace skill**. The editor discovers every
+\`.prompts/skills/<slug>/SKILL.md\` in this book and offers it in the AI chat's
+Skills list; you can also reference it from a prompt with \`{{skill:style-guide}}\`
+(or pull in all skills with \`{{skills}}\`).
+
+Replace this body with the actual voice, tense, terminology, and formatting
+rules the AI should follow when it drafts or revises text for this book. To add
+another skill, copy this folder under \`.prompts/skills/\` and change the
+\`name\`/\`description\` in the frontmatter.
+`;
+
 /** Short descriptions for the `knowledge/` subcategories in {@link KNOWLEDGE_CATEGORIES}. */
 const KNOWLEDGE_CATEGORY_DESCRIPTION: Record<string, string> = {
   plans: 'Planning notes: outlines and roadmaps.',
@@ -286,6 +310,36 @@ export function bookScaffoldEntries(options?: NewBookOptions): BookScaffoldEntry
     level: 'recommended',
     seed: STARTER_CUSTOM_MODES_YAML,
     description: 'Custom AI modes (prompts, agents) available in the editor.'
+  });
+
+  // Workspace skills. Theia's DefaultSkillService discovers per-book skills from
+  // `.prompts/skills/<slug>/SKILL.md`; they surface in the chat's Skills group
+  // and via the {{skill:...}}/{{skills}} prompt variables. Seeded with a
+  // style-guide example so authors have a working template to copy.
+  entries.push({
+    path: '.prompts',
+    kind: 'folder',
+    level: 'recommended',
+    description: 'Workspace prompt assets discovered by the AI chat (skills, prompt fragments).'
+  });
+  entries.push({
+    path: '.prompts/skills',
+    kind: 'folder',
+    level: 'recommended',
+    description: 'Per-book skills, one folder per skill, each with a SKILL.md; surfaced in the chat Skills group.'
+  });
+  entries.push({
+    path: '.prompts/skills/style-guide',
+    kind: 'folder',
+    level: 'recommended',
+    description: 'Example skill folder holding the book\'s style-guide SKILL.md.'
+  });
+  entries.push({
+    path: '.prompts/skills/style-guide/SKILL.md',
+    kind: 'file',
+    level: 'recommended',
+    seed: STARTER_STYLE_GUIDE_SKILL_MD,
+    description: 'Seed style-guide skill: frontmatter (name/description) plus a body explaining how skills work.'
   });
 
   return entries;

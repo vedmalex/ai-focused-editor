@@ -66,7 +66,7 @@ async function launchWithRetry() {
     const candidate = await electron.launch({
       args: [mainJs, workspace],
       cwd: appDir,
-      env: { ...process.env, NODE_ENV: 'development' },
+      env: { ...process.env, NODE_ENV: 'production' },
       timeout: 120000
     });
     // Buffer the main-process output so a dead-on-arrival window can be

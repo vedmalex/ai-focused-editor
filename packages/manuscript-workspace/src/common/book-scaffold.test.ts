@@ -41,7 +41,11 @@ const EXPECTED_PATHS = [
   'knowledge/summaries',
   'ai',
   'ai/prompts',
-  'ai/prompts/custom-modes.yaml'
+  'ai/prompts/custom-modes.yaml',
+  '.prompts',
+  '.prompts/skills',
+  '.prompts/skills/style-guide',
+  '.prompts/skills/style-guide/SKILL.md'
 ];
 
 describe('bookScaffoldEntries — structure', () => {
@@ -135,7 +139,11 @@ describe('bookScaffoldEntries — kind/level/seed invariants', () => {
       'knowledge/summaries',
       'ai',
       'ai/prompts',
-      'ai/prompts/custom-modes.yaml'
+      'ai/prompts/custom-modes.yaml',
+      '.prompts',
+      '.prompts/skills',
+      '.prompts/skills/style-guide',
+      '.prompts/skills/style-guide/SKILL.md'
     ]);
   });
 
