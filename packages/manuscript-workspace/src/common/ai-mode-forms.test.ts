@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  aiModeToRow,
   applyOptionsForContext,
   defaultApplyForContext,
   flattenModes,
@@ -23,6 +24,7 @@ function row(overrides: Partial<AiModeRow> = {}): AiModeRow {
     menu: false,
     agent: false,
     icon: '',
+    enabled: true,
     temperature: '',
     maxTokens: '',
     ...overrides
@@ -61,6 +63,7 @@ describe('flattenModes', () => {
       menu: true,
       agent: false,
       icon: 'sparkle',
+      enabled: true,
       temperature: '0.5',
       maxTokens: '800'
     });
@@ -168,7 +171,8 @@ describe('modeToYamlPatch', () => {
       'id', 'label', 'description', 'systemPrompt', 'userPrompt', 'context', 'apply', 'menu', 'agent', 'icon', 'parameters'
     ]);
     expect(patch.write.parameters).toEqual({ temperature: 0.5, maxTokens: 800 });
-    expect(patch.omit).toEqual([]);
+    // enabled defaults to true and is the only omitted key here.
+    expect(patch.omit).toEqual(['enabled']);
   });
 
   test('menu/agent write true only when enabled', () => {
@@ -202,6 +206,54 @@ describe('modeToYamlPatch', () => {
     const patch = modeToYamlPatch(row({ id: '  spaced  ', systemPrompt: 'line 1\nline 2\n' }));
     expect(patch.write.id).toBe('spaced');
     expect(patch.write.systemPrompt).toBe('line 1\nline 2\n');
+  });
+
+  test('writes enabled:false only when disabled and omits it by default', () => {
+    expect(modeToYamlPatch(row({ enabled: false })).write.enabled).toBe(false);
+    const patch = modeToYamlPatch(row({ enabled: true }));
+    expect(patch.write.enabled).toBeUndefined();
+    expect(patch.omit).toContain('enabled');
+  });
+
+  test('never writes an origin field into the file (derived, not persisted)', () => {
+    const seeded = aiModeToRow({
+      id: 'from-base', label: 'Base', systemPrompt: 'base', origin: 'built-in', enabled: true
+    });
+    const patch = modeToYamlPatch(seeded);
+    expect(Object.keys(patch.write)).not.toContain('origin');
+    expect(patch.omit).not.toContain('origin');
+    expect('origin' in patch.write).toBe(false);
+  });
+});
+
+describe('aiModeToRow', () => {
+  test('seeds an editable row from a resolved mode, dropping origin/overrides', () => {
+    const seeded = aiModeToRow({
+      id: 'gv-proof',
+      label: 'Корректура',
+      description: 'desc',
+      systemPrompt: 'prompt',
+      context: 'selection',
+      apply: 'replace',
+      menu: true,
+      icon: 'check',
+      origin: 'built-in',
+      enabled: true,
+      parameters: { temperature: 0.2 }
+    });
+    expect(seeded.id).toBe('gv-proof');
+    expect(seeded.context).toBe('selection');
+    expect(seeded.apply).toBe('replace');
+    expect(seeded.menu).toBe(true);
+    expect(seeded.icon).toBe('check');
+    expect(seeded.temperature).toBe('0.2');
+    // origin/overrides are not row fields.
+    expect((seeded as Record<string, unknown>).origin).toBeUndefined();
+  });
+
+  test('carries an explicit disabled flag through to the row', () => {
+    const seeded = aiModeToRow({ id: 'x', label: 'x', systemPrompt: 's', enabled: false });
+    expect(seeded.enabled).toBe(false);
   });
 });
 

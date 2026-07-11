@@ -22,6 +22,7 @@ import {
   inject,
   injectable
 } from '@theia/core/shared/inversify';
+import { AiModeRegistry } from '../common';
 import { AiModesEditorWidget } from './ai-modes-editor-widget';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 
@@ -36,14 +37,24 @@ const AI_MODES_WORKSPACE_PATH = 'ai/prompts/custom-modes.yaml';
 
 const STARTER_AI_MODES_YAML = 'version: 1\nmodes: []\n';
 
+/** The user-global modes folder name under the home directory. */
+const GLOBAL_MODES_DIR = '.ai-focused-editor';
+
+function isCustomModesBase(base: string | undefined): boolean {
+  return base === 'custom-modes.yaml' || base === 'custom-modes.yml';
+}
+
 function isAiModesYaml(uri: URI): boolean {
   const segments = uri.path.toString().split('/').filter(segment => segment.length > 0);
   const base = segments[segments.length - 1]?.toLowerCase();
   const parent = segments[segments.length - 2]?.toLowerCase();
   const grandparent = segments[segments.length - 3]?.toLowerCase();
-  return grandparent === 'ai'
-    && parent === 'prompts'
-    && (base === 'custom-modes.yaml' || base === 'custom-modes.yml');
+  // Book modes: <root>/ai/prompts/custom-modes.yaml
+  if (grandparent === 'ai' && parent === 'prompts' && isCustomModesBase(base)) {
+    return true;
+  }
+  // User-global modes: <home>/.ai-focused-editor/custom-modes.yaml
+  return parent === GLOBAL_MODES_DIR && isCustomModesBase(base);
 }
 
 @injectable()
@@ -66,6 +77,16 @@ export namespace AiModesEditorCommands {
     'ai-focused-editor/ai-modes/edit-modes',
     'ai-focused-editor/ai-modes/category'
   );
+
+  export const EDIT_GLOBAL_AI_MODES: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.aiModes.editGlobalModes',
+      category: 'AI Focused Editor',
+      label: 'Edit Global AI Modes...'
+    },
+    'ai-focused-editor/ai-modes/edit-global-modes',
+    'ai-focused-editor/ai-modes/category'
+  );
 }
 
 @injectable()
@@ -82,12 +103,26 @@ export class AiModesEditorCommandContribution implements CommandContribution, Me
   @inject(MessageService)
   protected readonly messageService!: MessageService;
 
+  @inject(AiModeRegistry)
+  protected readonly aiModes!: AiModeRegistry;
+
   registerCommands(commands: CommandRegistry): void {
     commands.registerCommand(AiModesEditorCommands.EDIT_AI_MODES, {
       execute: async () => {
         const uri = await this.resolveModesUri();
         if (!uri) {
           await this.messageService.warn(nls.localize('ai-focused-editor/ai-modes/open-workspace-edit', 'Open a manuscript workspace before editing AI modes.'));
+          return;
+        }
+        await this.ensureFile(uri);
+        await this.openHandler.open(uri);
+      }
+    });
+    commands.registerCommand(AiModesEditorCommands.EDIT_GLOBAL_AI_MODES, {
+      execute: async () => {
+        const uri = await this.resolveGlobalModesUri();
+        if (!uri) {
+          await this.messageService.warn(nls.localize('ai-focused-editor/ai-modes/global-unavailable', 'Could not resolve the global AI modes file location.'));
           return;
         }
         await this.ensureFile(uri);
@@ -101,6 +136,20 @@ export class AiModesEditorCommandContribution implements CommandContribution, Me
       commandId: AiModesEditorCommands.EDIT_AI_MODES.id,
       order: '0_edit'
     });
+    menus.registerMenuAction(AiFocusedEditorMenus.AI_MODES, {
+      commandId: AiModesEditorCommands.EDIT_GLOBAL_AI_MODES.id,
+      order: '0_edit_global'
+    });
+  }
+
+  /** Resolve the user-global modes file URI reported by the backend registry. */
+  protected async resolveGlobalModesUri(): Promise<URI | undefined> {
+    try {
+      const snapshot = await this.aiModes.getSnapshot();
+      return snapshot.globalUri ? new URI(snapshot.globalUri) : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   protected async resolveModesUri(): Promise<URI | undefined> {

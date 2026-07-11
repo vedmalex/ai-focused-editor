@@ -25,6 +25,17 @@ export type AiModeApply = 'replace' | 'insert' | 'chat';
 export const AI_MODE_CONTEXTS: readonly AiModeContext[] = ['selection', 'word', 'chapter', 'chat'];
 export const AI_MODE_APPLY_KINDS: readonly AiModeApply[] = ['replace', 'insert', 'chat'];
 
+/**
+ * Which layer a resolved mode was contributed by, lowest to highest precedence:
+ * - `built-in`: bundled base modes shipped with the editor (read-only).
+ * - `global`: the user's `~/.ai-focused-editor/custom-modes.yaml`.
+ * - `book`: the book's `ai/prompts/custom-modes.yaml`.
+ * A mode of a given id in a higher layer replaces the whole lower-layer record.
+ */
+export type AiModeOrigin = 'built-in' | 'global' | 'book';
+
+export const AI_MODE_ORIGINS: readonly AiModeOrigin[] = ['built-in', 'global', 'book'];
+
 export interface AiMode {
   id: string;
   label: string;
@@ -42,6 +53,30 @@ export interface AiMode {
   agent?: boolean;
   /** Optional codicon name (without the `codicon-` prefix) for menus. */
   icon?: string;
+  /**
+   * Whether the mode is active. Defaults to `true`. A mode with `enabled: false`
+   * is hidden from menus, agents, prompt fragments and pickers, but still shown
+   * (as disabled) in the AI Modes form editor so it can be re-enabled.
+   */
+  enabled?: boolean;
+  /**
+   * The layer this mode was resolved from. Populated by the layering step on the
+   * node side; NEVER authored into or written back to a modes YAML file.
+   */
+  origin?: AiModeOrigin;
+}
+
+/**
+ * A fully-resolved mode with its layer origin and the lower-precedence layer it
+ * shadows (if any). Used by the form editor to badge modes and to render
+ * built-in/global modes read-only. `origin`/`overrides`/`enabled` are derived —
+ * they are never persisted to a modes YAML file.
+ */
+export interface ResolvedAiMode extends AiMode {
+  origin: AiModeOrigin;
+  enabled: boolean;
+  /** The origin of the lower layer this record overrides, when it shadows one. */
+  overrides?: AiModeOrigin;
 }
 
 /**
@@ -61,8 +96,27 @@ export function resolveAiModeApply(mode: AiMode): AiModeApply {
 
 export interface AiModeRegistrySnapshot {
   rootUri?: string;
+  /** The book modes file (`ai/prompts/custom-modes.yaml`), when a workspace is open. */
   sourceUri?: string;
+  /** The user-global modes file (`~/.ai-focused-editor/custom-modes.yaml`). */
+  globalUri?: string;
+  /**
+   * All layer files that should be hot-watched for changes (book + global). The
+   * bundled base modes ship read-only and need no watch. Consumers watch each
+   * parent directory to pick up create/edit/delete of a layer file.
+   */
+  watchUris?: string[];
+  /**
+   * The resolved, layered modes that consumers register (menus, agents, prompt
+   * fragments, pickers). Already filtered to enabled modes and origin-tagged, so
+   * existing consumers need no change.
+   */
   modes: AiMode[];
+  /**
+   * The full resolution across every layer, INCLUDING disabled modes, for the
+   * form editor to display with origin badges. Absent on error/no-workspace.
+   */
+  resolved?: ResolvedAiMode[];
   diagnostics: WorkspaceDiagnostic[];
 }
 

@@ -16,6 +16,7 @@
 import {
   AI_MODE_APPLY_KINDS,
   AI_MODE_CONTEXTS,
+  type AiMode,
   type AiModeApply,
   type AiModeContext
 } from './ai-mode-protocol';
@@ -44,6 +45,8 @@ export interface AiModeRow {
   menu: boolean;
   agent: boolean;
   icon: string;
+  /** Whether the mode is active. `false` writes `enabled: false`; `true` is the omitted default. */
+  enabled: boolean;
   temperature: string;
   maxTokens: string;
 }
@@ -70,6 +73,7 @@ export const EMPTY_AI_MODE_ROW: AiModeRow = {
   menu: false,
   agent: false,
   icon: '',
+  enabled: true,
   temperature: '',
   maxTokens: ''
 };
@@ -155,9 +159,20 @@ function toRow(record: Record<string, unknown>): AiModeRow {
     menu: record.menu === true,
     agent: record.agent === true,
     icon: asString(record.icon),
+    // Only an explicit `false` disables; absence means enabled.
+    enabled: record.enabled !== false,
     temperature: numberToInputString(parameters.temperature),
     maxTokens: numberToInputString(parameters.maxTokens)
   };
+}
+
+/**
+ * Seed an editable row from a resolved mode — used by the form editor's
+ * "override in book" action when copying a built-in/global mode into the book
+ * file. `origin`/`overrides` are intentionally dropped: they are never written.
+ */
+export function aiModeToRow(mode: AiMode): AiModeRow {
+  return toRow(mode as unknown as Record<string, unknown>);
 }
 
 /**
@@ -228,6 +243,8 @@ export function modeToYamlPatch(row: AiModeRow): AiModeYamlPatch {
 
   put('menu', true, row.menu === true);
   put('agent', true, row.agent === true);
+  // enabled is written ONLY when disabling (false); `true` is the omitted default.
+  put('enabled', false, row.enabled === false);
 
   const icon = row.icon.trim();
   put('icon', icon, icon.length > 0);

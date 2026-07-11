@@ -34,7 +34,7 @@ export class AiModePromptFragmentContribution implements FrontendApplicationCont
   protected readonly toDispose = new DisposableCollection();
   protected registeredFragmentIds = new Set<string>();
   protected sourceWatcher = new DisposableCollection();
-  protected watchedSourceUri: URI | undefined;
+  protected watchedSourceUris: URI[] = [];
   protected syncPromise: Promise<void> | undefined;
 
   async onStart(): Promise<void> {
@@ -42,7 +42,7 @@ export class AiModePromptFragmentContribution implements FrontendApplicationCont
       void this.syncPromptFragments();
     }));
     this.toDispose.push(this.fileService.onDidFilesChange(event => {
-      if (this.watchedSourceUri && event.contains(this.watchedSourceUri)) {
+      if (this.watchedSourceUris.some(uri => event.contains(uri))) {
         void this.syncPromptFragments();
       }
     }));
@@ -79,7 +79,7 @@ export class AiModePromptFragmentContribution implements FrontendApplicationCont
       this.registeredFragmentIds.add(fragmentId);
     }
 
-    this.updateSourceWatcher(snapshot.sourceUri);
+    this.updateSourceWatchers(snapshot.watchUris ?? (snapshot.sourceUri ? [snapshot.sourceUri] : []));
   }
 
   protected removeRegisteredFragments(retain: Set<string>): void {
@@ -91,20 +91,23 @@ export class AiModePromptFragmentContribution implements FrontendApplicationCont
     }
   }
 
-  protected updateSourceWatcher(sourceUri: string | undefined): void {
-    if ((this.watchedSourceUri?.toString() ?? '') === (sourceUri ?? '')) {
+  protected updateSourceWatchers(sourceUris: string[]): void {
+    const next = [...new Set(sourceUris)].sort();
+    const current = this.watchedSourceUris.map(uri => uri.toString()).sort();
+    if (next.length === current.length && next.every((uri, index) => uri === current[index])) {
       return;
     }
 
     this.sourceWatcher.dispose();
     this.sourceWatcher = new DisposableCollection();
-    this.watchedSourceUri = sourceUri ? new URI(sourceUri) : undefined;
+    this.watchedSourceUris = next.map(uri => new URI(uri));
 
-    if (this.watchedSourceUri) {
+    for (const uri of this.watchedSourceUris) {
       try {
-        this.sourceWatcher.push(this.fileService.watch(this.watchedSourceUri.parent));
+        this.sourceWatcher.push(this.fileService.watch(uri.parent));
       } catch {
-        // Missing prompt directories should not prevent the application from starting.
+        // Missing prompt directories (e.g. no global config yet) should not
+        // prevent the application from starting.
       }
     }
   }

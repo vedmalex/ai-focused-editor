@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { FileUri } from '@theia/core/lib/common/file-uri';
 import { findChromePath, renderHtmlToPdf } from '@ai-focused-editor/book-export';
 import {
   NodeAiModeRegistryService,
@@ -462,6 +463,12 @@ describe('NodeAiModeRegistryService', () => {
   beforeEach(async () => {
     root = await makeRoot();
     service = new NodeAiModeRegistryService();
+    // Isolate the bundled/global layers so these book-focused assertions see the
+    // book layer only; layering is exercised in the dedicated describe below.
+    service.configureModeSources({
+      bundledModesPath: join(root, '__no_such_bundled__.yaml'),
+      globalModesPath: join(root, '__no_such_global__.yaml')
+    });
     await fs.mkdir(join(root, 'ai/prompts'), { recursive: true });
   });
 
@@ -650,5 +657,124 @@ describe('NodeAiModeRegistryService', () => {
     expect(lore.agent).toBe(true);
     // A non-boolean menu value is treated as false rather than truthy.
     expect(lore.menu).toBe(false);
+  });
+
+  test('parses enabled:false and hides the mode from the consumer list', async () => {
+    await fs.writeFile(join(root, 'ai/prompts/custom-modes.yaml'), [
+      'modes:',
+      '  - id: shown',
+      '    systemPrompt: Visible.',
+      '  - id: hidden',
+      '    systemPrompt: Hidden.',
+      '    enabled: false',
+      ''
+    ].join('\n'));
+
+    const snapshot = await service.getSnapshot(root);
+    // Consumer list excludes the disabled mode...
+    expect(snapshot.modes.map(mode => mode.id)).toEqual(['shown']);
+    // ...but the full resolution still carries it (for the form editor).
+    expect(snapshot.resolved?.map(mode => mode.id)).toEqual(['shown', 'hidden']);
+    expect(snapshot.resolved?.find(mode => mode.id === 'hidden')?.enabled).toBe(false);
+    expect(snapshot.resolved?.every(mode => mode.origin === 'book')).toBe(true);
+  });
+
+  describe('three-layer merge (bundled/global/book)', () => {
+    let bundledPath: string;
+    let globalPath: string;
+
+    beforeEach(async () => {
+      bundledPath = join(root, 'fixtures/base-modes.yaml');
+      globalPath = join(root, 'fixtures/global-modes.yaml');
+      await fs.mkdir(join(root, 'fixtures'), { recursive: true });
+      service.configureModeSources({ bundledModesPath: bundledPath, globalModesPath: globalPath });
+    });
+
+    test('resolves base + global + book with precedence book > global > bundled', async () => {
+      await fs.writeFile(bundledPath, [
+        'modes:',
+        '  - id: base-only',
+        '    label: Base Only',
+        '    systemPrompt: base prompt',
+        '  - id: shared',
+        '    label: Base Shared',
+        '    systemPrompt: base shared prompt',
+        ''
+      ].join('\n'));
+      await fs.writeFile(globalPath, [
+        'modes:',
+        '  - id: global-only',
+        '    label: Global Only',
+        '    systemPrompt: global prompt',
+        '  - id: shared',
+        '    label: Global Shared',
+        '    systemPrompt: global shared prompt',
+        ''
+      ].join('\n'));
+      await fs.writeFile(join(root, 'ai/prompts/custom-modes.yaml'), [
+        'modes:',
+        '  - id: book-only',
+        '    label: Book Only',
+        '    systemPrompt: book prompt',
+        '  - id: shared',
+        '    label: Book Shared',
+        '    systemPrompt: book shared prompt',
+        ''
+      ].join('\n'));
+
+      const snapshot = await service.getSnapshot(root);
+      const byId = new Map(snapshot.resolved!.map(mode => [mode.id, mode]));
+      expect(byId.get('base-only')?.origin).toBe('built-in');
+      expect(byId.get('global-only')?.origin).toBe('global');
+      expect(byId.get('book-only')?.origin).toBe('book');
+
+      const shared = byId.get('shared')!;
+      expect(shared.origin).toBe('book');
+      expect(shared.label).toBe('Book Shared');
+      expect(shared.systemPrompt).toBe('book shared prompt');
+      expect(shared.overrides).toBe('global');
+    });
+
+    test('a book enabled:false override hides a bundled base mode', async () => {
+      await fs.writeFile(bundledPath, [
+        'modes:',
+        '  - id: base-mode',
+        '    systemPrompt: base prompt',
+        ''
+      ].join('\n'));
+      await fs.writeFile(join(root, 'ai/prompts/custom-modes.yaml'), [
+        'modes:',
+        '  - id: base-mode',
+        '    systemPrompt: base prompt',
+        '    enabled: false',
+        ''
+      ].join('\n'));
+
+      const snapshot = await service.getSnapshot(root);
+      expect(snapshot.modes.map(mode => mode.id)).toEqual([]);
+      const resolved = snapshot.resolved!.find(mode => mode.id === 'base-mode')!;
+      expect(resolved.enabled).toBe(false);
+      expect(resolved.origin).toBe('book');
+      expect(resolved.overrides).toBe('built-in');
+    });
+
+    test('exposes globalUri and watchUris (book + global, no bundled)', async () => {
+      await fs.writeFile(bundledPath, 'modes: []\n');
+      const snapshot = await service.getSnapshot(root);
+      expect(snapshot.globalUri).toBe(FileUri.create(globalPath).toString());
+      expect(snapshot.watchUris).toContain(snapshot.sourceUri!);
+      expect(snapshot.watchUris).toContain(snapshot.globalUri!);
+      expect(snapshot.watchUris).not.toContain(FileUri.create(bundledPath).toString());
+    });
+
+    test('the bundled base-modes.yaml shipped in the repo parses cleanly', async () => {
+      const shipped = new NodeAiModeRegistryService();
+      shipped.configureModeSources({ globalModesPath: join(root, '__none__.yaml') });
+      const snapshot = await shipped.getSnapshot(root);
+      const builtIns = snapshot.resolved!.filter(mode => mode.origin === 'built-in');
+      // The bundled file ships several base modes and must load without errors.
+      expect(builtIns.length).toBeGreaterThan(0);
+      expect(snapshot.diagnostics.filter(diagnostic => diagnostic.severity === 'error')).toEqual([]);
+    });
   });
 });

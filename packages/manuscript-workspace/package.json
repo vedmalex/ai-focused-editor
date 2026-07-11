@@ -41,7 +41,7 @@
     "typescript": "~5.8.3"
   },
   "scripts": {
-    "build": "rm -rf lib && tsc && mkdir -p lib/browser/themes && cp src/browser/themes/*.json lib/browser/themes/ && mkdir -p lib/node/i18n/ru && cp src/node/i18n/ru/*.json lib/node/i18n/ru/",
+    "build": "rm -rf lib && tsc && mkdir -p lib/browser/themes && cp src/browser/themes/*.json lib/browser/themes/ && mkdir -p lib/node/i18n/ru && cp src/node/i18n/ru/*.json lib/node/i18n/ru/ && mkdir -p lib/node/ai && cp src/node/ai/*.yaml lib/node/ai/",
     "clean": "rm -rf lib *.tsbuildinfo",
     "watch": "tsc -w"
   },

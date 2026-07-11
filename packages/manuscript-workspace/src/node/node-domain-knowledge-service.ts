@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import { homedir } from 'os';
 import { isAllowedMaterialFile } from '../common/author-materials';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { FileUri } from '@theia/core/lib/common/file-uri';
@@ -10,8 +11,12 @@ import {
   AiMode,
   AiModeApply,
   AiModeContext,
+  AiModeLayer,
+  AiModeOrigin,
   AiModeRegistryBackendService,
   AiModeRegistrySnapshot,
+  layerModes,
+  ResolvedAiMode,
   CitationEntry,
   NarrativeEntity,
   NarrativeEntityBackendService,
@@ -82,9 +87,14 @@ interface AiModeEntry {
   apply?: unknown;
   agent?: unknown;
   icon?: unknown;
+  enabled?: unknown;
 }
 
 const AI_MODES_PATH = 'ai/prompts/custom-modes.yaml';
+/** Bundled base modes shipped with the extension (copied to lib/node/ai/ by the build). */
+const BUNDLED_MODES_PATH = join(__dirname, 'ai', 'base-modes.yaml');
+/** The user-global modes file, hot-watched alongside the book file. */
+const GLOBAL_MODES_PATH = join(homedir(), '.ai-focused-editor', 'custom-modes.yaml');
 
 function toRootPath(rootUri: string): string {
   if (rootUri.startsWith('file:')) {
@@ -661,70 +671,136 @@ export class NodeSourceLibraryService implements SourceLibraryBackendService {
 
 @injectable()
 export class NodeAiModeRegistryService implements AiModeRegistryBackendService {
-  getSnapshot(rootUri?: string): Promise<AiModeRegistrySnapshot> {
-    if (!rootUri) {
-      return Promise.resolve({
-        modes: [],
-        diagnostics: [{
-          severity: 'info',
-          source: 'ai-mode-registry',
-          message: 'Open a manuscript workspace to load project AI modes.'
-        }]
-      });
-    }
+  /**
+   * Filesystem path of the bundled base modes. Overridable so tests can isolate
+   * the base layer (point it at a nonexistent or fixture file). Defaults to the
+   * copy shipped in `lib/node/ai/base-modes.yaml`.
+   */
+  protected bundledModesPath = BUNDLED_MODES_PATH;
 
-    return this.scan(toRootPath(rootUri));
+  /**
+   * Filesystem path of the user-global modes file. Overridable for tests; the
+   * default is `~/.ai-focused-editor/custom-modes.yaml`.
+   */
+  protected globalModesPath = GLOBAL_MODES_PATH;
+
+  /** Test seam: point the bundled/global layers at fixtures instead of the real files. */
+  configureModeSources(options: { bundledModesPath?: string; globalModesPath?: string }): void {
+    if (options.bundledModesPath !== undefined) {
+      this.bundledModesPath = options.bundledModesPath;
+    }
+    if (options.globalModesPath !== undefined) {
+      this.globalModesPath = options.globalModesPath;
+    }
+  }
+
+  getSnapshot(rootUri?: string): Promise<AiModeRegistrySnapshot> {
+    return this.scan(rootUri ? toRootPath(rootUri) : undefined);
   }
 
   refresh(rootUri?: string): Promise<AiModeRegistrySnapshot> {
     return this.getSnapshot(rootUri);
   }
 
-  protected async scan(rootPath: string): Promise<AiModeRegistrySnapshot> {
-    const sourcePath = join(rootPath, AI_MODES_PATH);
-    const sourceUri = FileUri.create(sourcePath).toString();
-    const rootUri = FileUri.create(rootPath).toString();
+  protected async scan(rootPath: string | undefined): Promise<AiModeRegistrySnapshot> {
     const diagnostics: WorkspaceDiagnostic[] = [];
+    const rootUri = rootPath ? FileUri.create(rootPath).toString() : undefined;
+    const globalUri = FileUri.create(this.globalModesPath).toString();
+    const sourcePath = rootPath ? join(rootPath, AI_MODES_PATH) : undefined;
+    const sourceUri = sourcePath ? FileUri.create(sourcePath).toString() : undefined;
 
-    const text = await readTextIfExists(sourcePath);
+    // Layer 1: bundled base modes (read-only, ship with the extension).
+    const bundled = await this.loadLayer('built-in', this.bundledModesPath, diagnostics, { silentMissing: true });
+    // Layer 2: user-global modes (optional).
+    const global = await this.loadLayer('global', this.globalModesPath, diagnostics, { silentMissing: true });
+    // Layer 3: the book's modes (optional; info diagnostic when absent, as before).
+    const book = sourcePath
+      ? await this.loadLayer('book', sourcePath, diagnostics, {
+        silentMissing: false,
+        missingMessage: `No project AI modes file found at ${AI_MODES_PATH}.`
+      })
+      : { origin: 'book' as AiModeOrigin, modes: [] };
+
+    if (!rootPath) {
+      diagnostics.push({
+        severity: 'info',
+        source: 'ai-mode-registry',
+        message: 'Open a manuscript workspace to load project AI modes.'
+      });
+    }
+
+    const layers: AiModeLayer[] = [bundled, global, book];
+    const resolved: ResolvedAiMode[] = layerModes(layers);
+    const modes: AiMode[] = resolved.filter(mode => mode.enabled);
+
+    const watchUris = [sourceUri, globalUri].filter((uri): uri is string => uri !== undefined);
+
+    return {
+      rootUri,
+      sourceUri,
+      globalUri,
+      watchUris,
+      modes,
+      resolved,
+      diagnostics
+    };
+  }
+
+  /**
+   * Read and parse one layer's modes file into a layer record. A missing file is
+   * either silent (bundled/global) or reported with an info diagnostic (book).
+   * Parse errors and structural problems surface as tagged diagnostics; the layer
+   * still contributes whatever valid modes it could parse.
+   */
+  protected async loadLayer(
+    origin: AiModeOrigin,
+    filePath: string,
+    diagnostics: WorkspaceDiagnostic[],
+    options: { silentMissing: boolean; missingMessage?: string }
+  ): Promise<AiModeLayer> {
+    const uri = FileUri.create(filePath).toString();
+    const text = await readTextIfExists(filePath);
     if (text === undefined) {
-      return {
-        rootUri,
-        sourceUri,
-        modes: [],
-        diagnostics: [{
+      if (!options.silentMissing) {
+        diagnostics.push({
           severity: 'info',
           source: 'ai-mode-registry',
-          uri: sourceUri,
-          message: `No project AI modes file found at ${AI_MODES_PATH}.`
-        }]
-      };
+          uri,
+          message: options.missingMessage ?? 'No AI modes file found.'
+        });
+      }
+      return { origin, modes: [] };
     }
 
     let document: unknown;
     try {
       document = parse(text);
     } catch (error) {
-      return {
-        rootUri,
-        sourceUri,
-        modes: [],
-        diagnostics: [{
-          severity: 'error',
-          source: 'ai-mode-registry',
-          uri: sourceUri,
-          message: `Invalid AI modes YAML: ${error instanceof Error ? error.message : String(error)}`
-        }]
-      };
+      // Keep the book message backward-compatible ("Invalid AI modes YAML"); the
+      // lower layers name their origin so the author can tell which file failed.
+      const prefix = origin === 'book' ? '' : `${this.originLabel(origin)} `;
+      diagnostics.push({
+        severity: origin === 'book' ? 'error' : 'warning',
+        source: 'ai-mode-registry',
+        uri,
+        message: `Invalid ${prefix}AI modes YAML: ${error instanceof Error ? error.message : String(error)}`
+      });
+      return { origin, modes: [] };
     }
 
-    const modes = this.parseModes(document, sourceUri, diagnostics);
-    return {
-      rootUri,
-      sourceUri,
-      modes,
-      diagnostics
-    };
+    const modes = this.parseModes(document, uri, diagnostics);
+    return { origin, modes };
+  }
+
+  protected originLabel(origin: AiModeOrigin): string {
+    switch (origin) {
+      case 'built-in':
+        return 'bundled';
+      case 'global':
+        return 'global';
+      default:
+        return 'project';
+    }
   }
 
   protected parseModes(document: unknown, sourceUri: string, diagnostics: WorkspaceDiagnostic[]): AiMode[] {
@@ -810,6 +886,8 @@ export class NodeAiModeRegistryService implements AiModeRegistryBackendService {
       menu: this.asBoolean(modeEntry.menu),
       apply,
       agent: this.asBoolean(modeEntry.agent),
+      // Only an explicit `false` disables a mode; absence means enabled.
+      ...(modeEntry.enabled === false ? { enabled: false } : {}),
       ...(icon ? { icon } : {})
     };
   }

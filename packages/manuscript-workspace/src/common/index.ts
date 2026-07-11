@@ -5,6 +5,7 @@ export * from './ai-failover';
 export * from './ai-time-windows';
 export * from './ai-verification';
 export * from './ai-mode-protocol';
+export * from './ai-mode-layering';
 export * from './book-build-protocol';
 export * from './entity-mentions';
 export * from './git-status-protocol';
