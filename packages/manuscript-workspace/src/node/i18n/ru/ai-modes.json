@@ -63,6 +63,16 @@
       "saved": "Сохранено: {0}.",
       "save-failed": "Не удалось сохранить AI-режимы: {0}",
 
+      "problem-id-required": "Режим {0}: требуется id.",
+      "problem-duplicate-id": "Режим {0}: повторяющийся id «{1}».",
+      "problem-id-not-kebab-case": "Режим {0}: id «{1}» должен быть в kebab-case (строчные буквы, цифры, дефисы).",
+      "problem-missing-system-prompt": "Режим {0}: требуется системный промпт (режимы без него отбрасываются при загрузке).",
+      "problem-invalid-apply-for-context": "Режим {0}: применение «{1}» допустимо только для контекста selection или word.",
+      "problem-temperature-not-a-number": "Режим {0}: температура должна быть числом.",
+      "problem-temperature-out-of-range": "Режим {0}: температура обычно находится в диапазоне от 0 до 2.",
+      "problem-max-tokens-not-a-number": "Режим {0}: maxTokens должно быть целым числом.",
+      "problem-max-tokens-out-of-range": "Режим {0}: maxTokens должно быть больше 0.",
+
       "loading": "Загрузка AI-режимов…",
       "heading": "AI-режимы",
       "help-1": "AI-промпты и агенты, заданные автором. Изменения применяются сразу: пункты меню и @агенты перерегистрируются при сохранении.",

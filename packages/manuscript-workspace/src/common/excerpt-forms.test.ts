@@ -191,6 +191,8 @@ describe('validateExcerpts', () => {
       {
         severity: 'warning',
         index: 0,
+        code: 'target-line-without-path',
+        params: [1],
         message: 'Excerpt 1: targetLine is set without a targetPath, so there is no file to open.'
       }
     ]);
@@ -202,6 +204,18 @@ describe('validateExcerpts', () => {
     expect(negative.some(p => p.severity === 'warning' && p.message.includes('positive whole number'))).toBe(true);
     const fractional = validateExcerpts([{ id: 'a', text: 'x', targetPath: 'p.md', targetLine: 2.5 }]);
     expect(fractional.some(p => p.severity === 'warning' && p.message.includes('positive whole number'))).toBe(true);
+  });
+
+  it('attaches stable codes and positional params for localized rendering', () => {
+    const problems = validateExcerpts([
+      { id: '', text: '' },
+      { id: 'dup', text: 't' },
+      { id: 'dup', text: 't' }
+    ]);
+    expect(problems.find(p => p.code === 'id-required')?.params).toEqual([1]);
+    expect(problems.find(p => p.code === 'empty-text')?.params).toEqual([1]);
+    // Duplicate on the third row carries the 1-based row number + the id.
+    expect(problems.find(p => p.code === 'duplicate-id')?.params).toEqual([3, 'dup']);
   });
 });
 

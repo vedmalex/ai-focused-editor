@@ -571,7 +571,7 @@ export class AiDebugWidget extends ReactWidget {
   protected renderRequestLeg(leg: AiRequestLogRecord, index: number, mode: AiRequestLogMode): React.ReactNode {
     const children: React.ReactNode[] = [
       React.createElement('span', { className: `afe-ai-requests-outcome afe-ai-requests-outcome-${leg.outcome}` }, leg.outcome),
-      React.createElement('span', { className: 'afe-ai-debug-log-command' }, `${leg.endpointId || '(endpoint)'}${leg.model ? ` · ${leg.model}` : ''}`),
+      React.createElement('span', { className: 'afe-ai-debug-log-command' }, `${leg.endpointId || nls.localize('ai-focused-editor/ai-config/endpoint-fallback', '(endpoint)')}${leg.model ? ` · ${leg.model}` : ''}`),
       React.createElement('span', { className: 'afe-ai-debug-log-route' }, leg.durationMs !== undefined ? `${leg.durationMs} ms` : '')
     ];
     const rowChildren: React.ReactNode[] = [

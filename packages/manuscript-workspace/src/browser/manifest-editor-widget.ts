@@ -318,6 +318,22 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
     await this.load();
   }
 
+  /**
+   * Localize a validation problem by its stable `code`, filling the `{0}`…
+   * placeholders from `problem.params` in order. Falls back to the raw English
+   * `message` for an absent/unknown code (the common validator keeps `message`
+   * as the byte-identical English source of truth).
+   */
+  protected localizeProblem(problem: FormProblem): string {
+    const params = problem.params ?? [];
+    switch (problem.code) {
+      case 'missing-title':
+        return nls.localize('ai-focused-editor/book-config/problem-missing-title', '"{0}" has no title (the navigator will show its path).', ...params);
+      default:
+        return problem.message;
+    }
+  }
+
   protected renderProblems(problems: FormProblem[]): React.ReactNode {
     if (problems.length === 0) {
       return undefined;
@@ -328,7 +344,7 @@ export class ManifestEditorWidget extends ReactWidget implements Navigatable {
       ...problems.map((problem, index) => React.createElement(
         'li',
         { key: index, className: `afe-form-editor-problem ${problem.severity}` },
-        problem.message
+        this.localizeProblem(problem)
       ))
     );
   }

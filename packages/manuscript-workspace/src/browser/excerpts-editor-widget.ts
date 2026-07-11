@@ -292,6 +292,30 @@ export class ExcerptsEditorWidget extends ReactWidget implements Navigatable {
     );
   }
 
+  /**
+   * Localize a validation problem by its stable `code`, filling the `{0}`, `{1}`…
+   * placeholders from `problem.params` in order. Falls back to the raw English
+   * `message` for an absent/unknown code (the common validator keeps `message`
+   * as the byte-identical English source of truth).
+   */
+  protected localizeProblem(problem: ExcerptProblem): string {
+    const params = problem.params ?? [];
+    switch (problem.code) {
+      case 'id-required':
+        return nls.localize('ai-focused-editor/sources/problem-id-required', 'Excerpt {0}: an id is required.', ...params);
+      case 'duplicate-id':
+        return nls.localize('ai-focused-editor/sources/problem-duplicate-id', 'Excerpt {0}: duplicate id "{1}".', ...params);
+      case 'empty-text':
+        return nls.localize('ai-focused-editor/sources/problem-empty-text', 'Excerpt {0}: excerpt text is required.', ...params);
+      case 'target-line-not-positive':
+        return nls.localize('ai-focused-editor/sources/problem-target-line-not-positive', 'Excerpt {0}: targetLine must be a positive whole number (it is dropped on save otherwise).', ...params);
+      case 'target-line-without-path':
+        return nls.localize('ai-focused-editor/sources/problem-target-line-without-path', 'Excerpt {0}: targetLine is set without a targetPath, so there is no file to open.', ...params);
+      default:
+        return problem.message;
+    }
+  }
+
   protected renderProblems(problems: ExcerptProblem[]): React.ReactNode {
     if (problems.length === 0) {
       return undefined;
@@ -302,7 +326,7 @@ export class ExcerptsEditorWidget extends ReactWidget implements Navigatable {
       ...problems.map((problem, index) => React.createElement(
         'li',
         { key: index, className: `afe-excerpts-editor-problem ${problem.severity}` },
-        problem.message
+        this.localizeProblem(problem)
       ))
     );
   }

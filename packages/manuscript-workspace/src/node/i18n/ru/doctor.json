@@ -26,6 +26,17 @@
       "report-findings-intro": "Только справочно — диагностика ничего из этого не меняет автоматически:",
       "reconstruct-fix": "Пересоздать манифест по содержимому (файлов: {0})",
       "append-fix": "Добавить в манифест (файлов: {0})",
+      "problem-create-folder": "Создать папку — {0}",
+      "problem-create-file": "Создать файл — {0}",
+      "problem-create-missing-chapter": "Создать отсутствующий файл главы, указанный в манифесте.",
+      "problem-metadata-title-blank-label": "metadata.yaml: заголовок не заполнен",
+      "problem-metadata-author-blank-label": "metadata.yaml: автор не заполнен",
+      "problem-citations-parse-error-label": "не удалось разобрать sources/citations.yaml",
+      "problem-excerpts-parse-error-label": "в sources/excerpts.jsonl некорректная строка",
+      "problem-metadata-title-blank-detail": "Заголовок книги в metadata.yaml отсутствует или пуст. Задайте его в редакторе метаданных книги.",
+      "problem-metadata-author-blank-detail": "Автор книги в metadata.yaml отсутствует или пуст. Задайте его в редакторе метаданных книги.",
+      "problem-citations-parse-error-detail": "Ошибка разбора YAML в sources/citations.yaml: {0}",
+      "problem-excerpts-parse-error-detail": "Строка {0} в sources/excerpts.jsonl не является корректным JSON: {1}",
       "report-more-files": "…и ещё {0}"
     }
   }

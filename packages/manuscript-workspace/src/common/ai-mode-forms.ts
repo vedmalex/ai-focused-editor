@@ -27,6 +27,19 @@ export interface AiModeProblem {
   severity: 'error' | 'warning';
   /** Zero-based index of the offending mode row, when applicable. */
   index?: number;
+  /**
+   * Stable kebab-case identifier for the problem kind (e.g. `duplicate-id`).
+   * The rendering widget maps it to a localized message; when absent/unknown it
+   * falls back to {@link message}. Purely additive — {@link message} stays the
+   * byte-identical English source of truth.
+   */
+  code?: string;
+  /**
+   * Positional values interpolated into the localized message, in `{0}`, `{1}`…
+   * order (e.g. the 1-based row number, then an id). Omitted when the message
+   * has no placeholders.
+   */
+  params?: (string | number)[];
 }
 
 /**
@@ -273,12 +286,14 @@ export function validateModes(rows: AiModeRow[]): AiModeProblem[] {
   const seen = new Set<string>();
   rows.forEach((row, index) => {
     const where = `Mode ${index + 1}`;
+    // 1-based row number is the first placeholder of every localized template.
+    const at = index + 1;
     const id = row.id.trim();
     if (!id) {
-      problems.push({ severity: 'error', index, message: `${where}: id is required.` });
+      problems.push({ severity: 'error', index, code: 'id-required', params: [at], message: `${where}: id is required.` });
     } else {
       if (seen.has(id)) {
-        problems.push({ severity: 'error', index, message: `${where}: duplicate id "${id}".` });
+        problems.push({ severity: 'error', index, code: 'duplicate-id', params: [at, id], message: `${where}: duplicate id "${id}".` });
       } else {
         seen.add(id);
       }
@@ -286,6 +301,8 @@ export function validateModes(rows: AiModeRow[]): AiModeProblem[] {
         problems.push({
           severity: 'warning',
           index,
+          code: 'id-not-kebab-case',
+          params: [at, id],
           message: `${where}: id "${id}" should be kebab-case (lowercase letters, digits, dashes).`
         });
       }
@@ -295,6 +312,8 @@ export function validateModes(rows: AiModeRow[]): AiModeProblem[] {
       problems.push({
         severity: 'error',
         index,
+        code: 'missing-system-prompt',
+        params: [at],
         message: `${where}: a system prompt is required (modes without one are dropped when loaded).`
       });
     }
@@ -303,22 +322,24 @@ export function validateModes(rows: AiModeRow[]): AiModeProblem[] {
       problems.push({
         severity: 'error',
         index,
+        code: 'invalid-apply-for-context',
+        params: [at, row.apply],
         message: `${where}: apply "${row.apply}" is only valid for a selection or word context.`
       });
     }
 
     const temperature = parseTemperature(row.temperature);
     if (row.temperature.trim() && temperature === undefined) {
-      problems.push({ severity: 'warning', index, message: `${where}: temperature must be a number.` });
+      problems.push({ severity: 'warning', index, code: 'temperature-not-a-number', params: [at], message: `${where}: temperature must be a number.` });
     } else if (temperature !== undefined && (temperature < 0 || temperature > 2)) {
-      problems.push({ severity: 'warning', index, message: `${where}: temperature is usually between 0 and 2.` });
+      problems.push({ severity: 'warning', index, code: 'temperature-out-of-range', params: [at], message: `${where}: temperature is usually between 0 and 2.` });
     }
 
     const maxTokens = parseMaxTokens(row.maxTokens);
     if (row.maxTokens.trim() && maxTokens === undefined) {
-      problems.push({ severity: 'warning', index, message: `${where}: maxTokens must be a whole number.` });
+      problems.push({ severity: 'warning', index, code: 'max-tokens-not-a-number', params: [at], message: `${where}: maxTokens must be a whole number.` });
     } else if (maxTokens !== undefined && maxTokens <= 0) {
-      problems.push({ severity: 'warning', index, message: `${where}: maxTokens must be greater than 0.` });
+      problems.push({ severity: 'warning', index, code: 'max-tokens-out-of-range', params: [at], message: `${where}: maxTokens must be greater than 0.` });
     }
   });
   return problems;

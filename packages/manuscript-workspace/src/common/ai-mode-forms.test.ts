@@ -300,4 +300,16 @@ describe('validateModes', () => {
     const badTokens = validateModes([row({ id: 'y', maxTokens: '0' })]);
     expect(badTokens.some(p => p.severity === 'warning' && /maxTokens/.test(p.message))).toBe(true);
   });
+
+  test('attaches stable codes and positional params for localized rendering', () => {
+    const problems = validateModes([row({ id: 'Dup' }), row({ id: 'Dup', systemPrompt: '' })]);
+    // Duplicate on the second row carries the 1-based row number + the id.
+    expect(problems.find(p => p.code === 'duplicate-id')?.params).toEqual([2, 'Dup']);
+    // The first non-kebab warning is on row 1.
+    expect(problems.find(p => p.code === 'id-not-kebab-case')?.params).toEqual([1, 'Dup']);
+    // Missing system prompt is on row 2.
+    expect(problems.find(p => p.code === 'missing-system-prompt')?.params).toEqual([2]);
+    const badApply = validateModes([row({ id: 'x', context: 'chat', apply: 'replace' })]);
+    expect(badApply.find(p => p.code === 'invalid-apply-for-context')?.params).toEqual([1, 'replace']);
+  });
 });

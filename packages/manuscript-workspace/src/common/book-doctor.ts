@@ -66,6 +66,18 @@ export interface BookDoctorFix {
   description: string;
   /** Present on the `manifest.yaml` reconstruction/append fix (see above). */
   manifest?: ManifestReconstructionFix;
+  /**
+   * Stable kebab-case identifier for the fix kind (e.g. `create-folder`). The
+   * rendering contribution maps it to a localized {@link description}; when
+   * absent/unknown it falls back to the English {@link description}. Purely
+   * additive — {@link description} stays the byte-identical English source.
+   */
+  code?: string;
+  /**
+   * Positional values interpolated into the localized description, in `{0}`,
+   * `{1}`… order. Omitted when the description has no placeholders.
+   */
+  params?: (string | number)[];
 }
 
 /** A report-only observation the doctor surfaces but never auto-changes. */
@@ -76,6 +88,19 @@ export interface BookDoctorFinding {
   label: string;
   /** Longer explanation, shown in the QuickPick detail row. */
   detail: string;
+  /**
+   * Stable kebab-case identifier for the finding kind (e.g. `metadata-title-blank`).
+   * The rendering contribution maps it to a localized {@link label}/{@link detail};
+   * when absent/unknown it falls back to the English strings. Purely additive —
+   * {@link label}/{@link detail} stay the byte-identical English source.
+   */
+  code?: string;
+  /**
+   * Positional values interpolated into the localized {@link label}/{@link detail},
+   * in `{0}`, `{1}`… order (e.g. a 1-based line number, then a parser message).
+   * Omitted when neither string has a placeholder.
+   */
+  params?: (string | number)[];
 }
 
 /** The full doctor report: creatable fixes plus informational findings. */
@@ -165,6 +190,8 @@ export function scaffoldFixes(
       path: entry.path,
       kind: entry.kind,
       seed: entry.kind === 'file' ? entry.seed ?? '' : undefined,
+      code: entry.kind === 'folder' ? 'create-folder' : 'create-file',
+      params: [entry.description],
       description:
         entry.kind === 'folder'
           ? `Create folder — ${entry.description}`
@@ -197,6 +224,7 @@ export function manifestChapterFixes(
       path,
       kind: 'file',
       seed: buildChapterMarkdown(deriveChapterTitle(path, row.title)),
+      code: 'create-missing-chapter',
       description: 'Create the missing chapter file referenced by the manifest.'
     });
   }
@@ -229,6 +257,11 @@ export function manifestRecreateFix(
     path: 'manifest.yaml',
     kind: 'file',
     seed: buildManifestYaml(entries),
+    // The QuickPick/report render `fixLabel` (already localized) for manifest
+    // fixes, so this English `description` stays a fallback; the code keeps the
+    // data model uniform with the other fixes.
+    code: 'manifest-recreate',
+    params: [candidates.length],
     description: `Recreate the manifest from ${candidates.length} discovered content file(s).`,
     manifest: {
       mode: 'recreate',
@@ -269,6 +302,10 @@ export function manifestAppendFix(
   return {
     path: 'manifest.yaml',
     kind: 'file',
+    // As with recreate, the rendered surface uses `fixLabel`; this English
+    // `description` is the fallback and the code keeps the model uniform.
+    code: 'manifest-append',
+    params: [unreferenced.length],
     description: `Add ${unreferenced.length} unreferenced content file(s) to the manifest.`,
     manifest: {
       mode: 'append',
@@ -301,6 +338,7 @@ export function metadataFindings(metadata: BookDoctorMetadata): BookDoctorFindin
   if (!metadata.title.trim()) {
     findings.push({
       kind: 'metadata',
+      code: 'metadata-title-blank',
       label: 'metadata.yaml: title is blank',
       detail: 'The book title in metadata.yaml is missing or blank. Set it in the Book Metadata editor.'
     });
@@ -308,6 +346,7 @@ export function metadataFindings(metadata: BookDoctorMetadata): BookDoctorFindin
   if (!metadata.author.trim()) {
     findings.push({
       kind: 'metadata',
+      code: 'metadata-author-blank',
       label: 'metadata.yaml: author is blank',
       detail: 'The book author in metadata.yaml is missing or blank. Set it in the Book Metadata editor.'
     });
@@ -326,6 +365,8 @@ export function citationsParseFinding(content: string): BookDoctorFinding | unde
   } catch (error) {
     return {
       kind: 'parse-error',
+      code: 'citations-parse-error',
+      params: [errorMessage(error)],
       label: 'sources/citations.yaml could not be parsed',
       detail: `YAML parse error in sources/citations.yaml: ${errorMessage(error)}`
     };
@@ -349,6 +390,8 @@ export function excerptsParseFinding(content: string): BookDoctorFinding | undef
     } catch (error) {
       return {
         kind: 'parse-error',
+        code: 'excerpts-parse-error',
+        params: [index + 1, errorMessage(error)],
         label: 'sources/excerpts.jsonl has an invalid line',
         detail: `Line ${index + 1} of sources/excerpts.jsonl is not valid JSON: ${errorMessage(error)}`
       };

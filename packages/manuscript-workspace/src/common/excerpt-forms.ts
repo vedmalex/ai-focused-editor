@@ -71,6 +71,19 @@ export interface ExcerptProblem {
   severity: 'error' | 'warning';
   /** Zero-based index of the offending row, when applicable. */
   index?: number;
+  /**
+   * Stable kebab-case identifier for the problem kind (e.g. `duplicate-id`).
+   * The rendering widget maps it to a localized message; when absent/unknown it
+   * falls back to {@link message}. Purely additive — {@link message} stays the
+   * byte-identical English source of truth.
+   */
+  code?: string;
+  /**
+   * Positional values interpolated into the localized message, in `{0}`, `{1}`…
+   * order (e.g. the 1-based row number, then an id). Omitted when the message
+   * has no placeholders.
+   */
+  params?: (string | number)[];
 }
 
 /**
@@ -261,17 +274,19 @@ export function validateExcerpts(rows: ExcerptFormRow[]): ExcerptProblem[] {
   const seen = new Set<string>();
   rows.forEach((row, index) => {
     const where = `Excerpt ${index + 1}`;
+    // 1-based row number is the first placeholder of every localized template.
+    const at = index + 1;
     const id = row.id.trim();
     if (!id) {
-      problems.push({ severity: 'error', index, message: `${where}: an id is required.` });
+      problems.push({ severity: 'error', index, code: 'id-required', params: [at], message: `${where}: an id is required.` });
     } else if (seen.has(id)) {
-      problems.push({ severity: 'error', index, message: `${where}: duplicate id "${id}".` });
+      problems.push({ severity: 'error', index, code: 'duplicate-id', params: [at, id], message: `${where}: duplicate id "${id}".` });
     } else {
       seen.add(id);
     }
 
     if (!row.text.trim()) {
-      problems.push({ severity: 'error', index, message: `${where}: excerpt text is required.` });
+      problems.push({ severity: 'error', index, code: 'empty-text', params: [at], message: `${where}: excerpt text is required.` });
     }
 
     if (row.targetLine !== undefined) {
@@ -279,6 +294,8 @@ export function validateExcerpts(rows: ExcerptFormRow[]): ExcerptProblem[] {
         problems.push({
           severity: 'warning',
           index,
+          code: 'target-line-not-positive',
+          params: [at],
           message: `${where}: targetLine must be a positive whole number (it is dropped on save otherwise).`
         });
       }
@@ -286,6 +303,8 @@ export function validateExcerpts(rows: ExcerptFormRow[]): ExcerptProblem[] {
         problems.push({
           severity: 'warning',
           index,
+          code: 'target-line-without-path',
+          params: [at],
           message: `${where}: targetLine is set without a targetPath, so there is no file to open.`
         });
       }

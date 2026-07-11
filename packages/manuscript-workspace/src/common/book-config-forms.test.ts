@@ -77,7 +77,7 @@ describe('validateMetadata', () => {
 
   test('flags a missing title', () => {
     const problems = validateMetadata({ ...base, title: '   ' });
-    expect(problems).toContainEqual({ severity: 'error', field: 'title', message: 'Title is required.' });
+    expect(problems).toContainEqual({ severity: 'error', field: 'title', code: 'title-required', message: 'Title is required.' });
   });
 
   test('flags a missing language', () => {
@@ -106,6 +106,21 @@ describe('validateMetadata', () => {
   test('ignores blank custom-key rows', () => {
     const problems = validateMetadata({ ...base, unknown: [{ key: '   ', value: 'x' }] });
     expect(problems).toEqual([]);
+  });
+
+  test('attaches stable codes and params for localized rendering', () => {
+    const problems = validateMetadata({
+      ...base,
+      language: 'e',
+      unknown: [
+        { key: 'title', value: 'x' },
+        { key: 'k', value: '1' },
+        { key: 'k', value: '2' }
+      ]
+    });
+    expect(problems.find(p => p.code === 'language-too-short')).toBeDefined();
+    expect(problems.find(p => p.code === 'custom-key-shadows-builtin')?.params).toEqual(['title']);
+    expect(problems.find(p => p.code === 'duplicate-key')?.params).toEqual(['k']);
   });
 });
 
@@ -213,6 +228,14 @@ describe('validateManifestRows', () => {
     ]);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatchObject({ severity: 'warning', field: 'b.md' });
+  });
+
+  test('attaches the missing-title code and path param', () => {
+    const problems = validateManifestRows([
+      { path: 'b.md', title: '  ', include: true, depth: 0, hasChildren: false }
+    ]);
+    expect(problems[0].code).toBe('missing-title');
+    expect(problems[0].params).toEqual(['b.md']);
   });
 });
 

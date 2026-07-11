@@ -16,6 +16,19 @@ export interface FormProblem {
   severity: 'error' | 'warning';
   /** Optional identifier of the offending field/row (field name or path). */
   field?: string;
+  /**
+   * Stable kebab-case identifier for the problem kind (e.g. `title-required`).
+   * The rendering widget maps it to a localized message; when absent/unknown it
+   * falls back to {@link message}. Purely additive — {@link message} stays the
+   * byte-identical English source of truth.
+   */
+  code?: string;
+  /**
+   * Positional values interpolated into the localized message, in `{0}`, `{1}`…
+   * order (e.g. the offending key or path). Omitted when the message has no
+   * placeholders.
+   */
+  params?: (string | number)[];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -104,15 +117,16 @@ export function extractMetadataFields(value: unknown): MetadataFields {
 export function validateMetadata(fields: MetadataFields): FormProblem[] {
   const problems: FormProblem[] = [];
   if (!fields.title.trim()) {
-    problems.push({ severity: 'error', field: 'title', message: 'Title is required.' });
+    problems.push({ severity: 'error', field: 'title', code: 'title-required', message: 'Title is required.' });
   }
   const language = fields.language.trim();
   if (!language) {
-    problems.push({ severity: 'error', field: 'language', message: 'Language is required.' });
+    problems.push({ severity: 'error', field: 'language', code: 'language-required', message: 'Language is required.' });
   } else if (language.length < 2) {
     problems.push({
       severity: 'error',
       field: 'language',
+      code: 'language-too-short',
       message: 'Language must be at least 2 characters (e.g. "en", "ru").'
     });
   }
@@ -128,10 +142,12 @@ export function validateMetadata(fields: MetadataFields): FormProblem[] {
       problems.push({
         severity: 'warning',
         field: key,
+        code: 'custom-key-shadows-builtin',
+        params: [key],
         message: `Custom key "${key}" shadows a built-in field; edit it above instead.`
       });
     } else if (seen.has(key)) {
-      problems.push({ severity: 'error', field: key, message: `Duplicate key "${key}".` });
+      problems.push({ severity: 'error', field: key, code: 'duplicate-key', params: [key], message: `Duplicate key "${key}".` });
     } else {
       seen.add(key);
     }
@@ -230,6 +246,8 @@ export function validateManifestRows(rows: ManifestRow[]): FormProblem[] {
       problems.push({
         severity: 'warning',
         field: row.path,
+        code: 'missing-title',
+        params: [row.path],
         message: `"${row.path}" has no title (the navigator will show its path).`
       });
     }

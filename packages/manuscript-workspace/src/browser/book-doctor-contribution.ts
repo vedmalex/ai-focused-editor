@@ -35,6 +35,7 @@ import {
 import { bookScaffoldEntries } from '../common/book-scaffold';
 import {
   assembleBookDoctorReport,
+  type BookDoctorFinding,
   type BookDoctorFix,
   type BookDoctorReport
 } from '../common/book-doctor';
@@ -375,14 +376,73 @@ export class BookDoctorContribution
     return fix.path;
   }
 
+  /**
+   * Localize a fix's description by its stable `code` (falling back to the raw
+   * English `description` for an absent/unknown code). Manifest recreate/append
+   * fixes are rendered via {@link fixLabel}, so their description stays the
+   * English fallback here.
+   */
+  protected localizeFixDescription(fix: BookDoctorFix): string {
+    const params = fix.params ?? [];
+    switch (fix.code) {
+      case 'create-folder':
+        return nls.localize('ai-focused-editor/doctor/problem-create-folder', 'Create folder — {0}', ...params);
+      case 'create-file':
+        return nls.localize('ai-focused-editor/doctor/problem-create-file', 'Create file — {0}', ...params);
+      case 'create-missing-chapter':
+        return nls.localize('ai-focused-editor/doctor/problem-create-missing-chapter', 'Create the missing chapter file referenced by the manifest.', ...params);
+      default:
+        return fix.description;
+    }
+  }
+
+  /**
+   * Localize a finding's short label by its stable `code` (falling back to the
+   * raw English `label`). The labels carry no placeholders.
+   */
+  protected localizeFindingLabel(finding: BookDoctorFinding): string {
+    switch (finding.code) {
+      case 'metadata-title-blank':
+        return nls.localize('ai-focused-editor/doctor/problem-metadata-title-blank-label', 'metadata.yaml: title is blank');
+      case 'metadata-author-blank':
+        return nls.localize('ai-focused-editor/doctor/problem-metadata-author-blank-label', 'metadata.yaml: author is blank');
+      case 'citations-parse-error':
+        return nls.localize('ai-focused-editor/doctor/problem-citations-parse-error-label', 'sources/citations.yaml could not be parsed');
+      case 'excerpts-parse-error':
+        return nls.localize('ai-focused-editor/doctor/problem-excerpts-parse-error-label', 'sources/excerpts.jsonl has an invalid line');
+      default:
+        return finding.label;
+    }
+  }
+
+  /**
+   * Localize a finding's longer detail by its stable `code`, filling `{0}`, `{1}`…
+   * from `finding.params` in order (falling back to the raw English `detail`).
+   */
+  protected localizeFindingDetail(finding: BookDoctorFinding): string {
+    const params = finding.params ?? [];
+    switch (finding.code) {
+      case 'metadata-title-blank':
+        return nls.localize('ai-focused-editor/doctor/problem-metadata-title-blank-detail', 'The book title in metadata.yaml is missing or blank. Set it in the Book Metadata editor.', ...params);
+      case 'metadata-author-blank':
+        return nls.localize('ai-focused-editor/doctor/problem-metadata-author-blank-detail', 'The book author in metadata.yaml is missing or blank. Set it in the Book Metadata editor.', ...params);
+      case 'citations-parse-error':
+        return nls.localize('ai-focused-editor/doctor/problem-citations-parse-error-detail', 'YAML parse error in sources/citations.yaml: {0}', ...params);
+      case 'excerpts-parse-error':
+        return nls.localize('ai-focused-editor/doctor/problem-excerpts-parse-error-detail', 'Line {0} of sources/excerpts.jsonl is not valid JSON: {1}', ...params);
+      default:
+        return finding.detail;
+    }
+  }
+
   protected pickFixes(report: BookDoctorReport): Promise<DoctorPickOutcome> {
     const fixItems: DoctorPickItem[] = report.fixes.map(fix => ({
       label: this.fixLabel(fix),
-      description: fix.manifest ? fix.manifest.samplePaths.join(', ') : fix.description,
+      description: fix.manifest ? fix.manifest.samplePaths.join(', ') : this.localizeFixDescription(fix),
       fix
     }));
     const findingItems: DoctorPickItem[] = report.findings.map(finding => ({
-      label: finding.label,
+      label: this.localizeFindingLabel(finding),
       detail: nls.localize(
         'ai-focused-editor/doctor/finding-detail',
         'Informational — selecting has no effect. Open the full report to read the complete message.'
@@ -516,7 +576,7 @@ export class BookDoctorContribution
             )}`);
           }
         } else {
-          lines.push(`- \`${fix.path}\` — ${fix.description}`);
+          lines.push(`- \`${fix.path}\` — ${this.localizeFixDescription(fix)}`);
         }
       }
     }
@@ -540,9 +600,9 @@ export class BookDoctorContribution
       ));
       lines.push('');
       for (const finding of report.findings) {
-        lines.push(`### ${finding.label}`);
+        lines.push(`### ${this.localizeFindingLabel(finding)}`);
         lines.push('');
-        lines.push(finding.detail);
+        lines.push(this.localizeFindingDetail(finding));
         lines.push('');
       }
     }

@@ -186,6 +186,7 @@
       "history-no-entries": "За этот день записей нет.",
       "unknown": "неизвестно",
       "no-command": "(нет команды)",
+      "endpoint-fallback": "(эндпоинт)",
       "copy": "Копировать",
       "row-configured": "Настроено",
       "value-yes": "да",

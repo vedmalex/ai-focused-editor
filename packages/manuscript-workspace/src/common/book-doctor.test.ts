@@ -52,6 +52,16 @@ describe('scaffoldFixes', () => {
     const fixes = scaffoldFixes(bookScaffoldEntries(), existsIn(present), false);
     expect(fixes.map(fix => fix.path)).toContain('content/chapter-01.md');
   });
+
+  test('carries create-folder/create-file codes with the description param', () => {
+    const fixes = scaffoldFixes(bookScaffoldEntries(), () => false, false);
+    const folder = fixes.find(fix => fix.kind === 'folder');
+    expect(folder?.code).toBe('create-folder');
+    expect(folder?.params).toHaveLength(1);
+    const file = fixes.find(fix => fix.kind === 'file');
+    expect(file?.code).toBe('create-file');
+    expect(file?.params).toHaveLength(1);
+  });
 });
 
 describe('manifestChapterFixes', () => {
@@ -88,6 +98,12 @@ describe('manifestChapterFixes', () => {
   test('skips leaf entries that already exist on disk', () => {
     const exists = existsIn(['content/chapter-01.md', 'content/chapter-02.md', 'content/part-one/chapter-03.md']);
     expect(manifestChapterFixes(rows, exists)).toEqual([]);
+  });
+
+  test('carries the create-missing-chapter code on every chapter fix', () => {
+    const fixes = manifestChapterFixes(rows, existsIn(['content/chapter-01.md']));
+    expect(fixes.length).toBeGreaterThan(0);
+    expect(fixes.every(fix => fix.code === 'create-missing-chapter')).toBe(true);
   });
 });
 
@@ -154,6 +170,14 @@ describe('metadataFindings', () => {
   test('is silent when title and author are present', () => {
     expect(metadataFindings({ title: 'A Book', author: 'An Author' })).toEqual([]);
   });
+
+  test('carries stable codes on the findings for localized rendering', () => {
+    const findings = metadataFindings({ title: '', author: '' });
+    expect(findings.map(finding => finding.code)).toEqual([
+      'metadata-title-blank',
+      'metadata-author-blank'
+    ]);
+  });
 });
 
 describe('sources parse checks', () => {
@@ -174,6 +198,17 @@ describe('sources parse checks', () => {
     const finding = excerptsParseFinding('{"id":1}\nnot json\n{"id":3}\n');
     expect(finding?.kind).toBe('parse-error');
     expect(finding?.detail).toContain('Line 2');
+  });
+
+  test('parse findings carry codes and positional params for localized rendering', () => {
+    const excerpt = excerptsParseFinding('{"id":1}\nnot json\n');
+    expect(excerpt?.code).toBe('excerpts-parse-error');
+    // {0} is the 1-based line number, {1} is the parser message.
+    expect(excerpt?.params?.[0]).toBe(2);
+    expect(excerpt?.params).toHaveLength(2);
+    const citations = citationsParseFinding('version: 1\n: : :\n  - [unbalanced\n');
+    expect(citations?.code).toBe('citations-parse-error');
+    expect(citations?.params).toHaveLength(1);
   });
 });
 

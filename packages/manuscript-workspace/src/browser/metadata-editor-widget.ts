@@ -358,6 +358,30 @@ export class MetadataEditorWidget extends ReactWidget implements Navigatable {
     );
   }
 
+  /**
+   * Localize a validation problem by its stable `code`, filling the `{0}`…
+   * placeholders from `problem.params` in order. Falls back to the raw English
+   * `message` for an absent/unknown code (the common validator keeps `message`
+   * as the byte-identical English source of truth).
+   */
+  protected localizeProblem(problem: FormProblem): string {
+    const params = problem.params ?? [];
+    switch (problem.code) {
+      case 'title-required':
+        return nls.localize('ai-focused-editor/book-config/problem-title-required', 'Title is required.', ...params);
+      case 'language-required':
+        return nls.localize('ai-focused-editor/book-config/problem-language-required', 'Language is required.', ...params);
+      case 'language-too-short':
+        return nls.localize('ai-focused-editor/book-config/problem-language-too-short', 'Language must be at least 2 characters (e.g. "en", "ru").', ...params);
+      case 'custom-key-shadows-builtin':
+        return nls.localize('ai-focused-editor/book-config/problem-custom-key-shadows-builtin', 'Custom key "{0}" shadows a built-in field; edit it above instead.', ...params);
+      case 'duplicate-key':
+        return nls.localize('ai-focused-editor/book-config/problem-duplicate-key', 'Duplicate key "{0}".', ...params);
+      default:
+        return problem.message;
+    }
+  }
+
   protected renderProblems(problems: FormProblem[]): React.ReactNode {
     if (problems.length === 0) {
       return undefined;
@@ -368,7 +392,7 @@ export class MetadataEditorWidget extends ReactWidget implements Navigatable {
       ...problems.map((problem, index) => React.createElement(
         'li',
         { key: index, className: `afe-form-editor-problem ${problem.severity}` },
-        problem.message
+        this.localizeProblem(problem)
       ))
     );
   }

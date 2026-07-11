@@ -370,6 +370,38 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
     );
   }
 
+  /**
+   * Localize a validation problem by its stable `code`, filling the `{0}`, `{1}`…
+   * placeholders from `problem.params` in order. Falls back to the raw English
+   * `message` for an absent/unknown code (the common validator keeps `message`
+   * as the byte-identical English source of truth).
+   */
+  protected localizeProblem(problem: AiModeProblem): string {
+    const params = problem.params ?? [];
+    switch (problem.code) {
+      case 'id-required':
+        return nls.localize('ai-focused-editor/ai-modes/problem-id-required', 'Mode {0}: id is required.', ...params);
+      case 'duplicate-id':
+        return nls.localize('ai-focused-editor/ai-modes/problem-duplicate-id', 'Mode {0}: duplicate id "{1}".', ...params);
+      case 'id-not-kebab-case':
+        return nls.localize('ai-focused-editor/ai-modes/problem-id-not-kebab-case', 'Mode {0}: id "{1}" should be kebab-case (lowercase letters, digits, dashes).', ...params);
+      case 'missing-system-prompt':
+        return nls.localize('ai-focused-editor/ai-modes/problem-missing-system-prompt', 'Mode {0}: a system prompt is required (modes without one are dropped when loaded).', ...params);
+      case 'invalid-apply-for-context':
+        return nls.localize('ai-focused-editor/ai-modes/problem-invalid-apply-for-context', 'Mode {0}: apply "{1}" is only valid for a selection or word context.', ...params);
+      case 'temperature-not-a-number':
+        return nls.localize('ai-focused-editor/ai-modes/problem-temperature-not-a-number', 'Mode {0}: temperature must be a number.', ...params);
+      case 'temperature-out-of-range':
+        return nls.localize('ai-focused-editor/ai-modes/problem-temperature-out-of-range', 'Mode {0}: temperature is usually between 0 and 2.', ...params);
+      case 'max-tokens-not-a-number':
+        return nls.localize('ai-focused-editor/ai-modes/problem-max-tokens-not-a-number', 'Mode {0}: maxTokens must be a whole number.', ...params);
+      case 'max-tokens-out-of-range':
+        return nls.localize('ai-focused-editor/ai-modes/problem-max-tokens-out-of-range', 'Mode {0}: maxTokens must be greater than 0.', ...params);
+      default:
+        return problem.message;
+    }
+  }
+
   protected renderProblems(problems: AiModeProblem[]): React.ReactNode {
     if (problems.length === 0) {
       return undefined;
@@ -380,7 +412,7 @@ export class AiModesEditorWidget extends ReactWidget implements Navigatable {
       ...problems.map((problem, index) => React.createElement(
         'li',
         { key: index, className: `afe-ai-modes-editor-problem ${problem.severity}` },
-        problem.message
+        this.localizeProblem(problem)
       ))
     );
   }
