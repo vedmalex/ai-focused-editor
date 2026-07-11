@@ -28,6 +28,27 @@ interface ExcalidrawModule {
     files: Record<string, unknown>,
     type: 'local' | 'database'
   ): string;
+  /**
+   * Idiomatic scene-version hash: a monotonically-derived number over the scene
+   * elements' individual versions. Stable across the mount/render `onChange`
+   * echoes that Excalidraw fires without a real edit, so it is the reliable
+   * dirty-tracking signal (a blank scene hashes to `0`).
+   */
+  getSceneVersion(elements: readonly unknown[]): number;
+  exportToBlob(opts: {
+    elements: readonly unknown[];
+    appState?: Record<string, unknown>;
+    files: Record<string, unknown> | null;
+    exportPadding?: number;
+    mimeType?: string;
+    quality?: number;
+  }): Promise<Blob>;
+  exportToSvg(opts: {
+    elements: readonly unknown[];
+    appState?: Record<string, unknown>;
+    files: Record<string, unknown> | null;
+    exportPadding?: number;
+  }): Promise<SVGSVGElement>;
 }
 
 /** Parsed `.excalidraw` scene passed to the component as `initialData`. */
@@ -36,6 +57,16 @@ interface ExcalidrawSceneData {
   appState: Record<string, unknown>;
   files: Record<string, unknown>;
 }
+
+/** Live scene snapshot handed to the export commands (see `getExportSource`). */
+export interface ExcalidrawExportSource {
+  elements: readonly unknown[];
+  appState: Record<string, unknown>;
+  files: Record<string, unknown>;
+}
+
+/** Subset of {@link ExcalidrawModule} the export commands consume. */
+export type ExcalidrawExportModule = Pick<ExcalidrawModule, 'exportToBlob' | 'exportToSvg'>;
 
 /**
  * Path (relative to the served frontend root) where the browser app copies the
@@ -105,6 +136,14 @@ export class ExcalidrawEditorWidget extends ReactWidget implements Navigatable, 
   protected api: ExcalidrawImperativeApi | undefined;
   protected theme: 'light' | 'dark' = 'light';
 
+  /**
+   * Scene version last persisted to disk (0 for a blank/new scene). `onChange`
+   * only dirties the widget when the current scene version diverges from this, so
+   * merely opening a diagram — or the mount/render echo `onChange` — never marks
+   * it dirty (which previously let Theia autoSave rewrite the file on open).
+   */
+  protected lastSavedSceneVersion = 0;
+
   // --- Saveable ---
   protected _dirty = false;
   protected readonly onDirtyChangedEmitter = new Emitter<void>();
@@ -157,6 +196,9 @@ export class ExcalidrawEditorWidget extends ReactWidget implements Navigatable, 
       ]);
       this.component = module;
       this.initialData = sceneData;
+      // Baseline the saved version from the loaded elements so the scene opens
+      // clean; a blank/new scene hashes to 0.
+      this.lastSavedSceneVersion = module.getSceneVersion(sceneData.elements);
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
     } finally {
@@ -189,10 +231,25 @@ export class ExcalidrawEditorWidget extends ReactWidget implements Navigatable, 
     };
   }
 
-  protected markDirty(): void {
-    this.onContentChangedEmitter.fire();
-    if (!this._dirty) {
-      this._dirty = true;
+  /**
+   * Excalidraw fires `onChange` on mount and on every render, not only on real
+   * edits. Comparing the scene version against the last-saved baseline keeps the
+   * open/echo `onChange` from dirtying the widget (and triggering autoSave); only
+   * a genuine change to the scene flips `dirty` and fires the content/dirty
+   * events. The very first echo after mount always matches the baseline, so it is
+   * a no-op by construction.
+   */
+  protected handleSceneChange(elements: readonly unknown[]): void {
+    if (!this.component) {
+      return;
+    }
+    const version = this.component.getSceneVersion(elements);
+    const dirty = version !== this.lastSavedSceneVersion;
+    if (dirty) {
+      this.onContentChangedEmitter.fire();
+    }
+    if (dirty !== this._dirty) {
+      this._dirty = dirty;
       this.onDirtyChangedEmitter.fire();
     }
   }
@@ -206,10 +263,34 @@ export class ExcalidrawEditorWidget extends ReactWidget implements Navigatable, 
     const files = this.api.getFiles();
     const json = this.component.serializeAsJSON(elements, appState, files, 'local');
     await this.fileService.write(this.uri, `${json}\n`);
+    // Re-baseline against the just-saved scene so a save clears dirty and any
+    // subsequent no-op echo stays clean.
+    this.lastSavedSceneVersion = this.component.getSceneVersion(elements);
     if (this._dirty) {
       this._dirty = false;
       this.onDirtyChangedEmitter.fire();
     }
+  }
+
+  /**
+   * The live Excalidraw module once loaded — exposed so the export commands can
+   * reuse the widget's already-resolved bundle instead of triggering a second
+   * dynamic import.
+   */
+  getExportModule(): ExcalidrawExportModule | undefined {
+    return this.component;
+  }
+
+  /** Current scene snapshot for export, or `undefined` before the API is ready. */
+  getExportSource(): ExcalidrawExportSource | undefined {
+    if (!this.api) {
+      return undefined;
+    }
+    return {
+      elements: this.api.getSceneElements(),
+      appState: this.api.getAppState(),
+      files: this.api.getFiles()
+    };
   }
 
   async revert(): Promise<void> {
@@ -244,7 +325,7 @@ export class ExcalidrawEditorWidget extends ReactWidget implements Navigatable, 
         excalidrawAPI: (api: ExcalidrawImperativeApi) => {
           this.api = api;
         },
-        onChange: () => this.markDirty()
+        onChange: (elements: readonly unknown[]) => this.handleSceneChange(elements)
       })
     );
   }
