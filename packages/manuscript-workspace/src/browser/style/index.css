@@ -2621,3 +2621,85 @@
   font-size: 36px;
   opacity: 0.6;
 }
+
+/* ============================================================================
+   Writing Mode + mobile ergonomics (WritingModeContribution)
+   ----------------------------------------------------------------------------
+   Two independent layers:
+     (1) body.afe-writing-mode — the focused, distraction-free layout. Applied
+         only while Writing Mode is toggled on, so it NEVER affects the default
+         desktop flows (which never carry this class).
+     (2) @media (max-width: 900px) and (pointer: coarse) — touch/tablet tap
+         targets. Double-guarded: the 1440x900 desktop flows exceed 900px AND
+         use a fine pointer, so neither condition matches there.
+
+   NOTE: a hard reading-measure (max-width ~72ch) on the Monaco container was
+   intentionally SKIPPED. Monaco computes its own layout from the container box
+   and reacts badly to injected padding/max-width (horizontal-scroll + cursor
+   mis-positioning). The focus layout is achieved by collapsing the side/bottom
+   panels (done in the contribution) plus hiding the activity bars below, which
+   already gives the editor a comfortable centered column without fighting
+   Monaco's layout engine.
+   ========================================================================== */
+
+/* (1) Writing Mode: suppress chrome. The panels themselves are collapsed by the
+   contribution via ApplicationShell; here we additionally hide the left/right
+   activity bars (the icon strips) so nothing but the editor competes for focus.
+   Re-entry is safe: Writing Mode is toggled off from the editor tab toolbar,
+   which stays visible. */
+body.afe-writing-mode .lm-TabBar.theia-app-left,
+body.afe-writing-mode .lm-TabBar.theia-app-right {
+  display: none;
+}
+
+/* Roomier tab-bar toolbar targets while writing (comfortable even on a laptop
+   trackpad; essential on touch). */
+body.afe-writing-mode .lm-TabBar-toolbar .item {
+  min-height: 28px;
+  padding: 2px 4px;
+}
+
+/* (2) Touch/tablet ergonomics. Guarded by BOTH a narrow viewport AND a coarse
+   pointer so desktop (fine pointer, wide viewport) is untouched. */
+@media (max-width: 900px) and (pointer: coarse) {
+  /* Bigger tree rows so chapter/entity nodes are tappable. */
+  .theia-TreeNode {
+    min-height: 36px;
+    align-items: center;
+  }
+
+  /* Menu bar + dropdown items get a comfortable tap height. */
+  .lm-MenuBar-item {
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+  }
+
+  .lm-Menu-item {
+    min-height: 40px;
+  }
+
+  /* Tab-bar toolbar actions (editor/view toolbars) become finger-sized. */
+  .lm-TabBar-toolbar .item {
+    min-height: 40px;
+    min-width: 40px;
+    justify-content: center;
+  }
+
+  /* Status bar wraps instead of clipping its elements on a narrow screen. */
+  #theia-statusBar {
+    height: auto;
+    min-height: var(--theia-statusBar-height);
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  #theia-statusBar .area {
+    flex-wrap: wrap;
+  }
+
+  /* Tighten the tree indent so nested nodes keep usable label width on phones. */
+  .theia-TreeNode-content .theia-ExpansionToggle {
+    min-width: 16px;
+  }
+}

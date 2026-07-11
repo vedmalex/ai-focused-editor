@@ -100,6 +100,7 @@ import {
   ManuscriptWorkspaceKeybindingContribution,
   ManuscriptWorkspaceMenuContribution
 } from './manuscript-workspace-contribution';
+import { WritingModeContribution } from './writing-mode-contribution';
 
 function createManuscriptTreeContainer(parent: interfaces.Container): Container {
   return createTreeContainer(parent, {
@@ -232,4 +233,9 @@ export default new ContainerModule(bind => {
   bind(AiModeContribution).toSelf().inSingletonScope();
   bind(CommandContribution).toService(AiModeContribution);
   bind(MenuContribution).toService(AiModeContribution);
+  bind(WritingModeContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(WritingModeContribution);
+  bind(MenuContribution).toService(WritingModeContribution);
+  bind(TabBarToolbarContribution).toService(WritingModeContribution);
+  bind(FrontendApplicationContribution).toService(WritingModeContribution);
 });
