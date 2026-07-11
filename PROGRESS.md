@@ -282,6 +282,15 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 31 — Excalidraw completion (shipped)
+
+- **Dirty guard**: opening a diagram no longer marks it dirty (scene-version baseline via `getSceneVersion`; dirty only on real divergence) — autoSave stops rewriting the file on open (verified live: DIRTY-ON-OPEN no).
+- **Export to the manuscript**: Export Diagram as PNG / SVG (toolbar + commands) writes `<name>.excalidraw.png/.svg` beside the source and offers «Вставить в главу» → `![name](relative)` at the caret of the active markdown editor.
+- **New Diagram…** creates a blank `.excalidraw` in `sources/` (transliterated slug) and opens it.
+- **Electron assets**: `copy-excalidraw-assets.mjs` is target-aware and wired into both bundle scripts (electron serves `lib/frontend`).
+- **Code-splitting declined** (documented): esbuild splitting needs `format=esm`, but Theia's shell loads `bundle.js` as a classic script and regenerates the config/HTML — keep the lazy import inlined, rely on production minification.
+- Tests: 669; build + render smoke green.
+
 ## Wave 30 — Excalidraw diagram editor (spike → feature, shipped)
 
 - De-risking spike succeeded and became the feature: `@excalidraw/excalidraw` 0.18.1 bundles under `theia build` (which is **esbuild** here, not webpack), rendered in a `ReactWidget` + Navigatable + Saveable opening `.excalidraw` at priority 500 (lazy component load, theme-synced, save via `serializeAsJSON`). Offline-safe assets: `scripts/copy-excalidraw-assets.mjs` (a committed build step, since `apps/*/esbuild.mjs` is regenerated/gitignored) copies fonts + css into the served root and the widget sets `EXCALIDRAW_ASSET_PATH` — **live-verified**: canvas mounts, 0 CDN hits, 0 asset 404. `.excalidraw` lists in SOURCES; `scripts/excalidraw-smoke.mjs` renders a fixture on demand. Use: hand-drawn world maps, character graphs, plot timelines in the book folder under git.
