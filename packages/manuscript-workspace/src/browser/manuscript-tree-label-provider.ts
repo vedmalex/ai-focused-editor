@@ -96,6 +96,15 @@ export class ManuscriptTreeLabelProvider implements LabelProviderContribution {
       if (lower.endsWith('.pdf')) {
         return `codicon codicon-file-pdf ${accent}`;
       }
+      if (lower.endsWith('.docx') || lower.endsWith('.doc') || lower.endsWith('.odt') || lower.endsWith('.rtf')) {
+        return `codicon codicon-file-text ${accent}`;
+      }
+      if (lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.ods')) {
+        return `codicon codicon-table ${accent}`;
+      }
+      if (lower.endsWith('.pptx') || lower.endsWith('.ppt')) {
+        return `codicon codicon-preview ${accent}`;
+      }
       if (IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext))) {
         return `codicon codicon-file-media ${accent}`;
       }

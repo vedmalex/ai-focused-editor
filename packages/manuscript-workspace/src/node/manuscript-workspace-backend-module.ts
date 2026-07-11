@@ -21,6 +21,8 @@ import {
   NarrativeEntityBackendServicePath,
   NarrativeGraphBackendService,
   NarrativeGraphBackendServicePath,
+  OfficePreviewService,
+  OfficePreviewServicePath,
   SourceLibraryBackendService,
   SourceLibraryBackendServicePath,
   YamlSchemaValidator
@@ -28,6 +30,7 @@ import {
 import { NodeBookBuildService } from './node-book-build-service';
 import { NodeNarrativeGraphService } from './node-narrative-graph-service';
 import { NodeGitStatusService } from './node-git-status-service';
+import { NodeOfficePreviewService } from './node-office-preview-service';
 import { NodeLocalAiConnectionService } from './node-local-ai-connection-service';
 import { NodeManuscriptWorkspaceService } from './node-manuscript-workspace-service';
 import {
@@ -66,6 +69,8 @@ export default new ContainerModule(bind => {
   bind(AiModeRegistryBackendService).toService(NodeAiModeRegistryService);
   bind(NodeNarrativeGraphService).toSelf().inSingletonScope();
   bind(NarrativeGraphBackendService).toService(NodeNarrativeGraphService);
+  bind(NodeOfficePreviewService).toSelf().inSingletonScope();
+  bind(OfficePreviewService).toService(NodeOfficePreviewService);
   bind(ConnectionHandler).toDynamicValue(ctx =>
     new RpcConnectionHandler<LocalAiStreamClient>(LocalAiConnectionServicePath, client => {
       const service = ctx.container.get<NodeLocalAiConnectionService>(NodeLocalAiConnectionService);
@@ -106,6 +111,11 @@ export default new ContainerModule(bind => {
   bind(ConnectionHandler).toDynamicValue(ctx =>
     new RpcConnectionHandler(NarrativeGraphBackendServicePath, () =>
       ctx.container.get(NarrativeGraphBackendService)
+    )
+  ).inSingletonScope();
+  bind(ConnectionHandler).toDynamicValue(ctx =>
+    new RpcConnectionHandler(OfficePreviewServicePath, () =>
+      ctx.container.get(OfficePreviewService)
     )
   ).inSingletonScope();
   bind(BackendApplicationContribution).to(ManuscriptWorkspaceBackendContribution).inSingletonScope();

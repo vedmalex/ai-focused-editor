@@ -25,6 +25,7 @@ import workspaceRu from './ru/workspace.json';
 import knowledgeRu from './ru/knowledge.json';
 import gitRu from './ru/git.json';
 import chatCapabilitiesRu from './ru/chat-capabilities.json';
+import officeRu from './ru/office.json';
 
 /**
  * Language descriptor for our Russian dictionary.
@@ -51,7 +52,7 @@ const AREA_BUNDLES: unknown[] = [
   manuscriptTreeRu, menuRu,
   createRu, buildRu, bookConfigRu, sourcesRu, entitiesRu,
   aiConfigRu, aiLogRu, aiModesRu, editorRu, doctorRu, welcomeRu,
-  workspaceRu, knowledgeRu, gitRu, chatCapabilitiesRu
+  workspaceRu, knowledgeRu, gitRu, chatCapabilitiesRu, officeRu
 ];
 
 @injectable()

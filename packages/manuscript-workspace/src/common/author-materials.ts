@@ -60,6 +60,8 @@ const KNOWLEDGE_EXTENSIONS = ['.yaml', '.yml', '.md'];
 const ALLOWED_MATERIAL_EXTENSIONS = [
   // documents
   '.md', '.markdown', '.txt', '.pdf', '.doc', '.docx', '.odt', '.rtf', '.epub', '.html', '.htm',
+  // office spreadsheets and presentations (previewable via the office-preview widget)
+  '.xlsx', '.xls', '.ods', '.pptx', '.ppt',
   // images
   '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.tif', '.tiff', '.bmp',
   // structural

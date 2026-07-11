@@ -198,6 +198,12 @@ describe('allowed material types', () => {
     expect(isAllowedMaterialFile('map.png')).toBe(true);
     expect(isAllowedMaterialFile('data.jsonl')).toBe(true);
     expect(isAllowedMaterialFile('meta.yaml')).toBe(true);
+    expect(isAllowedMaterialFile('chapter.docx')).toBe(true);
+    expect(isAllowedMaterialFile('budget.xlsx')).toBe(true);
+    expect(isAllowedMaterialFile('legacy.xls')).toBe(true);
+    expect(isAllowedMaterialFile('sheet.ods')).toBe(true);
+    expect(isAllowedMaterialFile('deck.pptx')).toBe(true);
+    expect(isAllowedMaterialFile('old.ppt')).toBe(true);
     expect(isAllowedMaterialFile('.gitignore')).toBe(false);
     expect(isAllowedMaterialFile('.DS_Store')).toBe(false);
     expect(isAllowedMaterialFile('binary.exe')).toBe(false);

@@ -2406,3 +2406,218 @@
 .afe-welcome-startup input {
   width: auto;
 }
+
+/* ---------- office document preview ---------- */
+
+.afe-office-preview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.afe-office-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  flex: 0 0 auto;
+}
+
+.afe-office-preview-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.afe-office-preview-ext {
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-badge-foreground);
+  background: var(--theia-badge-background);
+  border-radius: 8px;
+  padding: 0 8px;
+}
+
+.afe-office-preview-header .theia-button {
+  margin-left: auto;
+}
+
+.afe-office-preview-header .theia-button + .theia-button {
+  margin-left: 6px;
+}
+
+.afe-office-preview-warnings {
+  margin: 0;
+  padding: 6px 14px 6px 30px;
+  flex: 0 0 auto;
+  color: var(--theia-editorWarning-foreground, var(--theia-descriptionForeground));
+  background: var(--theia-inputValidation-warningBackground, transparent);
+  border-bottom: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-office-preview-problem {
+  padding: 8px 14px;
+  flex: 0 0 auto;
+}
+
+.afe-office-preview-problem.error {
+  color: var(--theia-errorForeground);
+}
+
+/* Scrollable body shared by every payload kind. */
+.afe-office-preview-doc,
+.afe-office-sheets,
+.afe-office-slides,
+.afe-office-preview-empty,
+.afe-office-preview-unsupported {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 14px;
+  box-sizing: border-box;
+}
+
+/* Word document HTML. */
+.afe-office-preview-doc {
+  max-width: 820px;
+  line-height: 1.5;
+}
+
+.afe-office-preview-doc img {
+  max-width: 100%;
+  height: auto;
+}
+
+.afe-office-preview-doc table {
+  border-collapse: collapse;
+}
+
+.afe-office-preview-doc td,
+.afe-office-preview-doc th {
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.4));
+  padding: 3px 6px;
+}
+
+/* Spreadsheet tabs + tables. */
+.afe-office-sheets {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.afe-office-sheet-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 6px 10px 0;
+  flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  background: var(--theia-editor-background);
+  z-index: 1;
+}
+
+.afe-office-sheet-tab {
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.3));
+  border-bottom: none;
+  background: var(--theia-editorGroupHeader-tabsBackground, transparent);
+  color: var(--theia-descriptionForeground);
+  padding: 3px 10px;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-office-sheet-tab.active {
+  background: var(--theia-tab-activeBackground, var(--theia-editor-background));
+  color: var(--theia-tab-activeForeground, var(--theia-foreground));
+  font-weight: 600;
+}
+
+.afe-office-sheet-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 10px;
+}
+
+.afe-office-sheet-table {
+  border-collapse: collapse;
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-office-sheet-table td,
+.afe-office-sheet-table th {
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.4));
+  padding: 3px 8px;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.afe-office-sheet-table th {
+  background: var(--theia-editorGroupHeader-tabsBackground, rgba(128, 128, 128, 0.12));
+  position: sticky;
+  top: 0;
+  font-weight: 600;
+}
+
+/* Presentation slide cards. */
+.afe-office-slides {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.afe-office-slide-card {
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.3));
+  border-radius: 6px;
+  padding: 12px 14px;
+  background: var(--theia-editorWidget-background, transparent);
+}
+
+.afe-office-slide-number {
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+  margin-bottom: 4px;
+}
+
+.afe-office-slide-title {
+  margin: 0 0 6px;
+  font-size: var(--theia-ui-font-size2);
+}
+
+.afe-office-slide-runs {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.afe-office-slide-runs li {
+  margin: 2px 0;
+}
+
+.afe-office-slide-empty {
+  color: var(--theia-descriptionForeground);
+  font-style: italic;
+  margin: 0;
+}
+
+/* Unsupported / empty states. */
+.afe-office-preview-empty,
+.afe-office-preview-unsupported {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-office-preview-unsupported-icon {
+  font-size: 36px;
+  opacity: 0.6;
+}

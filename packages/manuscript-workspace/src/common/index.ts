@@ -14,6 +14,8 @@ export * from './manuscript-workspace-protocol';
 export * from './model-provider-protocol';
 export * from './narrative-entity-protocol';
 export * from './narrative-graph-protocol';
+export * from './office-preview';
+export * from './office-preview-protocol';
 export * from './source-library-protocol';
 export * from './word-at-offset';
 export * from './yaml-schema-validator';

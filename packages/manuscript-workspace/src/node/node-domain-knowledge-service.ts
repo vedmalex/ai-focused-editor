@@ -195,6 +195,26 @@ async function extractPdfText(absolutePath: string): Promise<string> {
   return Array.isArray(text) ? text.join('\n') : text;
 }
 
+/** Minimal structural surface of the `mammoth` raw-text extractor. */
+interface MammothRawTextModule {
+  extractRawText(input: { buffer: Buffer }): Promise<{ value: string }>;
+}
+
+/**
+ * Extract the plain text of a Word `.docx` via `mammoth.extractRawText`, so the
+ * §5.4 source analyzer accepts docx like it already accepts pdf. `mammoth` is
+ * resolved lazily through a runtime-assembled specifier (same rationale as the
+ * `unpdf` guard above) so the esbuild backend bundler never pulls it in.
+ */
+async function extractDocxText(absolutePath: string): Promise<string> {
+  const moduleName = ['mam', 'moth'].join('');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const mammoth = require(moduleName) as MammothRawTextModule;
+  const buffer = await fs.readFile(absolutePath);
+  const { value } = await mammoth.extractRawText({ buffer });
+  return value;
+}
+
 function asLineNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
     return Math.floor(value);
@@ -388,12 +408,23 @@ export class NodeSourceLibraryService implements SourceLibraryBackendService {
     }
 
     try {
-      if (extname(absolutePath).toLowerCase() === '.pdf') {
+      const ext = extname(absolutePath).toLowerCase();
+      if (ext === '.pdf') {
         const text = await extractPdfText(absolutePath);
         if (text.trim().length === 0) {
           return {
             ok: false,
             detail: `No extractable text found in ${path} (it may be a scanned or image-only PDF).`
+          };
+        }
+        return { ok: true, text };
+      }
+      if (ext === '.docx') {
+        const text = await extractDocxText(absolutePath);
+        if (text.trim().length === 0) {
+          return {
+            ok: false,
+            detail: `No extractable text found in ${path} (the document appears to be empty).`
           };
         }
         return { ok: true, text };
