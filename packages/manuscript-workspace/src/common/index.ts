@@ -9,6 +9,7 @@ export * from './ai-mode-layering';
 export * from './book-build-protocol';
 export * from './entity-mentions';
 export * from './git-status-protocol';
+export * from './knowledge-templates';
 export * from './book-build-task-protocol';
 export * from './manuscript-workspace-protocol';
 export * from './model-provider-protocol';

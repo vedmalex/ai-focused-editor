@@ -20,6 +20,7 @@ import {
   SourceLibraryService,
   SourceLibrarySnapshot
 } from '../common';
+import { ChatContextActionsContribution } from './chat-context-actions-contribution';
 
 @injectable()
 export class SourceLibraryWidget extends ReactWidget {
@@ -34,6 +35,9 @@ export class SourceLibraryWidget extends ReactWidget {
 
   @inject(ClipboardService)
   protected readonly clipboardService!: ClipboardService;
+
+  @inject(ChatContextActionsContribution)
+  protected readonly chatContextActions!: ChatContextActionsContribution;
 
   protected snapshot: SourceLibrarySnapshot | undefined;
 
@@ -119,7 +123,18 @@ export class SourceLibraryWidget extends ReactWidget {
               'button',
               { className: 'theia-button', onClick: () => this.openUri(item.uri) },
               nls.localize('ai-focused-editor/sources/open-button', 'Open')
-            )
+            ),
+            item.type === 'file'
+              ? React.createElement(
+                'button',
+                {
+                  className: 'theia-button secondary',
+                  title: nls.localize('ai-focused-editor/chat-context/send-selection', 'Send to AI Chat'),
+                  onClick: () => void this.chatContextActions.attachSource(item.path, item.name)
+                },
+                nls.localize('ai-focused-editor/sources/to-chat-button', 'To Chat')
+              )
+              : undefined
           ))
         )
     );

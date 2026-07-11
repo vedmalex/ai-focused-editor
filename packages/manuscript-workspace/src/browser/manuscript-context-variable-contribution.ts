@@ -6,9 +6,12 @@ import {
   AIVariableService,
   ResolvedAIContextVariable
 } from '@theia/ai-core';
+import { AIVariableCompletionContext } from '@theia/ai-core/lib/browser';
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { nls } from '@theia/core/lib/common/nls';
+import { QuickInputService } from '@theia/core/lib/common';
 import URI from '@theia/core/lib/common/uri';
+import * as monaco from '@theia/monaco-editor-core';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import type {
@@ -18,16 +21,43 @@ import type {
 import {
   ManuscriptWorkspaceService,
   NarrativeEntityService,
+  SourceLibraryBackendService,
   SourceLibraryService
 } from '../common';
 import type {
   ManuscriptWorkspaceService as ManuscriptWorkspaceServiceType,
   NarrativeEntityService as NarrativeEntityServiceType,
+  SourceLibraryBackendService as SourceLibraryBackendServiceType,
   SourceLibraryService as SourceLibraryServiceType
 } from '../common';
+import { extractFirstHeading } from '../common/manifest-reconstruction';
 import { ManuscriptAiContextAssembler } from './manuscript-ai-context-assembler';
 
 const MAX_CHAPTER_CHARS = 24000;
+const MAX_SOURCE_CHARS = 24000;
+const MAX_NOTE_CHARS = 24000;
+
+/**
+ * Command that attaches a resolved context variable to the active chat session.
+ * Provided by `@theia/ai-chat` (`ai-chat-frontend-contribution`) with
+ * `arguments: [variableName, arg]`; referenced by id so this contribution does
+ * not deep-import a browser-internal module.
+ */
+const ADD_CONTEXT_VARIABLE_COMMAND_ID = 'add-context-variable';
+
+/**
+ * Source formats read server-side (they are not decodable as text in the
+ * browser); everything else is read directly through the `FileService`.
+ */
+const BINARY_SOURCE_EXTENSIONS: ReadonlySet<string> = new Set([
+  '.pdf', '.docx', '.doc', '.pptx', '.ppt', '.xlsx', '.xls', '.odt', '.rtf'
+]);
+
+/** Directories a `#note` may read from (author knowledge + AI config). */
+const NOTE_ALLOWED_PREFIXES = ['knowledge/', 'ai/'] as const;
+
+/** Extensions a `#note` may read (markdown + yaml). */
+const NOTE_ALLOWED_EXTENSIONS: ReadonlySet<string> = new Set(['.md', '.markdown', '.yaml', '.yml']);
 
 export const MANUSCRIPT_CONTEXT_VARIABLE: AIContextVariable = {
   id: 'ai-focused-editor.manuscript-context',
@@ -50,7 +80,15 @@ export const CHAPTER_CONTEXT_VARIABLE: AIContextVariable = {
     'A single chapter\'s Markdown. Defaults to the active editor; pass a workspace-relative path as argument (#chapter:content/chapter-01.md).'
   ),
   iconClasses: ['fa', 'fa-file-text-o'],
-  isContextVariable: true
+  isContextVariable: true,
+  args: [{
+    name: 'path',
+    description: nls.localize(
+      'ai-focused-editor/workspace/var-chapter-arg-path',
+      'Workspace-relative Markdown path; omit to use the active editor.'
+    ),
+    isOptional: true
+  }]
 };
 
 export const ENTITY_CONTEXT_VARIABLE: AIContextVariable = {
@@ -62,7 +100,14 @@ export const ENTITY_CONTEXT_VARIABLE: AIContextVariable = {
     'One knowledge-base card by id (#entity:krishna) with all fields.'
   ),
   iconClasses: ['fa', 'fa-user'],
-  isContextVariable: true
+  isContextVariable: true,
+  args: [{
+    name: 'id',
+    description: nls.localize(
+      'ai-focused-editor/workspace/var-entity-arg-id',
+      'Entity id (or label), e.g. krishna.'
+    )
+  }]
 };
 
 export const ENTITIES_CONTEXT_VARIABLE: AIContextVariable = {
@@ -101,13 +146,53 @@ export const OUTLINE_CONTEXT_VARIABLE: AIContextVariable = {
   isContextVariable: true
 };
 
+export const SOURCE_CONTEXT_VARIABLE: AIContextVariable = {
+  id: 'ai-focused-editor.source-context',
+  name: 'source',
+  label: nls.localize('ai-focused-editor/workspace/var-source-label', 'Source Document'),
+  description: nls.localize(
+    'ai-focused-editor/workspace/var-source-description',
+    'The extracted text of one source document by workspace-relative path (#source:sources/paper.pdf). Binary formats (PDF, Word, Office) are extracted server-side.'
+  ),
+  iconClasses: ['fa', 'fa-file-o'],
+  isContextVariable: true,
+  args: [{
+    name: 'path',
+    description: nls.localize(
+      'ai-focused-editor/workspace/var-source-arg-path',
+      'Workspace-relative path of a file under sources/, e.g. sources/paper.pdf.'
+    )
+  }]
+};
+
+export const NOTE_CONTEXT_VARIABLE: AIContextVariable = {
+  id: 'ai-focused-editor.note-context',
+  name: 'note',
+  label: nls.localize('ai-focused-editor/workspace/var-note-label', 'Knowledge Note'),
+  description: nls.localize(
+    'ai-focused-editor/workspace/var-note-description',
+    'A single knowledge note (markdown or YAML) under knowledge/ or ai/ by workspace-relative path (#note:knowledge/plans/outline.md).'
+  ),
+  iconClasses: ['fa', 'fa-sticky-note-o'],
+  isContextVariable: true,
+  args: [{
+    name: 'path',
+    description: nls.localize(
+      'ai-focused-editor/workspace/var-note-arg-path',
+      'Workspace-relative path under knowledge/ or ai/, e.g. knowledge/plans/outline.md.'
+    )
+  }]
+};
+
 const ALL_VARIABLES = [
   MANUSCRIPT_CONTEXT_VARIABLE,
   CHAPTER_CONTEXT_VARIABLE,
   ENTITY_CONTEXT_VARIABLE,
   ENTITIES_CONTEXT_VARIABLE,
   SOURCES_CONTEXT_VARIABLE,
-  OUTLINE_CONTEXT_VARIABLE
+  OUTLINE_CONTEXT_VARIABLE,
+  SOURCE_CONTEXT_VARIABLE,
+  NOTE_CONTEXT_VARIABLE
 ];
 
 /**
@@ -130,17 +215,47 @@ export class ManuscriptContextVariableContribution implements AIVariableContribu
   @inject(SourceLibraryService)
   protected readonly sourceLibrary!: SourceLibraryServiceType;
 
+  @inject(SourceLibraryBackendService)
+  protected readonly sourceLibraryBackend!: SourceLibraryBackendServiceType;
+
   @inject(EditorManager)
   protected readonly editorManager!: EditorManager;
 
   @inject(FileService)
   protected readonly fileService!: FileService;
 
+  @inject(QuickInputService)
+  protected readonly quickInput!: QuickInputService;
+
   registerVariables(service: AIVariableService): void {
     for (const variable of ALL_VARIABLES) {
       service.registerVariable(variable);
       service.registerResolver(variable, this);
     }
+
+    // Argument pickers (paperclip / QuickPick) and inline `#var:` completion
+    // providers for the variables that take an argument. MANUSCRIPT/ENTITIES/
+    // OUTLINE/SOURCES stay arg-less and get neither.
+    service.registerArgumentPicker(CHAPTER_CONTEXT_VARIABLE, () => this.pickChapter());
+    service.registerArgumentCompletionProvider(
+      CHAPTER_CONTEXT_VARIABLE,
+      (model, position, match) => this.completeChapter(model, position, match)
+    );
+    service.registerArgumentPicker(ENTITY_CONTEXT_VARIABLE, () => this.pickEntity());
+    service.registerArgumentCompletionProvider(
+      ENTITY_CONTEXT_VARIABLE,
+      (model, position, match) => this.completeEntity(model, position, match)
+    );
+    service.registerArgumentPicker(SOURCE_CONTEXT_VARIABLE, () => this.pickSource());
+    service.registerArgumentCompletionProvider(
+      SOURCE_CONTEXT_VARIABLE,
+      (model, position, match) => this.completeSource(model, position, match)
+    );
+    service.registerArgumentPicker(NOTE_CONTEXT_VARIABLE, () => this.pickNote());
+    service.registerArgumentCompletionProvider(
+      NOTE_CONTEXT_VARIABLE,
+      (model, position, match) => this.completeNote(model, position, match)
+    );
   }
 
   canResolve(request: AIVariableResolutionRequest, _context: AIVariableContext): number {
@@ -177,6 +292,10 @@ export class ManuscriptContextVariableContribution implements AIVariableContribu
         return this.resolveSources();
       case 'outline':
         return this.resolveOutline();
+      case 'source':
+        return this.resolveSource(arg);
+      case 'note':
+        return this.resolveNote(arg);
       default:
         return undefined;
     }
@@ -334,5 +453,323 @@ export class ManuscriptContextVariableContribution implements AIVariableContribu
       }
     }
     return headings;
+  }
+
+  // --- #source --------------------------------------------------------------
+
+  protected async resolveSource(arg?: string): Promise<string> {
+    if (!arg) {
+      return 'Pass a source path, e.g. #source:sources/paper.pdf';
+    }
+    if (arg.includes('..')) {
+      return `Source path escapes the workspace: ${arg}`;
+    }
+    const snapshot = await this.manuscriptWorkspace.getSnapshot();
+    if (!snapshot.rootUri) {
+      return 'Open a manuscript workspace folder first.';
+    }
+    const rootUri = snapshot.rootUri;
+    const extension = this.extensionOf(arg);
+    if (BINARY_SOURCE_EXTENSIONS.has(extension)) {
+      let extraction;
+      try {
+        extraction = await this.sourceLibraryBackend.extractSourceText(rootUri, arg);
+      } catch (error) {
+        return `Could not extract text from ${arg}: ${this.detail(error)}`;
+      }
+      if (!extraction.ok || extraction.text === undefined) {
+        return `Could not extract text from ${arg}: ${extraction.detail ?? 'no extractable text found.'}`;
+      }
+      return `# Source: ${arg}\n\n${this.cap(extraction.text, MAX_SOURCE_CHARS)}`;
+    }
+    try {
+      const content = await this.fileService.read(new URI(rootUri).resolve(arg));
+      return `# Source: ${arg}\n\n${this.cap(content.value, MAX_SOURCE_CHARS)}`;
+    } catch (error) {
+      return `Could not read source ${arg}: ${this.detail(error)}`;
+    }
+  }
+
+  // --- #note ----------------------------------------------------------------
+
+  protected async resolveNote(arg?: string): Promise<string> {
+    if (!arg) {
+      return 'Pass a note path, e.g. #note:knowledge/plans/outline.md';
+    }
+    if (arg.includes('..')) {
+      return `Note path escapes the workspace: ${arg}`;
+    }
+    if (!this.isAllowedNotePath(arg)) {
+      return `#note only reads files under knowledge/ or ai/ (markdown or YAML): ${arg}`;
+    }
+    const snapshot = await this.manuscriptWorkspace.getSnapshot();
+    if (!snapshot.rootUri) {
+      return 'Open a manuscript workspace folder first.';
+    }
+    try {
+      const content = await this.fileService.read(new URI(snapshot.rootUri).resolve(arg));
+      return `# Note: ${arg}\n\n${this.cap(content.value, MAX_NOTE_CHARS)}`;
+    } catch (error) {
+      return `Could not read note ${arg}: ${this.detail(error)}`;
+    }
+  }
+
+  protected isAllowedNotePath(path: string): boolean {
+    if (!NOTE_ALLOWED_PREFIXES.some(prefix => path.startsWith(prefix))) {
+      return false;
+    }
+    return NOTE_ALLOWED_EXTENSIONS.has(this.extensionOf(path));
+  }
+
+  // --- Argument pickers (paperclip / QuickPick) -----------------------------
+
+  protected async pickChapter(): Promise<string | undefined> {
+    const chapters = await this.collectChapters();
+    if (chapters.length === 0) {
+      return undefined;
+    }
+    const picked = await this.quickInput.showQuickPick(
+      chapters.map(chapter => ({ label: chapter.title, description: chapter.path, value: chapter.path })),
+      { placeholder: nls.localize('ai-focused-editor/chat-context/pick-chapter', 'Select a chapter') }
+    );
+    return picked?.value;
+  }
+
+  protected async pickEntity(): Promise<string | undefined> {
+    const entities = await this.collectEntities();
+    if (entities.length === 0) {
+      return undefined;
+    }
+    const picked = await this.quickInput.showQuickPick(
+      entities.map(entity => ({ label: entity.label, description: entity.id, value: entity.id })),
+      { placeholder: nls.localize('ai-focused-editor/chat-context/pick-entity', 'Select an entity') }
+    );
+    return picked?.value;
+  }
+
+  protected async pickSource(): Promise<string | undefined> {
+    const sources = await this.collectSources();
+    if (sources.length === 0) {
+      return undefined;
+    }
+    const picked = await this.quickInput.showQuickPick(
+      sources.map(source => ({ label: source.label, description: source.path, value: source.path })),
+      { placeholder: nls.localize('ai-focused-editor/chat-context/pick-source', 'Select a source document') }
+    );
+    return picked?.value;
+  }
+
+  protected async pickNote(): Promise<string | undefined> {
+    const notes = await this.collectNotes();
+    if (notes.length === 0) {
+      return undefined;
+    }
+    const picked = await this.quickInput.showQuickPick(
+      notes.map(note => ({ label: note.label, description: note.path, value: note.path })),
+      { placeholder: nls.localize('ai-focused-editor/chat-context/pick-note', 'Select a knowledge note') }
+    );
+    return picked?.value;
+  }
+
+  // --- Inline `#var:` completion providers ----------------------------------
+
+  protected async completeChapter(
+    model: monaco.editor.ITextModel,
+    position: monaco.Position,
+    matchString?: string
+  ): Promise<monaco.languages.CompletionItem[] | undefined> {
+    const chapters = await this.collectChapters();
+    return this.toCompletionItems(
+      CHAPTER_CONTEXT_VARIABLE.name,
+      model,
+      position,
+      matchString,
+      chapters.map(chapter => ({ label: chapter.title, detail: chapter.path, value: chapter.path }))
+    );
+  }
+
+  protected async completeEntity(
+    model: monaco.editor.ITextModel,
+    position: monaco.Position,
+    matchString?: string
+  ): Promise<monaco.languages.CompletionItem[] | undefined> {
+    const entities = await this.collectEntities();
+    return this.toCompletionItems(
+      ENTITY_CONTEXT_VARIABLE.name,
+      model,
+      position,
+      matchString,
+      entities.map(entity => ({ label: entity.label, detail: entity.id, value: entity.id }))
+    );
+  }
+
+  protected async completeSource(
+    model: monaco.editor.ITextModel,
+    position: monaco.Position,
+    matchString?: string
+  ): Promise<monaco.languages.CompletionItem[] | undefined> {
+    const sources = await this.collectSources();
+    return this.toCompletionItems(
+      SOURCE_CONTEXT_VARIABLE.name,
+      model,
+      position,
+      matchString,
+      sources.map(source => ({ label: source.label, detail: source.path, value: source.path }))
+    );
+  }
+
+  protected async completeNote(
+    model: monaco.editor.ITextModel,
+    position: monaco.Position,
+    matchString?: string
+  ): Promise<monaco.languages.CompletionItem[] | undefined> {
+    const notes = await this.collectNotes();
+    return this.toCompletionItems(
+      NOTE_CONTEXT_VARIABLE.name,
+      model,
+      position,
+      matchString,
+      notes.map(note => ({ label: note.label, detail: note.path, value: note.path }))
+    );
+  }
+
+  /**
+   * Map candidate `{label, detail, value}` rows to Monaco completion items,
+   * inserting `var:<value>` and (on accept) attaching the variable to the chat
+   * context via the shared `add-context-variable` command — mirroring
+   * `file-chat-variable-contribution`.
+   */
+  protected toCompletionItems(
+    variableName: string,
+    model: monaco.editor.ITextModel,
+    position: monaco.Position,
+    matchString: string | undefined,
+    candidates: { label: string; detail: string; value: string }[]
+  ): monaco.languages.CompletionItem[] | undefined {
+    const context = AIVariableCompletionContext.get(variableName, model, position, matchString);
+    if (!context) {
+      return undefined;
+    }
+    const { userInput, range, prefix } = context;
+    const lowered = userInput.toLowerCase();
+    return candidates
+      .filter(candidate => !userInput
+        || candidate.value.toLowerCase().includes(lowered)
+        || candidate.label.toLowerCase().includes(lowered))
+      .map((candidate, index) => ({
+        label: candidate.label,
+        kind: monaco.languages.CompletionItemKind.Value,
+        range,
+        insertText: `${prefix}${candidate.value}`,
+        detail: candidate.detail,
+        filterText: userInput ? `${candidate.label} ${candidate.value}` : undefined,
+        sortText: `ZZ${index.toString().padStart(4, '0')}`,
+        command: {
+          title: nls.localize('ai-focused-editor/chat-context/attach', 'Attach to Chat Context'),
+          id: ADD_CONTEXT_VARIABLE_COMMAND_ID,
+          arguments: [variableName, candidate.value]
+        }
+      }));
+  }
+
+  // --- Candidate enumeration (shared by pickers + completions) --------------
+
+  /** All build-included Markdown chapters, as `{ path, title }`. */
+  async collectChapters(): Promise<{ path: string; title: string }[]> {
+    const snapshot = await this.manuscriptWorkspace.getSnapshot();
+    const out: { path: string; title: string }[] = [];
+    this.flattenChapters(snapshot.content, out);
+    return out;
+  }
+
+  protected flattenChapters(nodes: ManuscriptNode[], out: { path: string; title: string }[]): void {
+    for (const node of [...nodes].sort((left, right) => left.order - right.order)) {
+      if (node.children) {
+        this.flattenChapters(node.children, out);
+        continue;
+      }
+      if (node.type === 'file' && node.path.endsWith('.md')) {
+        out.push({ path: node.path, title: node.name || node.path });
+      }
+    }
+  }
+
+  /** All entity cards, as `{ id, label }`. */
+  async collectEntities(): Promise<{ id: string; label: string }[]> {
+    const snapshot = await this.narrativeEntities.getSnapshot();
+    return snapshot.entities.map(entity => ({ id: entity.id, label: entity.label?.trim() || entity.id }));
+  }
+
+  /** All source files (workspace-relative), as `{ path, label }`. */
+  async collectSources(): Promise<{ path: string; label: string }[]> {
+    const snapshot = await this.sourceLibrary.getSnapshot();
+    return snapshot.items
+      .filter(item => item.type === 'file')
+      .map(item => ({ path: item.path, label: item.name }));
+  }
+
+  /**
+   * Knowledge/AI notes discoverable under `knowledge/` and `ai/`, as
+   * `{ path, label }`. Labels use the first Markdown heading when cheaply
+   * available, else the file name.
+   */
+  async collectNotes(): Promise<{ path: string; label: string }[]> {
+    const snapshot = await this.manuscriptWorkspace.getSnapshot();
+    if (!snapshot.rootUri) {
+      return [];
+    }
+    const root = new URI(snapshot.rootUri);
+    const out: { path: string; label: string }[] = [];
+    for (const prefix of NOTE_ALLOWED_PREFIXES) {
+      await this.walkNotes(root, root.resolve(prefix.replace(/\/$/, '')), out);
+    }
+    out.sort((left, right) => left.path.localeCompare(right.path));
+    return out;
+  }
+
+  protected async walkNotes(root: URI, dir: URI, out: { path: string; label: string }[]): Promise<void> {
+    const stat = await this.fileService.resolve(dir).catch(() => undefined);
+    if (!stat?.children) {
+      return;
+    }
+    for (const child of stat.children) {
+      if (child.isDirectory) {
+        await this.walkNotes(root, child.resource, out);
+        continue;
+      }
+      const relative = root.relative(child.resource)?.toString();
+      if (!relative || !NOTE_ALLOWED_EXTENSIONS.has(this.extensionOf(relative))) {
+        continue;
+      }
+      out.push({ path: relative, label: await this.noteLabel(child.resource, relative) });
+    }
+  }
+
+  /** First Markdown heading (best-effort) for a note, else its file name. */
+  protected async noteLabel(resource: URI, relative: string): Promise<string> {
+    const fallback = resource.path.base;
+    if (this.extensionOf(relative) !== '.md' && this.extensionOf(relative) !== '.markdown') {
+      return fallback;
+    }
+    try {
+      const content = await this.fileService.read(resource);
+      return extractFirstHeading(content.value.slice(0, 2048)) ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  protected extensionOf(path: string): string {
+    const base = path.slice(path.lastIndexOf('/') + 1);
+    const dot = base.lastIndexOf('.');
+    return dot < 0 ? '' : base.slice(dot).toLowerCase();
+  }
+
+  protected cap(text: string, max: number): string {
+    return text.length > max ? `${text.slice(0, max)}\n\n[...truncated]` : text;
+  }
+
+  protected detail(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 }

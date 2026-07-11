@@ -67,6 +67,7 @@ import { AiProfileStatusBarContribution } from './ai-profile-status-bar-contribu
 import { GitActionsContribution } from './git-actions-contribution';
 import { ManuscriptAiContextAssembler } from './manuscript-ai-context-assembler';
 import { ManuscriptContextVariableContribution } from './manuscript-context-variable-contribution';
+import { ChatContextActionsContribution } from './chat-context-actions-contribution';
 import { ManuscriptChatAgentContribution } from './manuscript-chat-agent-contribution';
 import {
   ManuscriptFindEntitiesTool,
@@ -153,6 +154,9 @@ export default new ContainerModule(bind => {
   bind(ManuscriptAiContextAssembler).toSelf().inSingletonScope();
   bind(ManuscriptContextVariableContribution).toSelf().inSingletonScope();
   bind(AIVariableContribution).toService(ManuscriptContextVariableContribution);
+  bind(ChatContextActionsContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(ChatContextActionsContribution);
+  bind(MenuContribution).toService(ChatContextActionsContribution);
   bind(AiProfilePreferenceService).toSelf().inSingletonScope();
   bind(AiVerificationService).toSelf().inSingletonScope();
   bind(AiProfileStatusBarContribution).toSelf().inSingletonScope();

@@ -1,0 +1,22 @@
+{
+  "ai-focused-editor": {
+    "chat-context": {
+      "category": "AI Focused Editor",
+      "add-context": "Добавить в контекст чата…",
+      "send-selection": "Отправить в AI-чат",
+      "attach": "Добавить в контекст чата",
+      "pick-category": "Выберите категорию",
+      "pick-artifact": "Выберите элемент для добавления",
+      "pick-chapter": "Выберите главу",
+      "pick-entity": "Выберите сущность",
+      "pick-source": "Выберите документ-источник",
+      "pick-note": "Выберите заметку базы знаний",
+      "category-chapters": "Главы",
+      "category-sources": "Источники",
+      "category-entities": "Сущности",
+      "category-notes": "Заметки",
+      "category-empty": "В этой категории пока нечего добавить.",
+      "attached": "«{0}» добавлено в контекст чата."
+    }
+  }
+}

@@ -20,8 +20,12 @@ import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service
 import { Document, isSeq, parseDocument, YAMLSeq } from 'yaml';
 import type { AuthorMaterialsSectionKind } from '../common/author-materials';
 import {
+  buildKnowledgeNoteBody,
+  KNOWLEDGE_TEMPLATE_KINDS,
+  KnowledgeTemplateKind
+} from '../common/knowledge-templates';
+import {
   buildEntityYaml,
-  buildKnowledgeNoteMarkdown,
   createSemanticEntityId,
   CreatableEntityKind,
   CREATABLE_ENTITY_KINDS,
@@ -121,6 +125,34 @@ const ENTITY_GROUP_SECTIONS: ReadonlySet<AuthorMaterialsSectionKind> = new Set(
 interface KnowledgeCategoryPick extends QuickPickItem {
   /** `undefined` files the note directly under `knowledge/`. */
   category: string | undefined;
+}
+
+interface KnowledgeTemplatePick extends QuickPickItem {
+  /** Which body skeleton to seed the new note with. */
+  template: KnowledgeTemplateKind;
+}
+
+/** Localized label/description for each knowledge-note template. */
+function knowledgeTemplatePicks(): KnowledgeTemplatePick[] {
+  const meta: Record<KnowledgeTemplateKind, { label: string; description: string }> = {
+    'empty': {
+      label: nls.localize('ai-focused-editor/create/template-empty', 'Empty note'),
+      description: nls.localize('ai-focused-editor/create/template-empty-detail', 'Just a title and a blank page')
+    },
+    'book-brief': {
+      label: nls.localize('ai-focused-editor/create/template-book-brief', 'Book brief'),
+      description: nls.localize('ai-focused-editor/create/template-book-brief-detail', 'Idea, audience, genre, conflict, resolution')
+    },
+    'book-plan': {
+      label: nls.localize('ai-focused-editor/create/template-book-plan', 'Book plan'),
+      description: nls.localize('ai-focused-editor/create/template-book-plan-detail', 'Parts and chapters skeleton')
+    },
+    'sample-contents': {
+      label: nls.localize('ai-focused-editor/create/template-sample-contents', 'Sample contents'),
+      description: nls.localize('ai-focused-editor/create/template-sample-contents-detail', 'A numbered table-of-contents outline')
+    }
+  };
+  return KNOWLEDGE_TEMPLATE_KINDS.map(template => ({ template, ...meta[template] }));
 }
 
 /**
@@ -430,6 +462,15 @@ export class AuthorMaterialsCreateContribution
     }
     const category = picked.category;
 
+    const pickedTemplate = await this.quickInput.showQuickPick(knowledgeTemplatePicks(), {
+      title: nls.localize('ai-focused-editor/create/note-title', 'New Knowledge Note'),
+      placeholder: nls.localize('ai-focused-editor/create/note-template-placeholder', 'Choose a starting template for the note')
+    });
+    if (!pickedTemplate) {
+      return;
+    }
+    const template = pickedTemplate.template;
+
     const title = await this.quickInput.input({
       title: nls.localize('ai-focused-editor/create/note-title', 'New Knowledge Note'),
       prompt: nls.localize('ai-focused-editor/create/note-prompt', 'Note title'),
@@ -457,7 +498,7 @@ export class AuthorMaterialsCreateContribution
 
     const fileUri = root.resolve(relPath);
     try {
-      await this.fileService.create(fileUri, buildKnowledgeNoteMarkdown(trimmed), { overwrite: false });
+      await this.fileService.create(fileUri, buildKnowledgeNoteBody(template, trimmed), { overwrite: false });
     } catch (error) {
       this.messages.warn(nls.localize(
         'ai-focused-editor/create/note-failed',

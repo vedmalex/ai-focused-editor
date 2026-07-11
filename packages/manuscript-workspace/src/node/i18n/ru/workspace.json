@@ -64,14 +64,22 @@
       "var-manuscript-description": "Контекст всего проекта: манифест, диагностика, сущности и сводка по источникам.",
       "var-chapter-label": "Глава",
       "var-chapter-description": "Markdown одной главы. По умолчанию — активный редактор; передайте путь относительно рабочей области как аргумент (#chapter:content/chapter-01.md).",
+      "var-chapter-arg-path": "Путь к Markdown относительно рабочей области; оставьте пустым, чтобы использовать активный редактор.",
       "var-entity-label": "Карточка сущности",
       "var-entity-description": "Одна карточка из базы знаний по идентификатору (#entity:krishna) со всеми полями.",
+      "var-entity-arg-id": "Идентификатор (или название) сущности, например krishna.",
       "var-entities-label": "Все сущности",
       "var-entities-description": "Компактный перечень всех карточек персонажей, терминов, артефактов и локаций.",
       "var-sources-label": "Источники и цитаты",
       "var-sources-description": "Файлы источников, цитаты и выдержки, зарегистрированные в рабочей области.",
       "var-outline-label": "Структура книги",
       "var-outline-description": "Структура манифеста и оглавление по заголовкам каждой включённой главы.",
+      "var-source-label": "Документ-источник",
+      "var-source-description": "Извлечённый текст одного документа-источника по пути относительно рабочей области (#source:sources/paper.pdf). Бинарные форматы (PDF, Word, Office) извлекаются на сервере.",
+      "var-source-arg-path": "Путь к файлу в sources/ относительно рабочей области, например sources/paper.pdf.",
+      "var-note-label": "Заметка базы знаний",
+      "var-note-description": "Одна заметка (Markdown или YAML) из knowledge/ или ai/ по пути относительно рабочей области (#note:knowledge/plans/outline.md).",
+      "var-note-arg-path": "Путь относительно рабочей области в knowledge/ или ai/, например knowledge/plans/outline.md.",
       "agent-description": "ИИ-агент для писателей: редактирование рукописи, семантический Markdown, сущности проекта и рецензирование с учётом источников."
     }
   }
