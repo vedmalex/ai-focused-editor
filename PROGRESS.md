@@ -265,6 +265,10 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 
 - `#chapter`/`#entity` gained argument completion + pickers; new `#source:` (extracted text even from PDF/docx, 24K cap, graceful degrade) and `#note:` (hand-authored briefs/plans from `knowledge/`); «Добавить в контекст чата…» category picker; «Send to AI Chat» in the tree and Sources rows; knowledge note templates (бриф/план/содержание). 629 tests; 10/10 flows.
 
+## Wave 27 — MCP enabled (shipped)
+
+- `@theia/ai-mcp@1.73.1` in both targets: servers via `ai-features.mcp.mcpServers` (command/args/env, autostart-after-restart), tools surface as `mcp_<server>_<tool>` functions + a prompt fragment per server + an MCP group in the capabilities panel. `docs/mcp.md` carries a paste-ready **bs-search** recipe (11 search/RAG tools; `bash -lc` cwd workaround). The Start/Stop management widget would need `@theia/ai-ide` — flagged as a separate decision.
+
 ## Backlog (queued)
 
 0. **Electron smoke pipeline flake — largely solved**: dev-mode backend fork collided with Playwright's debug argv → the smoke runs `NODE_ENV=production` and is green standalone, after builds, and via `bun run`. A residual in-pipeline-only failure (window dies with ZERO main output, only inside the full `verify:full` chain) still appears sporadically; retries + output capture stay in place to characterize it.
