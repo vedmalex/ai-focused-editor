@@ -282,6 +282,14 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 39 — Author-defined entity types (C stages 2–4, shipped)
+
+- **`entities/types.yaml`**: книга объявляет свои типы сущностей (id/label/папка/тег/поля с дефолтами); валидация с кодами, коллизии с базовыми отклоняются; node-скан ходит по всем эффективным папкам, снапшоты несут список типов + проблемы; фронтенд-сервис с событием изменения.
+- **Один компонент формы**: entity-редактор рендерится из схемы полей дескриптора — базовые четыре пиксельно прежние, авторские открываются той же формой; неизвестные yaml-поля переживают сохранение.
+- **Дерево/создание**: секции авторских типов под «Миром книги», generic «Новая сущность…» по всем типам, «Типы сущностей» открывает yaml.
+- **Теги/навигация/доктор**: автодополнение и клик-переход для авторских тегов, доктор считает объявленные типы известными, показывает проблемы types.yaml и создаёт карточки авторских типов.
+- Демонстрация: тип «Шлока» в sample-book — живая проверка: секция «Шлока (1)» с карточкой в дереве. 849 tests (+100); build green. Идея владельца «настраиваемые entity: базовый набор + набор автора, один компонент, меняем теги» реализована целиком.
+
 ## Wave 38 — Chat context management (shipped)
 
 - **«Работать с главой…»** (меню + правый клик): автосборка набора — глава + сущности её тегов + цитаты `[@cite:]` + их исходники — мультиселект с предвыбором, докидываемые источники/заметки, всё прикрепляется chips-ами одним движением. Чистые правила сборки в `common/chapter-bundle.ts`.
