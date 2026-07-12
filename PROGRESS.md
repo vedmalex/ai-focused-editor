@@ -282,6 +282,13 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 41 — Entity types form editor (shipped)
+
+- **Форма для `entities/types.yaml`**: клик по «Типы сущностей» в дереве открывает форм-редактор (opener priority 500, сырой YAML — через Open With). Встроенные четыре типа показаны read-only карточками с бейджем «встроенный» (справка, переопределить нельзя); авторские типы — раскрывающиеся карточки: id (kebab-подсказка)/название/вид тега/каталог/значок/акцент + суб-редактор схемы полей (имя/вид text|textarea|list/подпись; добавление/удаление/порядок; служебные id и label закреплены сверху и не удаляются).
+- **Один мозг валидации**: форма не дублирует правила — `validateTypeRows` сериализует строки и прогоняет через тот же `parseEntityTypesYaml`, что и рантайм; все коды проблем блокируют сохранение (тип с проблемой молча выпал бы из книги). Запись comment-preserving через yaml Document; дефолты (tagKind==id, directory==id, дефолтные поля/значок) в файл не пишутся.
+- Команда «Изменить типы сущностей…» в меню Manuscript сеет `version: 1, types: []` при отсутствии файла. Новая i18n-область `entity-types`; `common/entity-type-forms.ts` (+19 тестов).
+- Live-проба: форма перехватывает открытие из дерева, 4 встроенные карточки, карточка «Шлока» с полным набором инпутов, dirty-гейтинг, сохранение пишет YAML на диск с сохранением комментариев, дерево подхватывает секцию сразу, внешнее изменение перезагружает форму. 891 тест / 46 файлов; build 0 ошибок.
+
 ## Wave 40 — Formulas in exported books (shipped)
 
 - Общий сегментатор `splitMathSegments` в `semantic-markdown` (превью переведено на него с дифф-доказательством 12/12 — экран и экспорт не могут разойтись); HTML/PDF — KaTeX HTML через сентинельный проход (прецедент сносок), CSS со встроенными woff2 (~359КБ, только если в книге есть формулы); EPUB — MathML (без шрифтов, EPUB3; компромисс по читалкам задокументирован). Доказательство реальной сборкой sample-book. 872 tests. Идея «формулы как сутры» доведена от превью до готовой книги.

@@ -15,6 +15,7 @@ import buildRu from './ru/build.json';
 import bookConfigRu from './ru/book-config.json';
 import sourcesRu from './ru/sources.json';
 import entitiesRu from './ru/entities.json';
+import entityTypesRu from './ru/entity-types.json';
 import aiConfigRu from './ru/ai-config.json';
 import aiLogRu from './ru/ai-log.json';
 import aiModesRu from './ru/ai-modes.json';
@@ -55,7 +56,7 @@ const RU: LanguageInfo = {
 // carries its full `ai-focused-editor/<area>/...` key path (see i18n/README.md).
 const AREA_BUNDLES: unknown[] = [
   manuscriptTreeRu, menuRu,
-  createRu, buildRu, bookConfigRu, sourcesRu, entitiesRu,
+  createRu, buildRu, bookConfigRu, sourcesRu, entitiesRu, entityTypesRu,
   aiConfigRu, aiLogRu, aiModesRu, editorRu, doctorRu, welcomeRu,
   workspaceRu, knowledgeRu, gitRu, chatCapabilitiesRu, chatContextRu, officeRu,
   excalidrawRu, mobileRu, mcpRu, authRu

@@ -13,6 +13,7 @@ export * from './context-sets';
 export * from './diagram-spec';
 export * from './entity-mentions';
 export * from './entity-type-registry';
+export * from './entity-type-forms';
 export * from './excalidraw-canvas-ops';
 export * from './git-status-protocol';
 export * from './knowledge-templates';

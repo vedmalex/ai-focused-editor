@@ -250,8 +250,15 @@ export const DEFAULT_AUTHOR_FIELDS: readonly EntityFieldDescriptor[] = [
 ];
 
 /** Default codicon for an author type that declares no `icon` / `sectionIcon`. */
-const DEFAULT_AUTHOR_ICON = 'codicon codicon-symbol-misc';
-const DEFAULT_AUTHOR_SECTION_ICON = 'codicon codicon-symbol-namespace';
+export const DEFAULT_AUTHOR_ICON = 'codicon codicon-symbol-misc';
+export const DEFAULT_AUTHOR_SECTION_ICON = 'codicon codicon-symbol-namespace';
+
+/**
+ * The i18n key prefix every entity field label uses. Exposed so the form editor
+ * can reproduce the SAME default `labelKey` ({@link parseAuthorFields} uses this
+ * exact prefix) when it round-trips author-declared field schemas.
+ */
+export const ENTITY_FIELD_LABEL_KEY_PREFIX_EXPORT = ENTITY_FIELD_LABEL_KEY_PREFIX;
 
 /** Machine-readable code for each kind of `entities/types.yaml` validation problem. */
 export type EntityTypeProblemCode =

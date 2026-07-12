@@ -79,6 +79,9 @@
       "frontend": "lib/browser/ai-modes-editor-frontend-module"
     },
     {
+      "frontend": "lib/browser/entity-types-editor-frontend-module"
+    },
+    {
       "frontend": "lib/browser/book-config-editor-frontend-module"
     },
     {

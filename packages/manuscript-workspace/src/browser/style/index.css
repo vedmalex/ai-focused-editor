@@ -2868,3 +2868,327 @@ body.afe-writing-mode .lm-TabBar-toolbar .item {
     min-width: 16px;
   }
 }
+
+/* ---------- entity types form editor (entities/types.yaml) ---------- */
+
+.afe-entity-types-editor {
+  padding: 10px 14px;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.afe-entity-types-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.afe-entity-types-editor-header h3 {
+  margin: 0;
+}
+
+.afe-entity-types-editor-count {
+  display: inline-block;
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-badge-foreground);
+  background: var(--theia-badge-background);
+  border-radius: 8px;
+  padding: 0 8px;
+}
+
+.afe-entity-types-editor-section-title {
+  margin: 12px 0 4px;
+}
+
+.afe-entity-types-editor-builtins {
+  border-bottom: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  padding-bottom: 8px;
+}
+
+.afe-entity-types-editor-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 680px;
+}
+
+.afe-entity-types-editor-card {
+  border: 1px solid var(--theia-input-border, transparent);
+  border-radius: 4px;
+  background: var(--theia-editorWidget-background, transparent);
+}
+
+.afe-entity-types-editor-card.selected {
+  border-color: var(--theia-focusBorder);
+}
+
+.afe-entity-types-editor-card.has-error {
+  border-color: var(--theia-inputValidation-errorBorder, var(--theia-editorError-foreground));
+}
+
+.afe-entity-types-editor-card.readonly {
+  opacity: 0.92;
+}
+
+.afe-entity-types-editor-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.afe-entity-types-editor-card-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: var(--theia-foreground);
+  cursor: pointer;
+  text-align: left;
+  padding: 2px 4px;
+}
+
+.afe-entity-types-editor-card-icon {
+  opacity: 0.85;
+}
+
+.afe-entity-types-editor-card-id {
+  font-weight: 600;
+  font-family: var(--theia-code-font-family, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.afe-entity-types-editor-card-label {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.afe-entity-types-editor-badge {
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-badge-foreground);
+  background: var(--theia-badge-background);
+  border-radius: 8px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.afe-entity-types-editor-badge.origin {
+  border-left: 3px solid var(--theia-charts-green, rgba(56, 142, 60, 0.9));
+}
+
+.afe-entity-types-editor-badge.role {
+  border-left: 3px solid var(--theia-charts-blue, rgba(35, 109, 181, 0.9));
+}
+
+.afe-entity-types-editor-badge.kind {
+  border-left: 3px solid var(--theia-charts-purple, rgba(120, 83, 168, 0.9));
+}
+
+.afe-entity-types-editor-delete {
+  flex: 0 0 auto;
+}
+
+.afe-entity-types-editor-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 10px 12px;
+  border-top: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+}
+
+.afe-entity-types-editor-meta {
+  color: var(--theia-descriptionForeground);
+  font-family: var(--theia-code-font-family, monospace);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-entity-types-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.afe-entity-types-editor-field > span {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-entity-types-editor-required {
+  color: var(--theia-inputValidation-errorForeground, var(--theia-editorError-foreground));
+}
+
+.afe-entity-types-editor-field input,
+.afe-entity-types-editor-field select {
+  background: var(--theia-input-background);
+  color: var(--theia-input-foreground);
+  border: 1px solid var(--theia-input-border, transparent);
+  border-radius: 2px;
+  padding: 4px 6px;
+  outline: none;
+  font-family: inherit;
+}
+
+.afe-entity-types-editor-field input:focus,
+.afe-entity-types-editor-field select:focus {
+  border-color: var(--theia-focusBorder);
+}
+
+.afe-entity-types-editor-hint {
+  margin: 0;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-entity-types-editor-hint.warning {
+  color: var(--theia-inputValidation-warningForeground, var(--theia-editorWarning-foreground));
+}
+
+.afe-entity-types-editor-fieldset {
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  border-radius: 4px;
+  padding: 6px 10px 10px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.afe-entity-types-editor-fieldset legend {
+  padding: 0 4px;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-entity-types-editor-fields {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.afe-entity-types-editor-field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.afe-entity-types-editor-field-row.readonly {
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-entity-types-editor-field-row.pinned {
+  opacity: 0.95;
+}
+
+.afe-entity-types-editor-field-name,
+.afe-entity-types-editor-field-label {
+  flex: 1;
+  min-width: 100px;
+  background: var(--theia-input-background);
+  color: var(--theia-input-foreground);
+  border: 1px solid var(--theia-input-border, transparent);
+  border-radius: 2px;
+  padding: 3px 6px;
+  outline: none;
+  font-family: var(--theia-code-font-family, monospace);
+}
+
+.afe-entity-types-editor-field-name:focus,
+.afe-entity-types-editor-field-label:focus,
+.afe-entity-types-editor-field-kind:focus {
+  border-color: var(--theia-focusBorder);
+}
+
+.afe-entity-types-editor-field-kind {
+  background: var(--theia-input-background);
+  color: var(--theia-input-foreground);
+  border: 1px solid var(--theia-input-border, transparent);
+  border-radius: 2px;
+  padding: 3px 6px;
+  outline: none;
+}
+
+.afe-entity-types-editor-field-name:disabled,
+.afe-entity-types-editor-field-kind:disabled {
+  opacity: 0.6;
+}
+
+.afe-entity-types-editor-field-controls {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.afe-entity-types-editor-icon-button {
+  background: none;
+  border: none;
+  color: var(--theia-foreground);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 2px;
+}
+
+.afe-entity-types-editor-icon-button:hover:not(:disabled) {
+  background: var(--theia-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+
+.afe-entity-types-editor-icon-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.afe-entity-types-editor-add-field {
+  align-self: flex-start;
+}
+
+.afe-entity-types-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.afe-entity-types-editor-problems {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.afe-entity-types-editor-problem {
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-entity-types-editor-problem.error {
+  color: var(--theia-inputValidation-errorForeground, var(--theia-editorError-foreground));
+}
+
+.afe-entity-types-editor-empty,
+.afe-entity-types-editor-help {
+  max-width: 680px;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-entity-types-editor-help {
+  margin: 6px 0;
+}
