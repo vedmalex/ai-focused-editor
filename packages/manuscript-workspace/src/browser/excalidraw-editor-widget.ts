@@ -19,6 +19,19 @@ interface ExcalidrawImperativeApi {
   getSceneElements(): readonly unknown[];
   getAppState(): Record<string, unknown>;
   getFiles(): Record<string, unknown>;
+  updateScene(scene: { elements?: readonly unknown[]; appState?: Record<string, unknown> }): void;
+}
+
+/**
+ * The imperative-API surface the canvas-conveniences commands need: read the
+ * current selection + scene and push a replacement scene back. Exposed via
+ * {@link ExcalidrawEditorWidget.getApi} so the command contribution never
+ * re-imports Excalidraw or reaches into widget internals.
+ */
+export interface ExcalidrawCanvasApi {
+  getSceneElements(): readonly unknown[];
+  getAppState(): Record<string, unknown>;
+  updateScene(scene: { elements?: readonly unknown[]; appState?: Record<string, unknown> }): void;
 }
 interface ExcalidrawModule {
   Excalidraw: React.ComponentType<Record<string, unknown>>;
@@ -49,7 +62,17 @@ interface ExcalidrawModule {
     files: Record<string, unknown> | null;
     exportPadding?: number;
   }): Promise<SVGSVGElement>;
+  /**
+   * Turns a lightweight element "skeleton" (e.g. `{type:'text', x, y, text}`)
+   * into a fully-formed Excalidraw element, filling in ids, seeds, versions and
+   * binding metadata. The canvas-conveniences commands build their new elements
+   * through this so they never hand-fill `versionNonce`/`seed`.
+   */
+  convertToExcalidrawElements(skeleton: readonly Record<string, unknown>[]): unknown[];
 }
+
+/** Subset of {@link ExcalidrawModule} the canvas-conveniences commands consume. */
+export type ExcalidrawCanvasModule = Pick<ExcalidrawModule, 'convertToExcalidrawElements'>;
 
 /** Parsed `.excalidraw` scene passed to the component as `initialData`. */
 interface ExcalidrawSceneData {
@@ -279,6 +302,23 @@ export class ExcalidrawEditorWidget extends ReactWidget implements Navigatable, 
    */
   getExportModule(): ExcalidrawExportModule | undefined {
     return this.component;
+  }
+
+  /**
+   * The `convertToExcalidrawElements` helper from the already-resolved module,
+   * for building new elements in the canvas-conveniences commands.
+   */
+  getCanvasModule(): ExcalidrawCanvasModule | undefined {
+    return this.component;
+  }
+
+  /**
+   * The live imperative API (selection read + `updateScene`) once the component
+   * has mounted, or `undefined` before it is ready. Kept separate from
+   * {@link getExportModule} so the export accessors stay untouched.
+   */
+  getApi(): ExcalidrawCanvasApi | undefined {
+    return this.api;
   }
 
   /** Current scene snapshot for export, or `undefined` before the API is ready. */

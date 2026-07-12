@@ -4,6 +4,7 @@ import {
   Command,
   CommandContribution,
   CommandRegistry,
+  MenuContribution,
   MessageService
 } from '@theia/core/lib/common';
 import { nls } from '@theia/core/lib/common/nls';
@@ -29,6 +30,7 @@ import {
   ExcalidrawExportSource
 } from './excalidraw-editor-widget';
 import { ExcalidrawEditorOpenHandler } from './excalidraw-editor-open-handler';
+import { ExcalidrawCanvasOpsContribution } from './excalidraw-canvas-ops-contribution';
 
 type ExcalidrawExportFormat = 'png' | 'svg';
 
@@ -276,4 +278,9 @@ export default new ContainerModule(bind => {
   bind(ExcalidrawExportContribution).toSelf().inSingletonScope();
   bind(CommandContribution).toService(ExcalidrawExportContribution);
   bind(TabBarToolbarContribution).toService(ExcalidrawExportContribution);
+
+  bind(ExcalidrawCanvasOpsContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(ExcalidrawCanvasOpsContribution);
+  bind(MenuContribution).toService(ExcalidrawCanvasOpsContribution);
+  bind(TabBarToolbarContribution).toService(ExcalidrawCanvasOpsContribution);
 });
