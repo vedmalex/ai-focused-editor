@@ -282,6 +282,13 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 43 — Per-device theme override + iCloud sync recipe (shipped)
+
+- **Оверрайд темы на устройство** (запрос владельца с телефона): телефон и десктоп делят один backend, поэтому `workbench.colorTheme` — ОБЩАЯ настройка; смена темы на телефоне перекрасила бы и десктоп. Оверрайд живёт в localStorage конкретного браузера и применяется через `ThemeService.setCurrentTheme(id, false)` — общие настройки не трогаются. Три входа: `?theme=<id|dark|light>` в URL (применился, запомнился, параметр вычищается из адреса), автоследование `prefers-color-scheme: dark` (только если тема не выбрана явно в общих настройках), команда «Тема на этом устройстве…» в меню Manuscript (QuickPick всех тем + «Как в настройках (сбросить)»). Оверрайд ре-ассертится, если общая настройка пытается его перебить (guard от циклов по id).
+- **Тайминг-ловушка поймана live-пробой**: бандл-темы регистрируются в onStart другого контрибьютора — параметр читается синхронно (до перезаписи URL), а резолв откладывается до `started_contributions`. Проба: dracula по параметру + персистентность + изоляция контекстов (второе «устройство» осталось на solarized-light) — зелёная.
+- `common/device-theme.ts` resolveDeviceTheme (18 тестов): param > stored > system; stale-id чистится; тёмная система не перебивает явный выбор пользователя.
+- **docs/obsidian.md: вариант iCloud Drive** — vault в контейнере Obsidian (`iCloud Drive/Obsidian`), на Mac та же папка `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/<книга>` открывается студией напрямую; git — опциональный слой версий на Mac с честной оговоркой про конфликт-копии `.git` в iCloud. 925 тестов / 48 файлов.
+
 ## Wave 42 — Full entity card preview on hover (shipped)
 
 - **Hover над тегом `[[kind:id|label]]` показывает карточку целиком**: заголовок «Название — Тип · id», затем ВСЕ поля по схеме типа (списки через запятую, длинные тексты абзацем с обрезкой ~280 знаков по границе слова), неизвестные yaml-ключи карточки тоже видны; внизу — кликабельная ссылка «Открыть карточку» (через существующий openTarget → открывается форм-редактор). Работает на всём диапазоне тега, включая ярлык (раньше кликабельной была только часть `[[kind:id`), и для авторских типов (проверено на sloka: русские Summary/Notes рендерятся).

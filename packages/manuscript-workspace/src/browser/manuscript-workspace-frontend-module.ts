@@ -108,6 +108,7 @@ import {
   ManuscriptWorkspaceMenuContribution
 } from './manuscript-workspace-contribution';
 import { WritingModeContribution } from './writing-mode-contribution';
+import { DeviceThemeContribution } from './device-theme-contribution';
 
 function createManuscriptTreeContainer(parent: interfaces.Container): Container {
   return createTreeContainer(parent, {
@@ -256,4 +257,8 @@ export default new ContainerModule(bind => {
   bind(MenuContribution).toService(WritingModeContribution);
   bind(TabBarToolbarContribution).toService(WritingModeContribution);
   bind(FrontendApplicationContribution).toService(WritingModeContribution);
+  bind(DeviceThemeContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(DeviceThemeContribution);
+  bind(MenuContribution).toService(DeviceThemeContribution);
+  bind(FrontendApplicationContribution).toService(DeviceThemeContribution);
 });
