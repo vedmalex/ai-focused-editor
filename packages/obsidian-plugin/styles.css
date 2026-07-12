@@ -79,10 +79,15 @@
   margin-bottom: 4px;
 }
 
+.afe-entities-details > summary {
+  cursor: pointer;
+  list-style: revert;
+}
+
 .afe-entities-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 0 0 16px;
 }
 
 .afe-entities-row {
@@ -101,6 +106,141 @@
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- entities tree (kind → entities → mentions) ---------- */
+
+.afe-entities-groups {
+  margin-top: 4px;
+}
+
+.afe-kind-details > summary {
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.afe-kind-details > summary:hover {
+  background: var(--background-modifier-hover);
+}
+
+.afe-entity-item {
+  padding: 0;
+}
+
+.afe-entity-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.afe-entity-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.afe-entity-label {
+  flex: 1;
+  color: var(--text-normal);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.afe-mention-badge {
+  min-width: 18px;
+  text-align: center;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.afe-mention-badge:hover {
+  color: var(--text-normal);
+}
+
+.afe-mention-list {
+  padding: 2px 4px 4px 20px;
+}
+
+.afe-mention-list.is-hidden {
+  display: none;
+}
+
+.afe-mention-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: var(--font-ui-smaller);
+}
+
+.afe-mention-spot {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.afe-mention-spot:hover {
+  background: var(--background-modifier-hover);
+}
+
+.afe-mention-loc {
+  color: var(--text-accent);
+  font-size: var(--font-ui-smaller);
+  font-family: var(--font-monospace);
+}
+
+.afe-mention-preview {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- tag cloud ---------- */
+
+.afe-cloud {
+  margin: 4px 0 8px;
+}
+
+.afe-cloud-title {
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.afe-cloud-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  line-height: 1.4;
+}
+
+.afe-cloud-tag {
+  cursor: pointer;
+  color: var(--text-normal);
+  border-bottom: 1px solid var(--afe-kind-color, transparent);
+  line-height: 1.1;
+}
+
+.afe-cloud-tag:hover {
+  color: var(--afe-kind-color, var(--text-accent));
+}
+
+.afe-cloud-step-1 { font-size: var(--font-ui-smaller); opacity: 0.75; }
+.afe-cloud-step-2 { font-size: var(--font-ui-small); }
+.afe-cloud-step-3 { font-size: var(--font-ui-medium); font-weight: 600; }
+.afe-cloud-step-4 { font-size: var(--font-ui-large); font-weight: 700; }
 
 /* ---------- kind accent dots ---------- */
 
@@ -148,6 +288,59 @@
   opacity: 0.85;
 }
 
+/* ---------- Live Preview semantic tags ---------- */
+
+/* A `mark` decoration styling the raw `[[kind:id|label]]` run in the CM6 editor
+   when the caret is not on it. Kept lighter than reading mode: an accent
+   underline + dot marker via ::before, no layout shift on the source text. */
+.afe-lp-tag {
+  border-radius: 3px;
+  padding: 0 1px;
+  cursor: default;
+  border-bottom: 1px solid var(--afe-kind-color, var(--text-accent));
+}
+
+.afe-lp-tag::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 3px;
+  border-radius: 50%;
+  vertical-align: baseline;
+  background: var(--afe-kind-color, var(--text-muted));
+}
+
+.afe-lp-tag:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* ---------- shared full-card hover popover ---------- */
+
+.afe-hover-card {
+  position: fixed;
+  z-index: var(--layer-popover, 30);
+  max-width: 380px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s, 0 2px 8px rgba(0, 0, 0, 0.25));
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  pointer-events: auto;
+}
+
+.afe-hover-card p:first-child {
+  margin-top: 0;
+}
+
+.afe-hover-card p:last-child {
+  margin-bottom: 0;
+}
+
 /* ---------- autocomplete + search suggestions ---------- */
 
 .afe-suggest-item {
@@ -165,6 +358,25 @@
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   font-family: var(--font-monospace);
+}
+
+/* ---------- citation autocomplete + excerpt picker ---------- */
+
+.afe-cite-marker {
+  color: var(--text-accent);
+  font-weight: 700;
+  font-family: var(--font-monospace);
+}
+
+.afe-excerpt-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.afe-excerpt-text {
+  color: var(--text-normal);
+  white-space: normal;
 }
 
 /* ---------- YAML card view ---------- */

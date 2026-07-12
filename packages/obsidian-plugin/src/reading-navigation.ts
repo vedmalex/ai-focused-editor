@@ -16,6 +16,7 @@
 import type { MarkdownPostProcessorContext } from 'obsidian';
 import type { BookContext } from './book-context';
 import type { EntityIndexEntry } from './core/book-model';
+import type { HoverPreview } from './hover-preview';
 import { cssKind } from './manuscript-view';
 
 /** Split an internal-link href into a semantic `<kind>:<id>`, or null. */
@@ -38,7 +39,9 @@ export class SemanticReadingProcessor {
   constructor(
     private readonly books: BookContext,
     private readonly openCard: (entry: EntityIndexEntry) => void,
-    private readonly onMissing: (sourcePath: string, kind: string, id: string) => void
+    private readonly onMissing: (sourcePath: string, kind: string, id: string) => void,
+    /** Shared hover popover; omitted on mobile (no pointer hover). */
+    private readonly hover?: HoverPreview
   ) {}
 
   /** Bound as `plugin.registerMarkdownPostProcessor(this.process)`. */
@@ -92,6 +95,13 @@ export class SemanticReadingProcessor {
       span.addClass('afe-tag-missing');
       span.setAttr('aria-label', `${parsed.kind}: ${parsed.id} (missing)`);
       span.onClickEvent(() => this.onMissing(sourcePath, parsed.kind, parsed.id));
+    }
+
+    if (this.hover) {
+      span.addEventListener('mouseover', () =>
+        this.hover!.show(span.getBoundingClientRect(), sourcePath, parsed.kind, parsed.id)
+      );
+      span.addEventListener('mouseout', () => this.hover!.hide());
     }
     return span;
   }

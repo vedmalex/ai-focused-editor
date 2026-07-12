@@ -12,12 +12,16 @@
  * `manifest.yaml` / `entities/**` file changes, and every open panel re-renders.
  */
 
-import { Plugin, Notice, TFile, MarkdownView, Menu, debounce, type Editor } from 'obsidian';
+import { Plugin, Notice, TFile, MarkdownView, Menu, Platform, debounce, type Editor } from 'obsidian';
 import { BookContext, DEFAULT_SETTINGS, type AfeSettings } from './book-context';
 import { createTranslator, resolveLang, type Translator } from './i18n';
 import { ManuscriptView, MANUSCRIPT_VIEW_TYPE, MANUSCRIPT_VIEW_ICON } from './manuscript-view';
 import { SemanticTagSuggest } from './tag-suggest';
+import { CitationSuggest } from './cite-suggest';
+import { ExcerptInsertModal } from './excerpt-insert-modal';
 import { SemanticReadingProcessor } from './reading-navigation';
+import { HoverPreview } from './hover-preview';
+import { createLivePreviewExtension } from './live-preview';
 import { EntitySearchModal } from './entity-search-modal';
 import { CreateEntityModal } from './create-entity-modal';
 import { YamlCardView, YAML_CARD_VIEW_TYPE } from './yaml-card-view';
@@ -48,14 +52,41 @@ export class AfeCompanionPlugin extends Plugin {
 
     // --- Autocomplete ---
     this.registerEditorSuggest(new SemanticTagSuggest(this.app, this.books));
+    this.registerEditorSuggest(new CitationSuggest(this.app, this.books));
+
+    // --- Insert an excerpt as a blockquote at the caret ---
+    this.addCommand({
+      id: 'afe-insert-excerpt',
+      name: this.t('command.insertExcerpt'),
+      editorCallback: (editor: Editor) => {
+        const sourcePath = this.app.workspace.getActiveViewOfType(MarkdownView)?.file?.path ?? '';
+        if (!ExcerptInsertModal.openFor(this.app, this.books, editor, sourcePath, this.t)) {
+          new Notice(this.t('excerpt.none'));
+        }
+      }
+    });
+
+    // --- Full-card hover (desktop only; mobile has no pointer hover) ---
+    const hover = Platform.isMobile ? undefined : new HoverPreview(this.app, this.books, this.t, this);
 
     // --- Reading-mode navigation ---
     const processor = new SemanticReadingProcessor(
       this.books,
       entry => this.openCard(entry),
-      (sourcePath, kind, id) => this.offerCreate(sourcePath, kind, id)
+      (sourcePath, kind, id) => this.offerCreate(sourcePath, kind, id),
+      hover
     );
     this.registerMarkdownPostProcessor(processor.process);
+
+    // --- Live Preview decorations ---
+    this.registerEditorExtension(
+      createLivePreviewExtension({
+        books: this.books,
+        hover,
+        openCard: entry => void this.openCard(entry),
+        onMissing: (sourcePath, kind, id) => this.offerCreate(sourcePath, kind, id)
+      })
+    );
 
     // --- Editor command + context menu: open the card under the cursor ---
     this.addCommand({
@@ -144,7 +175,13 @@ export class AfeCompanionPlugin extends Plugin {
   }
 
   private isBookStructureFile(path: string): boolean {
-    return /(?:^|\/)manifest\.yaml$/.test(path) || /(?:^|\/)entities\/.+\.(ya?ml)$/.test(path) || /(?:^|\/)metadata\.yaml$/.test(path);
+    return (
+      /(?:^|\/)manifest\.yaml$/.test(path) ||
+      /(?:^|\/)entities\/.+\.(ya?ml)$/.test(path) ||
+      /(?:^|\/)metadata\.yaml$/.test(path) ||
+      /(?:^|\/)sources\/(?:citations\.yaml|excerpts\.jsonl)$/.test(path) ||
+      /(?:^|\/)content\/.+\.(md|markdown)$/.test(path)
+    );
   }
 
   private async reindex(): Promise<void> {

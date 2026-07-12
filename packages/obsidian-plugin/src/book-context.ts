@@ -21,6 +21,8 @@ import {
   type EntityIndexEntry,
   type RawEntityFile
 } from './core/book-model';
+import { parseCitations, parseExcerpts, type Citation, type Excerpt } from './core/citations';
+import { buildMentionIndex, type MentionIndex, type ScannedFile } from './core/entity-mentions';
 
 export interface AfeSettings {
   /** Register the custom entity-card view for `.yaml`/`.yml` (vault-wide). */
@@ -46,6 +48,12 @@ export interface LoadedBook {
   types: EffectiveEntityType[];
   typeProblems: EntityTypeProblem[];
   entities: EntityIndexEntry[];
+  /** Citations indexed from `sources/citations.yaml`. */
+  citations: Citation[];
+  /** Excerpts indexed from `sources/excerpts.jsonl`. */
+  excerpts: Excerpt[];
+  /** Mention index over `content/**` prose, cached per reload. */
+  mentions: MentionIndex;
 }
 
 function joinRoot(root: string, relative: string): string {
@@ -127,7 +135,31 @@ export class BookContext {
     const meta = metaText ? extractBookMeta(safeYaml(metaText)) : {};
     const title = meta.title ?? (root ? humanizeFilename(root) : 'Book');
 
-    return { root, title, chapters, types, typeProblems: problems, entities: buildEntityIndex(rawEntities, types) };
+    const citations = parseCitations(await this.readRelative(root, 'sources/citations.yaml'));
+    const excerpts = parseExcerpts(await this.readRelative(root, 'sources/excerpts.jsonl'));
+
+    // Scan `content/**/*.md` prose once per reload to build the mention index the
+    // panel + cloud read; this is the only per-reload full-text pass.
+    const contentPrefix = joinRoot(root, 'content/');
+    const scanned: ScannedFile[] = [];
+    for (const file of files) {
+      if ((file.extension !== 'md' && file.extension !== 'markdown') || !file.path.startsWith(contentPrefix)) {
+        continue;
+      }
+      scanned.push({ path: file.path, text: await this.read(file) });
+    }
+
+    return {
+      root,
+      title,
+      chapters,
+      types,
+      typeProblems: problems,
+      entities: buildEntityIndex(rawEntities, types),
+      citations,
+      excerpts,
+      mentions: buildMentionIndex(scanned)
+    };
   }
 
   private async readRelative(root: string, relative: string): Promise<string | undefined> {
