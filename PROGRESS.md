@@ -282,6 +282,18 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 36 — Doctor: entity discovery (shipped)
+
+- Доктор восстанавливает базу сущностей по тексту: теги `[[kind:id]]` без карточки → исправление «создать карточку» (имя из самой частой метки тегов, счётчик упоминаний и первый файл в описании); карточки-сироты и неизвестные типы тегов (`[[spell:…]]` — задел под авторские типы) — справочные находки; «голые» `[[id]]` считаются ссылками, но фиксов не порождают. Полнотекстовый однопроходный скан с лимитом 1 МБ/файл. 752 tests.
+
+## Wave 35 — Excalidraw relations map with click navigation (shipped)
+
+- «Карта связей → Excalidraw»: из графа со-встречаемости строится `sources/relations-map.excalidraw` (кластеры по типам из реестра, подписи, стрелки); каждый узел несёт `afe-entity://kind/id`, и `onLinkOpen` редактора открывает карточку — работает в любой диаграмме (аналог element-links obsidian-плагина). Перегенерация append-only по стабильным id: ручная раскладка неприкосновенна, идемпотентно, удалённые сущности докладываются. 19 тестов билдера.
+
+## Wave 34 — Entity type registry, stage 1 (shipped)
+
+- `BASE_ENTITY_TYPES` как данные (id, тег, папка, метка, секция, иконки, схема полей формы); все хардкоды типов — протокол, карты создания, секции, навигация `char→character`, автодополнение/декорации, иконки дерева, сканы node-сервисов — деривируются из реестра. Ноль изменений поведения доказан нетронутым тестовым набором (только +21 тест реестра). Фундамент этапов 2–4: schema-форма, авторские типы (`entities/types.yaml`), obsidian-совместимые ссылки.
+
 ## Wave 33 — Book skills UI (shipped)
 
 - Theia's @theia/ai-core already discovers `<book>/.prompts/skills/<slug>/SKILL.md` (verified live: `getSkills()` → `[style-guide]`, and `{{skill:…}}` resolves in chat). This wave adds the authoring UI so skills are as first-class as other artifacts: a **Skills** section in the manuscript tree (own curated scan of `.prompts/skills`, label from frontmatter name, opens `SKILL.md`; verified live «Skills (1)» → style-guide) and a **New Skill…** command (name + optional description → seeded `SKILL.md` with a `{{skill:slug}}` starter). 696 tests.
