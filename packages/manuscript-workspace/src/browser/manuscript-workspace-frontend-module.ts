@@ -70,10 +70,14 @@ import { ManuscriptContextVariableContribution } from './manuscript-context-vari
 import { ChatContextActionsContribution } from './chat-context-actions-contribution';
 import { ManuscriptChatAgentContribution } from './manuscript-chat-agent-contribution';
 import {
+  ManuscriptCreateDiagramTool,
+  ManuscriptCreateEntityTool,
   ManuscriptFindEntitiesTool,
   ManuscriptGetChapterTool,
-  ManuscriptListChaptersTool
+  ManuscriptListChaptersTool,
+  ManuscriptWriteNoteTool
 } from './manuscript-tools-contribution';
+import { DiagramAuthorPromptFragmentContribution } from './diagram-author-prompt-fragment-contribution';
 import { AiHistoryService } from './ai-history-service';
 import { AiRequestLogService } from './ai-request-log-service';
 import { MarkdownLanguageContribution } from './markdown-language-contribution';
@@ -191,6 +195,11 @@ export default new ContainerModule(bind => {
   bindToolProvider(ManuscriptFindEntitiesTool, bind);
   bindToolProvider(ManuscriptListChaptersTool, bind);
   bindToolProvider(ManuscriptGetChapterTool, bind);
+  bindToolProvider(ManuscriptCreateEntityTool, bind);
+  bindToolProvider(ManuscriptWriteNoteTool, bind);
+  bindToolProvider(ManuscriptCreateDiagramTool, bind);
+  bind(DiagramAuthorPromptFragmentContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(DiagramAuthorPromptFragmentContribution);
   bind(WidgetFactory).toDynamicValue(ctx => ({
     id: ManuscriptTreeWidget.ID,
     createWidget: () => createManuscriptTreeContainer(ctx.container).get(ManuscriptTreeWidget)

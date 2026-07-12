@@ -36,6 +36,11 @@ export class ManuscriptChatAgentContribution implements FrontendApplicationContr
         '~{manuscript_find_entities}',
         '~{manuscript_list_chapters}',
         '~{manuscript_get_chapter}',
+        'You can also create book artifacts on request (the author enables these per session):',
+        '~{manuscript_create_entity}',
+        '~{manuscript_write_note}',
+        '~{manuscript_create_diagram}',
+        'Prefer a diagram for relations/structure and a note for prose or formulas ($$...$$ KaTeX).',
         'Never claim to have changed files unless a tool or explicit command has actually done it.',
         'When proposing text edits, explain the rationale briefly and keep changes inspectable.'
       ].join('\n'),

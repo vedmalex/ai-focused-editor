@@ -80,7 +80,25 @@
       "var-note-label": "Заметка базы знаний",
       "var-note-description": "Одна заметка (Markdown или YAML) из knowledge/ или ai/ по пути относительно рабочей области (#note:knowledge/plans/outline.md).",
       "var-note-arg-path": "Путь относительно рабочей области в knowledge/ или ai/, например knowledge/plans/outline.md.",
-      "agent-description": "ИИ-агент для писателей: редактирование рукописи, семантический Markdown, сущности проекта и рецензирование с учётом источников."
+      "var-citation-label": "Цитата",
+      "var-citation-description": "Одна запись цитаты по идентификатору (#citation:smith2020) — её заголовок, источник и заметка плюс связанные с ней выдержки из источников.",
+      "var-citation-arg-id": "Идентификатор цитаты из sources/citations.yaml, например smith2020.",
+      "var-excerpt-label": "Выдержка из источника",
+      "var-excerpt-description": "Одна выдержка из источника по идентификатору (#excerpt:ex-12) — её полный текст, заметка, источник и обратная ссылка на рукопись.",
+      "var-excerpt-arg-id": "Идентификатор выдержки из sources/excerpts.jsonl, например ex-12.",
+      "var-diagram-label": "Диаграмма",
+      "var-diagram-description": "Диаграмма Excalidraw по пути относительно рабочей области (#diagram:sources/relations-map.excalidraw), представленная как текст: узлы, ссылки на сущности и связи.",
+      "var-diagram-arg-path": "Путь к файлу .excalidraw относительно рабочей области, например sources/relations-map.excalidraw.",
+      "agent-description": "ИИ-агент для писателей: редактирование рукописи, семантический Markdown, сущности проекта и рецензирование с учётом источников.",
+      "tool-create-entity-name": "Создать сущность",
+      "tool-create-entity-description": "Создаёт карточку сущности базы знаний (персонаж, термин, артефакт или локация) в виде файла entities/<каталог>/<id>.yaml. Идентификатор по умолчанию — слаг из имени (кириллица транслитерируется). Не перезаписывает существующую карточку. Возвращает путь относительно рабочей области.",
+      "tool-write-note-name": "Записать заметку",
+      "tool-write-note-description": "Создаёт заметку Markdown в knowledge/<категория>/<слаг>.md (слаг выводится из заголовка, добавляется уникальный суффикс, существующая заметка не перезаписывается). Необязательная категория — одна из: plans, questions, summaries (без категории — корень knowledge/). В тело можно вставлять формулы как $$...$$ (отображаются через KaTeX). Возвращает путь относительно рабочей области.",
+      "tool-create-diagram-name": "Создать диаграмму",
+      "tool-create-diagram-description": "Строит диаграмму Excalidraw по структурированному описанию сцены и сохраняет её в sources/<слаг>.excalidraw (с уникальным суффиксом). Формат spec: { nodes: [{ id, label, entity?: { kind, id } }], edges?: [{ from, to, label? }], texts?: [{ text, x?, y? }] }. Узлы — прямоугольники на автоматической сетке; рёбра — стрелки между центрами узлов; узел с entity ссылается на карточку сущности. Возвращает путь относительно рабочей области.",
+      "diagram-author-fragment-name": "Автор диаграмм и формул",
+      "diagram-author-fragment-description": "Учит агента строить диаграммы Excalidraw по структурированному описанию и записывать формулы в виде KaTeX.",
+      "diagram-author-fragment-command": "Вставить инструкцию по созданию диаграмм и формул"
     }
   }
 }
