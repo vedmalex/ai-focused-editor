@@ -307,6 +307,8 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 
 ## Backlog (queued)
 
+8. **Формулы в markdown (KaTeX)** (owner intake 2026-07-12; идея: философские мысли, выраженные формулами — как сутры). Не в спеке GFM, но стандартная надстройка: `$...$`/`$$...$$` через KaTeX. План (разведан): (а) превью — KaTeX auto-render через существующий onRender DOM-хук (тот же паттерн, что SVG-патчинг) + self-host шрифтов KaTeX (как excalidraw-assets, офлайн); альтернатива — сабкласс Theia `MarkdownRendererImpl` через штатный `markdownItPlugin()` хук; (б) редактор — подсветка `$...$` в Monarch-токенизаторе (мелочь); (в) экспорт — настоящая цена: PDF через Chrome возьмёт KaTeX HTML+CSS, EPUB лучше с MathML-выводом KaTeX (средняя работа). Obsidian-спутник рендерит `$...$` из коробки (MathJax) — офлайн-цикл совместим сразу.
+
 0. **Electron smoke pipeline flake — largely solved**: dev-mode backend fork collided with Playwright's debug argv → the smoke runs `NODE_ENV=production` and is green standalone, after builds, and via `bun run`. A residual in-pipeline-only failure (window dies with ZERO main output, only inside the full `verify:full` chain) still appears sporadically; retries + output capture stay in place to characterize it.
 
 1. Full LSP transport if live validation ever needs cross-file incremental analysis (current backend-RPC path covers the active-document case).
