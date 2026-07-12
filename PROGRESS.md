@@ -282,6 +282,11 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 32 — Excalidraw canvas conveniences (shipped)
+
+- Selection-manipulation commands inspired by the obsidian excalidraw plugin's ea-scripts: **Split Text into Lines** (owner-requested), Merge Text Elements, Connect with Arrow, Box Selected, Text to Sticky Note. Each reads the active editor's selection via the imperative API, transforms it with pure helpers (`common/excalidraw-canvas-ops.ts`, 22 tests), builds elements with `convertToExcalidrawElements`, and pushes `updateScene`.
+- A **Canvas Actions…** toolbar button (wand) opens a quick pick of the ops — reachable from the canvas since the Excalidraw canvas has no Theia context menu (verified the button renders live). 691 tests.
+
 ## Wave 31 — Excalidraw completion (shipped)
 
 - **Dirty guard**: opening a diagram no longer marks it dirty (scene-version baseline via `getSceneVersion`; dirty only on real divergence) — autoSave stops rewriting the file on open (verified live: DIRTY-ON-OPEN no).
