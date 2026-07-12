@@ -16,7 +16,10 @@ import {
   AiModeOrigin,
   AiModeRegistryBackendService,
   AiModeRegistrySnapshot,
+  EffectiveEntityType,
   layerModes,
+  mergeEntityTypes,
+  parseEntityTypesYaml,
   ResolvedAiMode,
   CitationEntry,
   NarrativeEntity,
@@ -32,19 +35,33 @@ import {
 } from '../common';
 
 interface EntityDirectoryConfig {
-  kind: NarrativeEntityKind;
+  /**
+   * The entity kind id. Built-ins are the base literals; author (`book`-origin)
+   * types widen this to an arbitrary string at RUNTIME. It is stored on
+   * {@link NarrativeEntity.kind} via a cast at the snapshot boundary.
+   */
+  kind: string;
+  /** `entities/<dir>` scan path. */
   directory: string;
-  labelField: 'name' | 'term';
+  /** YAML property key holding the display label (`name` for most, `term` for terms). */
+  labelField: string;
 }
 
-// Derived from the single-source entity-type registry: kind id, the
-// `entities/<dir>` scan path, and the YAML label key (`name`, or `term` for
-// terms). Byte-identical to the previous inline table.
-const ENTITY_DIRECTORIES: EntityDirectoryConfig[] = BASE_ENTITY_TYPES.map(type => ({
-  kind: type.id,
-  directory: `entities/${type.directory}`,
-  labelField: type.fields.find(field => field.role === 'label')?.name === 'term' ? 'term' : 'name'
-}));
+/** Workspace-relative path of the author entity-type declaration file. */
+const ENTITY_TYPES_PATH = 'entities/types.yaml';
+
+/**
+ * Build the effective per-directory scan configs for a resolved entity-type
+ * list (built-in + author). Each config points at `entities/<dir>` and reads
+ * the type's `role: 'label'` field as the display-label YAML key.
+ */
+function entityDirectoryConfigs(types: readonly EffectiveEntityType[]): EntityDirectoryConfig[] {
+  return types.map(type => ({
+    kind: type.id,
+    directory: `entities/${type.directory}`,
+    labelField: type.fields.find(field => field.role === 'label')?.name ?? 'name'
+  }));
+}
 
 interface CitationDocument {
   citations?: unknown;
@@ -240,14 +257,35 @@ export class NodeNarrativeEntityService implements NarrativeEntityBackendService
     const diagnostics: WorkspaceDiagnostic[] = [];
     const entities: NarrativeEntity[] = [];
 
-    for (const config of ENTITY_DIRECTORIES) {
+    // STAGE 2: load author-declared entity types and walk the EFFECTIVE
+    // directory list (built-in dirs + author dirs). types.yaml lives under
+    // entities/, so the frontend's existing `/entities/` file watcher already
+    // triggers a rescan when it changes.
+    const typesPath = join(rootPath, ENTITY_TYPES_PATH);
+    const typesText = await readTextIfExists(typesPath);
+    const { types: authorTypes, problems: typeProblems } = parseEntityTypesYaml(typesText ?? '');
+    const effectiveEntityTypes = mergeEntityTypes(BASE_ENTITY_TYPES, authorTypes);
+
+    const typesUri = FileUri.create(typesPath).toString();
+    for (const problem of typeProblems) {
+      diagnostics.push({
+        severity: 'warning',
+        source: 'entity-types',
+        uri: typesUri,
+        message: `entities/types.yaml: ${problem.message}`
+      });
+    }
+
+    for (const config of entityDirectoryConfigs(effectiveEntityTypes)) {
       entities.push(...await this.readEntityDirectory(rootPath, config, diagnostics));
     }
 
     return {
       rootUri: FileUri.create(rootPath).toString(),
       entities,
-      diagnostics
+      diagnostics,
+      effectiveEntityTypes,
+      typeProblems
     };
   }
 
@@ -327,7 +365,10 @@ export class NodeNarrativeEntityService implements NarrativeEntityBackendService
     const id = asString(document.id) || fileName.replace(/\.(ya?ml)$/i, '');
     const label = asString(document[config.labelField]) || id;
     return {
-      kind: config.kind,
+      // Author (`book`-origin) kinds are arbitrary strings at runtime; the
+      // declared union is kept for base-consumer ergonomics (see the
+      // NarrativeEntity.kind seam note).
+      kind: config.kind as NarrativeEntityKind,
       id,
       label,
       path: toWorkspacePath(rootPath, filePath),

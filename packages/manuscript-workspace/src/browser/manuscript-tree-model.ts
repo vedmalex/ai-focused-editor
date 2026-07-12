@@ -16,7 +16,8 @@ import {
   SourceLibraryService
 } from '../common';
 import { parse } from 'yaml';
-import { buildAuthorMaterialsSections, type KnowledgeFileEntry, type SkillEntry } from '../common/author-materials';
+import { buildAuthorMaterialsSections, joinUri, type KnowledgeFileEntry, type SkillEntry } from '../common/author-materials';
+import { EntityTypeRegistryService } from './entity-type-registry-service';
 import { ManuscriptTreeItemFactory } from './manuscript-tree-item-factory';
 
 const AUTO_REFRESH_DELAY_MS = 300;
@@ -57,6 +58,9 @@ export class ManuscriptTreeModel extends TreeModelImpl {
 
   @inject(SourceLibraryService)
   protected readonly sourceLibrary!: SourceLibraryService;
+
+  @inject(EntityTypeRegistryService)
+  protected readonly entityTypeRegistry!: EntityTypeRegistryService;
 
   @inject(ManuscriptTreeItemFactory)
   protected readonly itemFactory!: ManuscriptTreeItemFactory;
@@ -105,6 +109,9 @@ export class ManuscriptTreeModel extends TreeModelImpl {
     this.currentSnapshot = manuscript;
     this.entitySnapshot = entities;
     this.sourceSnapshot = sources;
+    // Feed the dumb frontend registry from the fresh entity snapshot so
+    // consumers see author-declared types (and their validation problems).
+    this.entityTypeRegistry.update(entities?.effectiveEntityTypes, entities?.typeProblems);
     [this.knowledgeFiles, this.skillEntries] = await Promise.all([
       this.scanKnowledge(manuscript.rootUri),
       this.scanSkills(manuscript.rootUri)
@@ -153,9 +160,13 @@ export class ManuscriptTreeModel extends TreeModelImpl {
       citationsUri: this.citationsUri(),
       sources: this.sourceSnapshot?.items ?? [],
       knowledge: this.knowledgeFiles,
-      skills: this.skillEntries
+      skills: this.skillEntries,
+      effectiveEntityTypes: this.entitySnapshot?.effectiveEntityTypes,
+      typeProblems: this.entitySnapshot?.typeProblems
     });
-    this.root = this.itemFactory.createRoot(sections, manuscriptContent);
+    const rootUri = this.currentSnapshot?.rootUri;
+    const typesYamlUri = rootUri ? joinUri(rootUri, 'entities/types.yaml') : undefined;
+    this.root = this.itemFactory.createRoot(sections, manuscriptContent, { typesYamlUri });
   }
 
   protected async refreshEntities(): Promise<NarrativeEntitySnapshot | undefined> {

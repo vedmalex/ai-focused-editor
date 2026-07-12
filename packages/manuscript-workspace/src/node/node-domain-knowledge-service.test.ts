@@ -207,6 +207,55 @@ describe('NodeNarrativeEntityService', () => {
     const info = snapshot.diagnostics.find(diagnostic => diagnostic.message.includes('No term entity directory found'));
     expect(info?.severity).toBe('info');
   });
+
+  test('carries the built-in effective types when no types.yaml is present', async () => {
+    const snapshot = await service.getSnapshot(root);
+    expect(snapshot.effectiveEntityTypes?.map(type => type.id)).toEqual(['character', 'term', 'artifact', 'location']);
+    expect(snapshot.effectiveEntityTypes?.every(type => type.origin === 'built-in')).toBe(true);
+    expect(snapshot.typeProblems).toEqual([]);
+  });
+
+  test('loads author types from entities/types.yaml and scans their directories', async () => {
+    await fs.writeFile(join(root, 'entities/types.yaml'), [
+      '- id: faction',
+      '  label: Faction',
+      '  directory: factions',
+      ''
+    ].join('\n'));
+    await fs.mkdir(join(root, 'entities/factions'), { recursive: true });
+    await fs.writeFile(join(root, 'entities/factions/guild.yaml'), 'id: guild\nname: Merchants Guild\nsummary: Traders.\n');
+
+    const snapshot = await service.getSnapshot(root);
+
+    // The effective type list appends the author type tagged `book`.
+    const faction = snapshot.effectiveEntityTypes?.find(type => type.id === 'faction');
+    expect(faction?.origin).toBe('book');
+    expect(faction?.directory).toBe('factions');
+
+    // Its directory was scanned; the entity's runtime kind is the author id.
+    const guild = snapshot.entities.find(entity => entity.id === 'guild');
+    expect(guild).toBeDefined();
+    expect(guild!.kind).toBe('faction');
+    expect(guild!.label).toBe('Merchants Guild');
+    expect(guild!.summary).toBe('Traders.');
+    expect(guild!.path).toBe('entities/factions/guild.yaml');
+  });
+
+  test('surfaces types.yaml validation problems as warnings and in typeProblems', async () => {
+    await fs.writeFile(join(root, 'entities/types.yaml'), [
+      '- id: character',
+      '  label: Hijacked',
+      ''
+    ].join('\n'));
+
+    const snapshot = await service.getSnapshot(root);
+    expect(snapshot.typeProblems?.map(problem => problem.code)).toEqual(['reserved-id']);
+    const warning = snapshot.diagnostics.find(diagnostic => diagnostic.source === 'entity-types');
+    expect(warning?.severity).toBe('warning');
+    // The built-in character type is never overridden.
+    expect(snapshot.effectiveEntityTypes?.filter(type => type.id === 'character')).toHaveLength(1);
+    expect(snapshot.effectiveEntityTypes?.find(type => type.id === 'character')?.origin).toBe('built-in');
+  });
 });
 
 describe('NodeSourceLibraryService', () => {

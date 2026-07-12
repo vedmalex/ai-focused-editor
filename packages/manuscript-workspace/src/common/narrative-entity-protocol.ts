@@ -1,5 +1,9 @@
 import type { WorkspaceDiagnostic } from './manuscript-workspace-protocol';
-import type { NarrativeEntityKindFromRegistry } from './entity-type-registry';
+import type {
+  EffectiveEntityType,
+  EntityTypeProblem,
+  NarrativeEntityKindFromRegistry
+} from './entity-type-registry';
 
 export const NarrativeEntityService = Symbol('NarrativeEntityService');
 export const NarrativeEntityBackendService = Symbol('NarrativeEntityBackendService');
@@ -14,6 +18,13 @@ export const NarrativeEntityBackendServicePath = '/services/ai-focused-editor/na
 export type NarrativeEntityKind = NarrativeEntityKindFromRegistry;
 
 export interface NarrativeEntity {
+  /**
+   * STAGE 2 seam: the DECLARED type stays the built-in literal union so base
+   * consumers keep their ergonomics, but at RUNTIME this may hold any
+   * author-declared type id (a `book`-origin {@link EffectiveEntityType}). The
+   * node scanner casts author kinds through this type at the snapshot boundary;
+   * switch/equality consumers simply do not match unknown kinds.
+   */
   kind: NarrativeEntityKind;
   id: string;
   label: string;
@@ -37,6 +48,15 @@ export interface NarrativeEntitySnapshot {
   rootUri?: string;
   entities: NarrativeEntity[];
   diagnostics: WorkspaceDiagnostic[];
+  /**
+   * The EFFECTIVE entity types for this root — built-in types plus any valid
+   * author types declared in `entities/types.yaml` (STAGE 2 seam). Absent only
+   * on the no-workspace snapshot; consumers seed with the built-in set when it
+   * is undefined.
+   */
+  effectiveEntityTypes?: EffectiveEntityType[];
+  /** Validation problems found while parsing `entities/types.yaml`, if any. */
+  typeProblems?: EntityTypeProblem[];
 }
 
 export interface NarrativeEntityService {

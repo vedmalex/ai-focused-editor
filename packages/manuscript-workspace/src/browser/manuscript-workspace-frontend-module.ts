@@ -83,6 +83,7 @@ import { AiHistoryService } from './ai-history-service';
 import { AiRequestLogService } from './ai-request-log-service';
 import { MarkdownLanguageContribution } from './markdown-language-contribution';
 import { AiModePromptFragmentContribution } from './ai-mode-prompt-fragment-contribution';
+import { EntityTypeRegistryService } from './entity-type-registry-service';
 import { ManuscriptTreeItemFactory } from './manuscript-tree-item-factory';
 import { ManuscriptTreeLabelProvider } from './manuscript-tree-label-provider';
 import { ManuscriptTreeModel } from './manuscript-tree-model';
@@ -155,6 +156,7 @@ export default new ContainerModule(bind => {
   bind(ManuscriptWorkspaceService).to(BrowserManuscriptWorkspaceService).inSingletonScope();
   bind(NarrativeEntityService).to(BrowserNarrativeEntityService).inSingletonScope();
   bind(SourceLibraryService).to(BrowserSourceLibraryService).inSingletonScope();
+  bind(EntityTypeRegistryService).toSelf().inSingletonScope();
   bind(ManuscriptTreeItemFactory).toSelf().inSingletonScope();
   bind(ManuscriptTreeLabelProvider).toSelf().inSingletonScope();
   bind(ManuscriptAiContextAssembler).toSelf().inSingletonScope();
