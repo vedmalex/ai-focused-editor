@@ -15,9 +15,12 @@ import * as monaco from '@theia/monaco-editor-core';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import type {
+  CitationEntry,
   ManuscriptNode,
-  NarrativeEntity
+  NarrativeEntity,
+  SourceExcerpt
 } from '../common';
+import { summarizeExcalidrawScene } from '../common/diagram-summary';
 import {
   ManuscriptWorkspaceService,
   NarrativeEntityService,
@@ -36,6 +39,25 @@ import { ManuscriptAiContextAssembler } from './manuscript-ai-context-assembler'
 const MAX_CHAPTER_CHARS = 24000;
 const MAX_SOURCE_CHARS = 24000;
 const MAX_NOTE_CHARS = 24000;
+const MAX_DIAGRAM_CHARS = 16000;
+
+/** How many excerpts a `#citation` inlines before summarizing the remainder. */
+const MAX_CITATION_EXCERPTS = 12;
+
+/** Per-excerpt text budget when inlined under a `#citation`. */
+const MAX_CITATION_EXCERPT_CHARS = 1200;
+
+/** Full-text budget for a single `#excerpt`. */
+const MAX_EXCERPT_CHARS = 8000;
+
+/** Text-preview length for excerpt pickers/completions. */
+const EXCERPT_PREVIEW_CHARS = 100;
+
+/** Diagram extension the `#diagram` variable reads. */
+const DIAGRAM_EXTENSION = '.excalidraw';
+
+/** Standard book-level files offered under the picker's «Книга» category. */
+const BOOK_FILES = ['manifest.yaml', 'metadata.yaml'] as const;
 
 /**
  * Command that attaches a resolved context variable to the active chat session.
@@ -184,6 +206,63 @@ export const NOTE_CONTEXT_VARIABLE: AIContextVariable = {
   }]
 };
 
+export const CITATION_CONTEXT_VARIABLE: AIContextVariable = {
+  id: 'ai-focused-editor.citation-context',
+  name: 'citation',
+  label: nls.localize('ai-focused-editor/workspace/var-citation-label', 'Citation'),
+  description: nls.localize(
+    'ai-focused-editor/workspace/var-citation-description',
+    'One citation record by id (#citation:smith2020) — its title, source, and note plus the source excerpts tied to it.'
+  ),
+  iconClasses: ['fa', 'fa-quote-left'],
+  isContextVariable: true,
+  args: [{
+    name: 'id',
+    description: nls.localize(
+      'ai-focused-editor/workspace/var-citation-arg-id',
+      'Citation id from sources/citations.yaml, e.g. smith2020.'
+    )
+  }]
+};
+
+export const EXCERPT_CONTEXT_VARIABLE: AIContextVariable = {
+  id: 'ai-focused-editor.excerpt-context',
+  name: 'excerpt',
+  label: nls.localize('ai-focused-editor/workspace/var-excerpt-label', 'Source Excerpt'),
+  description: nls.localize(
+    'ai-focused-editor/workspace/var-excerpt-description',
+    'One source excerpt by id (#excerpt:ex-12) — its full text, note, source, and manuscript back-link.'
+  ),
+  iconClasses: ['fa', 'fa-indent'],
+  isContextVariable: true,
+  args: [{
+    name: 'id',
+    description: nls.localize(
+      'ai-focused-editor/workspace/var-excerpt-arg-id',
+      'Excerpt id from sources/excerpts.jsonl, e.g. ex-12.'
+    )
+  }]
+};
+
+export const DIAGRAM_CONTEXT_VARIABLE: AIContextVariable = {
+  id: 'ai-focused-editor.diagram-context',
+  name: 'diagram',
+  label: nls.localize('ai-focused-editor/workspace/var-diagram-label', 'Diagram'),
+  description: nls.localize(
+    'ai-focused-editor/workspace/var-diagram-description',
+    'An Excalidraw diagram by workspace-relative path (#diagram:sources/relations-map.excalidraw), summarized as text: nodes, entity links, and connections.'
+  ),
+  iconClasses: ['fa', 'fa-sitemap'],
+  isContextVariable: true,
+  args: [{
+    name: 'path',
+    description: nls.localize(
+      'ai-focused-editor/workspace/var-diagram-arg-path',
+      'Workspace-relative path of an .excalidraw file, e.g. sources/relations-map.excalidraw.'
+    )
+  }]
+};
+
 const ALL_VARIABLES = [
   MANUSCRIPT_CONTEXT_VARIABLE,
   CHAPTER_CONTEXT_VARIABLE,
@@ -192,7 +271,10 @@ const ALL_VARIABLES = [
   SOURCES_CONTEXT_VARIABLE,
   OUTLINE_CONTEXT_VARIABLE,
   SOURCE_CONTEXT_VARIABLE,
-  NOTE_CONTEXT_VARIABLE
+  NOTE_CONTEXT_VARIABLE,
+  CITATION_CONTEXT_VARIABLE,
+  EXCERPT_CONTEXT_VARIABLE,
+  DIAGRAM_CONTEXT_VARIABLE
 ];
 
 /**
@@ -256,6 +338,21 @@ export class ManuscriptContextVariableContribution implements AIVariableContribu
       NOTE_CONTEXT_VARIABLE,
       (model, position, match) => this.completeNote(model, position, match)
     );
+    service.registerArgumentPicker(CITATION_CONTEXT_VARIABLE, () => this.pickCitation());
+    service.registerArgumentCompletionProvider(
+      CITATION_CONTEXT_VARIABLE,
+      (model, position, match) => this.completeCitation(model, position, match)
+    );
+    service.registerArgumentPicker(EXCERPT_CONTEXT_VARIABLE, () => this.pickExcerpt());
+    service.registerArgumentCompletionProvider(
+      EXCERPT_CONTEXT_VARIABLE,
+      (model, position, match) => this.completeExcerpt(model, position, match)
+    );
+    service.registerArgumentPicker(DIAGRAM_CONTEXT_VARIABLE, () => this.pickDiagram());
+    service.registerArgumentCompletionProvider(
+      DIAGRAM_CONTEXT_VARIABLE,
+      (model, position, match) => this.completeDiagram(model, position, match)
+    );
   }
 
   canResolve(request: AIVariableResolutionRequest, _context: AIVariableContext): number {
@@ -296,6 +393,12 @@ export class ManuscriptContextVariableContribution implements AIVariableContribu
         return this.resolveSource(arg);
       case 'note':
         return this.resolveNote(arg);
+      case 'citation':
+        return this.resolveCitation(arg);
+      case 'excerpt':
+        return this.resolveExcerpt(arg);
+      case 'diagram':
+        return this.resolveDiagram(arg);
       default:
         return undefined;
     }
@@ -521,6 +624,105 @@ export class ManuscriptContextVariableContribution implements AIVariableContribu
     return NOTE_ALLOWED_EXTENSIONS.has(this.extensionOf(path));
   }
 
+  // --- #citation ------------------------------------------------------------
+
+  protected async resolveCitation(arg?: string): Promise<string> {
+    if (!arg) {
+      return 'Pass a citation id, e.g. #citation:smith2020';
+    }
+    const snapshot = await this.sourceLibrary.getSnapshot();
+    const citation = snapshot.citations.find(candidate => candidate.id === arg);
+    if (!citation) {
+      const known = snapshot.citations.map(candidate => candidate.id).join(', ');
+      return `No citation found for "${arg}".${known ? ` Known ids: ${known}` : ''}`;
+    }
+    const related = (snapshot.excerpts ?? []).filter(excerpt => excerpt.sourceId === citation.id);
+    const lines: string[] = [`# Citation: ${citation.id}`];
+    if (citation.title) {
+      lines.push(`Title: ${citation.title}`);
+    }
+    if (citation.source) {
+      lines.push(`Source: ${citation.source}`);
+    }
+    if (citation.path) {
+      lines.push(`File: ${citation.path}`);
+    }
+    if (citation.note) {
+      lines.push('', `Note: ${citation.note}`);
+    }
+    if (related.length > 0) {
+      lines.push('', `## Related excerpts (${related.length})`);
+      for (const excerpt of related.slice(0, MAX_CITATION_EXCERPTS)) {
+        lines.push(`- [${excerpt.id}] ${this.cap(excerpt.text, MAX_CITATION_EXCERPT_CHARS)}`);
+      }
+      if (related.length > MAX_CITATION_EXCERPTS) {
+        lines.push(`- …and ${related.length - MAX_CITATION_EXCERPTS} more`);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  // --- #excerpt -------------------------------------------------------------
+
+  protected async resolveExcerpt(arg?: string): Promise<string> {
+    if (!arg) {
+      return 'Pass an excerpt id, e.g. #excerpt:ex-12';
+    }
+    const snapshot = await this.sourceLibrary.getSnapshot();
+    const excerpt = (snapshot.excerpts ?? []).find(candidate => candidate.id === arg);
+    if (!excerpt) {
+      return `No excerpt found for "${arg}".`;
+    }
+    const lines: string[] = [`# Excerpt: ${excerpt.id}`];
+    if (excerpt.sourceId) {
+      lines.push(`Source: ${excerpt.sourceId}`);
+    }
+    if (excerpt.sourcePath) {
+      lines.push(`Source file: ${excerpt.sourcePath}`);
+    }
+    if (excerpt.targetPath) {
+      const anchor = excerpt.targetAnchor ? `#${excerpt.targetAnchor}` : '';
+      const line = excerpt.targetLine ? ` (line ${excerpt.targetLine})` : '';
+      lines.push(`Manuscript link: ${excerpt.targetPath}${anchor}${line}`);
+    }
+    if (excerpt.note) {
+      lines.push('', `Note: ${excerpt.note}`);
+    }
+    lines.push('', this.cap(excerpt.text, MAX_EXCERPT_CHARS));
+    return lines.join('\n');
+  }
+
+  // --- #diagram -------------------------------------------------------------
+
+  protected async resolveDiagram(arg?: string): Promise<string> {
+    if (!arg) {
+      return 'Pass a diagram path, e.g. #diagram:sources/relations-map.excalidraw';
+    }
+    if (arg.includes('..')) {
+      return `Diagram path escapes the workspace: ${arg}`;
+    }
+    if (this.extensionOf(arg) !== DIAGRAM_EXTENSION) {
+      return `#diagram only reads ${DIAGRAM_EXTENSION} files: ${arg}`;
+    }
+    const snapshot = await this.manuscriptWorkspace.getSnapshot();
+    if (!snapshot.rootUri) {
+      return 'Open a manuscript workspace folder first.';
+    }
+    let raw: string;
+    try {
+      raw = (await this.fileService.read(new URI(snapshot.rootUri).resolve(arg))).value;
+    } catch (error) {
+      return `Could not read diagram ${arg}: ${this.detail(error)}`;
+    }
+    let scene: unknown;
+    try {
+      scene = JSON.parse(raw);
+    } catch (error) {
+      return `Could not parse diagram ${arg}: ${this.detail(error)}`;
+    }
+    return summarizeExcalidrawScene(scene, { title: arg, maxChars: MAX_DIAGRAM_CHARS });
+  }
+
   // --- Argument pickers (paperclip / QuickPick) -----------------------------
 
   protected async pickChapter(): Promise<string | undefined> {
@@ -567,6 +769,42 @@ export class ManuscriptContextVariableContribution implements AIVariableContribu
     const picked = await this.quickInput.showQuickPick(
       notes.map(note => ({ label: note.label, description: note.path, value: note.path })),
       { placeholder: nls.localize('ai-focused-editor/chat-context/pick-note', 'Select a knowledge note') }
+    );
+    return picked?.value;
+  }
+
+  protected async pickCitation(): Promise<string | undefined> {
+    const citations = await this.collectCitations();
+    if (citations.length === 0) {
+      return undefined;
+    }
+    const picked = await this.quickInput.showQuickPick(
+      citations.map(citation => ({ label: citation.label, description: citation.id, value: citation.id })),
+      { placeholder: nls.localize('ai-focused-editor/chat-context/pick-citation', 'Select a citation') }
+    );
+    return picked?.value;
+  }
+
+  protected async pickExcerpt(): Promise<string | undefined> {
+    const excerpts = await this.collectExcerpts();
+    if (excerpts.length === 0) {
+      return undefined;
+    }
+    const picked = await this.quickInput.showQuickPick(
+      excerpts.map(excerpt => ({ label: excerpt.id, description: excerpt.preview, value: excerpt.id })),
+      { placeholder: nls.localize('ai-focused-editor/chat-context/pick-excerpt', 'Select a source excerpt') }
+    );
+    return picked?.value;
+  }
+
+  protected async pickDiagram(): Promise<string | undefined> {
+    const diagrams = await this.collectDiagrams();
+    if (diagrams.length === 0) {
+      return undefined;
+    }
+    const picked = await this.quickInput.showQuickPick(
+      diagrams.map(diagram => ({ label: diagram.label, description: diagram.path, value: diagram.path })),
+      { placeholder: nls.localize('ai-focused-editor/chat-context/pick-diagram', 'Select a diagram') }
     );
     return picked?.value;
   }
@@ -630,6 +868,51 @@ export class ManuscriptContextVariableContribution implements AIVariableContribu
       position,
       matchString,
       notes.map(note => ({ label: note.label, detail: note.path, value: note.path }))
+    );
+  }
+
+  protected async completeCitation(
+    model: monaco.editor.ITextModel,
+    position: monaco.Position,
+    matchString?: string
+  ): Promise<monaco.languages.CompletionItem[] | undefined> {
+    const citations = await this.collectCitations();
+    return this.toCompletionItems(
+      CITATION_CONTEXT_VARIABLE.name,
+      model,
+      position,
+      matchString,
+      citations.map(citation => ({ label: citation.label, detail: citation.id, value: citation.id }))
+    );
+  }
+
+  protected async completeExcerpt(
+    model: monaco.editor.ITextModel,
+    position: monaco.Position,
+    matchString?: string
+  ): Promise<monaco.languages.CompletionItem[] | undefined> {
+    const excerpts = await this.collectExcerpts();
+    return this.toCompletionItems(
+      EXCERPT_CONTEXT_VARIABLE.name,
+      model,
+      position,
+      matchString,
+      excerpts.map(excerpt => ({ label: excerpt.id, detail: excerpt.preview, value: excerpt.id }))
+    );
+  }
+
+  protected async completeDiagram(
+    model: monaco.editor.ITextModel,
+    position: monaco.Position,
+    matchString?: string
+  ): Promise<monaco.languages.CompletionItem[] | undefined> {
+    const diagrams = await this.collectDiagrams();
+    return this.toCompletionItems(
+      DIAGRAM_CONTEXT_VARIABLE.name,
+      model,
+      position,
+      matchString,
+      diagrams.map(diagram => ({ label: diagram.label, detail: diagram.path, value: diagram.path }))
     );
   }
 
@@ -706,6 +989,96 @@ export class ManuscriptContextVariableContribution implements AIVariableContribu
     return snapshot.items
       .filter(item => item.type === 'file')
       .map(item => ({ path: item.path, label: item.name }));
+  }
+
+  /** All citation records, as `{ id, label }` (label falls back to the id). */
+  async collectCitations(): Promise<{ id: string; label: string }[]> {
+    const snapshot = await this.sourceLibrary.getSnapshot();
+    return snapshot.citations.map((citation: CitationEntry) => ({
+      id: citation.id,
+      label: citation.title?.trim() || citation.id
+    }));
+  }
+
+  /** All source excerpts, as `{ id, preview }` (a single-line text preview). */
+  async collectExcerpts(): Promise<{ id: string; preview: string }[]> {
+    const snapshot = await this.sourceLibrary.getSnapshot();
+    return (snapshot.excerpts ?? []).map((excerpt: SourceExcerpt) => ({
+      id: excerpt.id,
+      preview: this.previewOf(excerpt.text)
+    }));
+  }
+
+  /** All `.excalidraw` diagrams in the workspace, as `{ path, label }`. */
+  async collectDiagrams(): Promise<{ path: string; label: string }[]> {
+    const snapshot = await this.manuscriptWorkspace.getSnapshot();
+    if (!snapshot.rootUri) {
+      return [];
+    }
+    const root = new URI(snapshot.rootUri);
+    const out: { path: string; label: string }[] = [];
+    await this.walkDiagrams(root, root, out, 0);
+    out.sort((left, right) => left.path.localeCompare(right.path));
+    return out;
+  }
+
+  protected async walkDiagrams(
+    root: URI,
+    dir: URI,
+    out: { path: string; label: string }[],
+    depth: number
+  ): Promise<void> {
+    if (depth > 8 || out.length >= 200) {
+      return;
+    }
+    const stat = await this.fileService.resolve(dir).catch(() => undefined);
+    if (!stat?.children) {
+      return;
+    }
+    for (const child of stat.children) {
+      if (child.isDirectory) {
+        // Skip hidden folders and dependency trees; manuscripts are small.
+        if (child.resource.path.base.startsWith('.') || child.resource.path.base === 'node_modules') {
+          continue;
+        }
+        await this.walkDiagrams(root, child.resource, out, depth + 1);
+        continue;
+      }
+      if (this.extensionOf(child.resource.path.base) !== DIAGRAM_EXTENSION) {
+        continue;
+      }
+      const relative = root.relative(child.resource)?.toString();
+      if (relative) {
+        out.push({ path: relative, label: child.resource.path.base });
+      }
+    }
+  }
+
+  /**
+   * Book-level files (`manifest.yaml`, `metadata.yaml`) that exist at the root,
+   * returned as root-prefixed paths so the core `#file` variable resolves them.
+   */
+  async collectBookFiles(): Promise<{ path: string; label: string }[]> {
+    const snapshot = await this.manuscriptWorkspace.getSnapshot();
+    if (!snapshot.rootUri) {
+      return [];
+    }
+    const root = new URI(snapshot.rootUri);
+    const rootName = root.path.base;
+    const out: { path: string; label: string }[] = [];
+    for (const name of BOOK_FILES) {
+      if (await this.fileService.exists(root.resolve(name))) {
+        out.push({ path: rootName ? `${rootName}/${name}` : name, label: name });
+      }
+    }
+    return out;
+  }
+
+  protected previewOf(text: string): string {
+    const collapsed = text.replace(/\s+/g, ' ').trim();
+    return collapsed.length > EXCERPT_PREVIEW_CHARS
+      ? `${collapsed.slice(0, EXCERPT_PREVIEW_CHARS)}…`
+      : collapsed;
   }
 
   /**

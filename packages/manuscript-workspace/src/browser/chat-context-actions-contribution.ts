@@ -15,7 +15,8 @@ import { ApplicationShell, WidgetManager } from '@theia/core/lib/browser';
 import type { TreeNode } from '@theia/core/lib/browser/tree';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { ChatService } from '@theia/ai-chat/lib/common';
-import type { AIContextVariable } from '@theia/ai-core';
+import type { AIVariable } from '@theia/ai-core';
+import { FILE_VARIABLE } from '@theia/ai-core/lib/browser/file-variable-contribution';
 import {
   AuthorMaterialTreeNode,
   ManuscriptTreeNode
@@ -24,7 +25,10 @@ import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 import {
   CHAPTER_CONTEXT_VARIABLE,
+  CITATION_CONTEXT_VARIABLE,
+  DIAGRAM_CONTEXT_VARIABLE,
   ENTITY_CONTEXT_VARIABLE,
+  EXCERPT_CONTEXT_VARIABLE,
   ManuscriptContextVariableContribution,
   NOTE_CONTEXT_VARIABLE,
   SOURCE_CONTEXT_VARIABLE
@@ -34,6 +38,9 @@ const CATEGORY = 'AI Focused Editor';
 
 /** Author-materials section kinds that map to an entity card (`#entity`). */
 const ENTITY_SECTION_KINDS: ReadonlySet<string> = new Set(['characters', 'terms', 'artifacts', 'locations']);
+
+/** Diagram files carry a text summary via `#diagram`, not the raw `#source` text. */
+const DIAGRAM_EXTENSION = '.excalidraw';
 
 export namespace ChatContextCommands {
   export const ADD_CONTEXT: Command = Command.toLocalizedCommand(
@@ -50,16 +57,16 @@ export namespace ChatContextCommands {
 
 /** A resolved attach target: which context variable, and the argument to pass. */
 interface ContextTarget {
-  variable: AIContextVariable;
+  variable: AIVariable;
   arg: string;
 }
 
 interface CategoryPick extends QuickPickItem {
-  category: 'chapters' | 'sources' | 'entities' | 'notes';
+  category: 'chapters' | 'sources' | 'entities' | 'notes' | 'citations' | 'excerpts' | 'diagrams' | 'book';
 }
 
 interface ArtifactPick extends QuickPickItem {
-  variable: AIContextVariable;
+  variable: AIVariable;
   arg: string;
 }
 
@@ -130,11 +137,15 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
   // --- Interactive category → artifact picker --------------------------------
 
   protected async addContextInteractively(): Promise<void> {
-    const [chapters, sources, entities, notes] = await Promise.all([
+    const [chapters, sources, entities, notes, citations, excerpts, diagrams, book] = await Promise.all([
       this.variables.collectChapters(),
       this.variables.collectSources(),
       this.variables.collectEntities(),
-      this.variables.collectNotes()
+      this.variables.collectNotes(),
+      this.variables.collectCitations(),
+      this.variables.collectExcerpts(),
+      this.variables.collectDiagrams(),
+      this.variables.collectBookFiles()
     ]);
 
     const categories: CategoryPick[] = [
@@ -157,6 +168,26 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
         category: 'notes',
         label: nls.localize('ai-focused-editor/chat-context/category-notes', 'Notes'),
         description: String(notes.length)
+      },
+      {
+        category: 'citations',
+        label: nls.localize('ai-focused-editor/chat-context/category-citations', 'Citations'),
+        description: String(citations.length)
+      },
+      {
+        category: 'excerpts',
+        label: nls.localize('ai-focused-editor/chat-context/category-excerpts', 'Excerpts'),
+        description: String(excerpts.length)
+      },
+      {
+        category: 'diagrams',
+        label: nls.localize('ai-focused-editor/chat-context/category-diagrams', 'Diagrams'),
+        description: String(diagrams.length)
+      },
+      {
+        category: 'book',
+        label: nls.localize('ai-focused-editor/chat-context/category-book', 'Book'),
+        description: String(book.length)
       }
     ];
 
@@ -168,7 +199,9 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
       return;
     }
 
-    const artifacts = this.artifactPicksFor(pickedCategory.category, { chapters, sources, entities, notes });
+    const artifacts = this.artifactPicksFor(pickedCategory.category, {
+      chapters, sources, entities, notes, citations, excerpts, diagrams, book
+    });
     if (artifacts.length === 0) {
       this.messages.info(nls.localize(
         'ai-focused-editor/chat-context/category-empty',
@@ -195,6 +228,10 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
       sources: { path: string; label: string }[];
       entities: { id: string; label: string }[];
       notes: { path: string; label: string }[];
+      citations: { id: string; label: string }[];
+      excerpts: { id: string; preview: string }[];
+      diagrams: { path: string; label: string }[];
+      book: { path: string; label: string }[];
     }
   ): ArtifactPick[] {
     switch (category) {
@@ -226,6 +263,34 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
           variable: NOTE_CONTEXT_VARIABLE,
           arg: note.path
         }));
+      case 'citations':
+        return data.citations.map(citation => ({
+          label: citation.label,
+          description: citation.id,
+          variable: CITATION_CONTEXT_VARIABLE,
+          arg: citation.id
+        }));
+      case 'excerpts':
+        return data.excerpts.map(excerpt => ({
+          label: excerpt.id,
+          description: excerpt.preview,
+          variable: EXCERPT_CONTEXT_VARIABLE,
+          arg: excerpt.id
+        }));
+      case 'diagrams':
+        return data.diagrams.map(diagram => ({
+          label: diagram.label,
+          description: diagram.path,
+          variable: DIAGRAM_CONTEXT_VARIABLE,
+          arg: diagram.path
+        }));
+      case 'book':
+        return data.book.map(file => ({
+          label: file.label,
+          description: file.path,
+          variable: FILE_VARIABLE,
+          arg: file.path
+        }));
     }
   }
 
@@ -252,15 +317,25 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
     }
     if (AuthorMaterialTreeNode.is(node)) {
       if (ENTITY_SECTION_KINDS.has(node.sectionKind)) {
-        const id = node.description ?? this.entityIdFromNodeId(node.id);
+        const id = node.description ?? this.materialIdFromNodeId(node.id);
         return id ? { variable: ENTITY_CONTEXT_VARIABLE, arg: id } : undefined;
+      }
+      // Citations have no material URI; recover the id from the node id
+      // (`material:citations:<id>`) so `#citation` gets the record.
+      if (node.sectionKind === 'citations') {
+        const id = this.materialIdFromNodeId(node.id);
+        return id ? { variable: CITATION_CONTEXT_VARIABLE, arg: id } : undefined;
       }
       const relative = node.materialUri ? this.relativePath(node.materialUri) : undefined;
       if (!relative) {
         return undefined;
       }
       if (node.sectionKind === 'sources') {
-        return { variable: SOURCE_CONTEXT_VARIABLE, arg: relative };
+        // Excalidraw diagrams attach as a text summary (`#diagram`), not the
+        // raw binary source text (`#source`).
+        return relative.toLowerCase().endsWith(DIAGRAM_EXTENSION)
+          ? { variable: DIAGRAM_CONTEXT_VARIABLE, arg: relative }
+          : { variable: SOURCE_CONTEXT_VARIABLE, arg: relative };
       }
       if (node.sectionKind === 'knowledge') {
         return { variable: NOTE_CONTEXT_VARIABLE, arg: relative };
@@ -269,8 +344,8 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
     return undefined;
   }
 
-  /** Recover the entity id from a `material:<section>:<id>` tree node id. */
-  protected entityIdFromNodeId(nodeId: string): string | undefined {
+  /** Recover the material id from a `material:<section>:<id>` tree node id (entity or citation). */
+  protected materialIdFromNodeId(nodeId: string): string | undefined {
     const parts = nodeId.split(':');
     return parts.length >= 3 ? parts.slice(2).join(':') : undefined;
   }

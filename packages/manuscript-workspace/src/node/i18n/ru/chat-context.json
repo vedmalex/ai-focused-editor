@@ -11,10 +11,17 @@
       "pick-entity": "Выберите сущность",
       "pick-source": "Выберите документ-источник",
       "pick-note": "Выберите заметку базы знаний",
+      "pick-citation": "Выберите цитату",
+      "pick-excerpt": "Выберите выдержку из источника",
+      "pick-diagram": "Выберите диаграмму",
       "category-chapters": "Главы",
       "category-sources": "Источники",
       "category-entities": "Сущности",
       "category-notes": "Заметки",
+      "category-citations": "Цитаты",
+      "category-excerpts": "Выдержки",
+      "category-diagrams": "Диаграммы",
+      "category-book": "Книга",
       "category-empty": "В этой категории пока нечего добавить.",
       "attached": "«{0}» добавлено в контекст чата."
     }
