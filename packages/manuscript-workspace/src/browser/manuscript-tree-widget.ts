@@ -17,6 +17,8 @@ import {
   TreeWidget
 } from '@theia/core/lib/browser/tree';
 import type { TreeNode } from '@theia/core/lib/browser/tree';
+import { FileService } from '@theia/filesystem/lib/browser/file-service';
+import { BinaryBuffer } from '@theia/core/lib/common/buffer';
 import React from '@theia/core/shared/react';
 import type {
   ManuscriptMoveTarget,
@@ -43,6 +45,9 @@ export class ManuscriptTreeWidget extends TreeWidget {
 
   @inject(MessageService)
   protected readonly messages!: MessageService;
+
+  @inject(FileService)
+  protected readonly fileService!: FileService;
 
   protected dropTargetElement: HTMLElement | undefined;
 
@@ -71,7 +76,25 @@ export class ManuscriptTreeWidget extends TreeWidget {
       return;
     }
     if (AuthorMaterialTreeNode.is(node) && node.materialUri) {
-      await open(this.openerService, new URI(node.materialUri));
+      const uri = new URI(node.materialUri);
+      // The entities/types.yaml leaf seeds the file on first open so clicking it
+      // always lands in a real editor (rather than failing on a missing file).
+      if (node.createSeed !== undefined) {
+        await this.ensureFileExists(uri, node.createSeed);
+      }
+      await open(this.openerService, uri);
+    }
+  }
+
+  /** Create `uri` with `seed` content when it does not yet exist (best effort). */
+  protected async ensureFileExists(uri: URI, seed: string): Promise<void> {
+    try {
+      if (await this.fileService.exists(uri)) {
+        return;
+      }
+      await this.fileService.createFile(uri, BinaryBuffer.fromString(seed), { overwrite: false });
+    } catch {
+      // A racing create or a permission error: fall through and let `open` report.
     }
   }
 

@@ -8,6 +8,7 @@ import {
   deriveChapterTitle,
   entityCardMissingFixes,
   entityCardOrphanFindings,
+  entityTypeProblemFindings,
   entityUnknownKindFindings,
   excerptsParseFinding,
   humanizeEntityId,
@@ -20,6 +21,22 @@ import {
   type EntityCardRef,
   type EntityTagOccurrence
 } from './book-doctor';
+import {
+  BASE_ENTITY_TYPES,
+  mergeEntityTypes,
+  parseEntityTypesYaml,
+  type EntityTypeProblem
+} from './entity-type-registry';
+
+/**
+ * Effective type list (built-in + one author-declared `sloka` type) shared by the
+ * dynamic entity-check tests. Declaring nothing but id/label lets `sloka` default
+ * its tagKind + directory to `sloka` and take the default author field schema.
+ */
+const EFFECTIVE_WITH_SLOKA = mergeEntityTypes(
+  BASE_ENTITY_TYPES,
+  parseEntityTypesYaml('types:\n  - id: sloka\n    label: Sloka\n').types
+);
 
 /** Build an `exists` predicate from a fixed set of present paths. */
 function existsIn(present: string[]): (path: string) => boolean {
@@ -307,6 +324,29 @@ describe('entityCardMissingFixes', () => {
     );
     expect(fixes).toEqual([]);
   });
+
+  test('creates a card in the author directory for a declared author-kind tag', () => {
+    const fixes = entityCardMissingFixes(
+      [{ kind: 'sloka', id: 'bg-2-47', count: 2, firstPath: 'content/ch1.md', labels: { 'BG 2.47': 2 } }],
+      [],
+      EFFECTIVE_WITH_SLOKA
+    );
+    expect(fixes).toHaveLength(1);
+    // Directory comes from the author descriptor (defaults to the id `sloka`).
+    expect(fixes[0].path).toBe('entities/sloka/bg-2-47.yaml');
+    expect(fixes[0].code).toBe('entity-card-missing');
+    // params[0] is the author type's label.
+    expect(fixes[0].params?.[0]).toBe('Sloka');
+    expect(fixes[0].seed).toContain('name: BG 2.47\n');
+  });
+
+  test('without the effective list, an author kind is still treated as unknown', () => {
+    const fixes = entityCardMissingFixes(
+      [{ kind: 'sloka', id: 'bg-2-47', count: 2, firstPath: 'content/ch1.md' }],
+      []
+    );
+    expect(fixes).toEqual([]);
+  });
 });
 
 describe('entityCardOrphanFindings', () => {
@@ -360,6 +400,64 @@ describe('entityUnknownKindFindings', () => {
       { kind: undefined, id: 'y', count: 1, firstPath: 'a.md' }
     ];
     expect(entityUnknownKindFindings(occ)).toEqual([]);
+  });
+
+  test('treats a DECLARED author kind as known (no finding) but an undeclared one as unknown', () => {
+    const occ: EntityTagOccurrence[] = [
+      { kind: 'sloka', id: 'bg-2-47', count: 3, firstPath: 'a.md' },
+      { kind: 'spell', id: 'fireball', count: 1, firstPath: 'a.md' }
+    ];
+    // With `sloka` in the effective list, only the still-undeclared `spell` is reported.
+    const findings = entityUnknownKindFindings(occ, EFFECTIVE_WITH_SLOKA);
+    expect(findings.map(finding => finding.params?.[0])).toEqual(['spell']);
+    // Without it (built-ins only), `sloka` is unknown too.
+    expect(entityUnknownKindFindings(occ).map(finding => finding.params?.[0]).sort()).toEqual(['sloka', 'spell']);
+  });
+});
+
+describe('entityCardOrphanFindings (author kinds)', () => {
+  test('resolves an author card label + path from the effective descriptor', () => {
+    const findings = entityCardOrphanFindings(
+      [],
+      [{ kind: 'sloka', id: 'bg-2-47' }],
+      EFFECTIVE_WITH_SLOKA
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe('entity-card-orphan');
+    expect(findings[0].params).toEqual(['Sloka', 'bg-2-47', 'entities/sloka/bg-2-47.yaml']);
+  });
+
+  test('is silent when a matching author-kind tag references the card', () => {
+    const occ: EntityTagOccurrence[] = [{ kind: 'sloka', id: 'bg-2-47', count: 1, firstPath: 'a.md' }];
+    expect(entityCardOrphanFindings(occ, [{ kind: 'sloka', id: 'bg-2-47' }], EFFECTIVE_WITH_SLOKA)).toEqual([]);
+  });
+});
+
+describe('entityTypeProblemFindings', () => {
+  test('surfaces each validation problem as an informational entity-type-problem row', () => {
+    const problems: EntityTypeProblem[] = [
+      { code: 'reserved-id', id: 'character', message: 'id collides with a built-in type.' },
+      { code: 'invalid-shape', message: 'must be a list of entity types.' }
+    ];
+    const findings = entityTypeProblemFindings(problems);
+    expect(findings).toHaveLength(2);
+    expect(findings.every(finding => finding.kind === 'entity' && finding.code === 'entity-type-problem')).toBe(true);
+    // With an id, {0} is the id; without one, {0} falls back to the problem code.
+    expect(findings[0].params).toEqual(['character', 'id collides with a built-in type.']);
+    expect(findings[1].params).toEqual(['invalid-shape', 'must be a list of entity types.']);
+    expect(findings[0].detail).toBe('id collides with a built-in type.');
+  });
+
+  test('is empty when there are no problems', () => {
+    expect(entityTypeProblemFindings([])).toEqual([]);
+  });
+
+  test('reflects a real reserved-id collision parsed from types.yaml', () => {
+    const { problems } = parseEntityTypesYaml('types:\n  - id: character\n    label: Nope\n');
+    const findings = entityTypeProblemFindings(problems);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe('entity-type-problem');
+    expect(findings[0].params?.[0]).toBe('character');
   });
 });
 
@@ -481,5 +579,31 @@ describe('assembleBookDoctorReport', () => {
     expect(report.findings.some(finding => finding.code === 'entity-tag-unknown-kind')).toBe(true);
     // The unknown kind never becomes a fix.
     expect(report.fixes.some(fix => fix.path.includes('fireball'))).toBe(false);
+  });
+
+  test('wires author-declared types: known kind → card fix, and type-problems → findings', () => {
+    const report = assembleBookDoctorReport({
+      scaffoldEntries: bookScaffoldEntries(),
+      exists: existsIn(ALL_SCAFFOLD_PATHS),
+      contentHasMarkdown: true,
+      manifestExists: true,
+      manifestRows: flattenManifestRows(parse('version: 1\ncontent:\n  - path: content/chapter-01.md\n')),
+      manuscriptCandidates: [{ path: 'content/chapter-01.md' }],
+      metadata: { title: 'Book', author: 'Author' },
+      entityTagOccurrences: [
+        // An author-declared `sloka` tag with no card → a create fix in entities/sloka/.
+        { kind: 'sloka', id: 'bg-2-47', count: 2, firstPath: 'content/chapter-01.md', labels: { 'BG 2.47': 2 } }
+      ],
+      effectiveEntityTypes: EFFECTIVE_WITH_SLOKA,
+      entityTypeProblems: [
+        { code: 'reserved-id', id: 'term', message: 'id collides with a built-in type.' }
+      ]
+    });
+
+    // The author kind becomes a fixable card, NOT an unknown-kind finding.
+    expect(report.fixes.some(fix => fix.path === 'entities/sloka/bg-2-47.yaml')).toBe(true);
+    expect(report.findings.some(finding => finding.code === 'entity-tag-unknown-kind')).toBe(false);
+    // The parse problem is surfaced informationally.
+    expect(report.findings.some(finding => finding.code === 'entity-type-problem')).toBe(true);
   });
 });

@@ -1,0 +1,23 @@
+# Author-declared entity types for this book.
+#
+# Each entry layers on top of the four built-in types (character, term, artifact,
+# location) — it may not shadow one. Declaring a type here makes the whole
+# vertical pick it up: the entity form renders from `fields`, the manuscript tree
+# grows a section, `[[sloka:id|label]]` tags complete and navigate to their
+# cards, and the Book Doctor treats the kind as known (offering to create a
+# missing card instead of flagging an "unknown entity type").
+#
+# `tagKind` and `directory` default to `id` when omitted (so cards live under
+# `entities/sloka/` and tags read `[[sloka:...]]`).
+types:
+  - id: sloka
+    label: Шлока
+    icon: codicon codicon-book
+    sectionIcon: codicon codicon-book
+    fields:
+      - name: name
+        kind: text
+      - name: summary
+        kind: textarea
+      - name: notes
+        kind: textarea

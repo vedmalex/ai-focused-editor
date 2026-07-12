@@ -8,6 +8,9 @@ On the field between two armies, [[char:krishna|Krishna]] reins in the chariot a
 
 [[char:krishna|Krishna]] answers quietly, and the conversation turns to [[term:dharma|dharma]] —
 duty that does not bend to grief, and action that does not cling to its fruits [@cite:bg-2-47].[^1]
+The teaching crystallizes in [[sloka:bg-2-47|the verse on action without attachment]] — an
+author-declared entity type (`sloka`, from `entities/types.yaml`) that completes, links, and
+diagnoses exactly like the built-in kinds.
 
 > The manuscript workspace keeps characters, terms, and artifacts as YAML cards under `entities/`,
 > while the text stays plain, portable Markdown with `[[kind:id|label]]` tags.

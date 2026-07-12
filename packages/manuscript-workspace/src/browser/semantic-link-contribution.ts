@@ -25,6 +25,7 @@ import {
   tagKindToEntityKind,
   type ResolvedRelativeLink
 } from '../common/link-navigation';
+import { EntityTypeRegistryService } from './entity-type-registry-service';
 
 const ENTITY_CACHE_TTL_MS = 5000;
 
@@ -77,6 +78,9 @@ export class SemanticLinkContribution implements FrontendApplicationContribution
 
   @inject(CommandRegistry)
   protected readonly commands!: CommandRegistry;
+
+  @inject(EntityTypeRegistryService)
+  protected readonly entityTypeRegistry!: EntityTypeRegistryService;
 
   protected readonly toDispose = new DisposableCollection();
   protected cachedEntities: NarrativeEntity[] = [];
@@ -186,10 +190,23 @@ export class SemanticLinkContribution implements FrontendApplicationContribution
     id: string
   ): NarrativeEntity | undefined {
     if (kind) {
-      const entityKind = tagKindToEntityKind(kind);
+      const entityKind = this.tagKindToEntityKind(kind);
       return entities.find(entity => entity.kind === entityKind && entity.id === id);
     }
     return entities.find(entity => entity.id === id);
+  }
+
+  /**
+   * Map a tag kind to its entity kind via the EFFECTIVE type list (built-in +
+   * author-declared), so an author type whose tag kind differs from its id (e.g.
+   * `[[sl:...]]` → the `sloka` kind) resolves to its cards. When no effective type
+   * claims the tag kind, fall back to the registry passthrough
+   * ({@link tagKindToEntityKind}) — base behavior is unchanged: `char` → `character`,
+   * every other built-in verbatim, and truly unknown kinds pass through untouched.
+   */
+  protected tagKindToEntityKind(tagKind: string): string {
+    const descriptor = this.entityTypeRegistry.getEffectiveTypes().find(type => type.tagKind === tagKind);
+    return descriptor?.id ?? tagKindToEntityKind(tagKind);
   }
 
   protected entityTooltip(entity: NarrativeEntity): string {

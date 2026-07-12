@@ -3,7 +3,8 @@ import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import * as monaco from '@theia/monaco-editor-core';
 import type { NarrativeEntity } from '../common';
-import { ENTITY_TAG_KINDS, entityKindTags, NarrativeEntityService } from '../common';
+import { NarrativeEntityService } from '../common';
+import { EntityTypeRegistryService } from './entity-type-registry-service';
 
 const TAG_PREFIX_PATTERN = /\[\[([a-z]*)(?::([^\s|\]]*))?$/i;
 const ENTITY_CACHE_TTL_MS = 5000;
@@ -11,12 +12,18 @@ const ENTITY_CACHE_TTL_MS = 5000;
 /**
  * Autocompletion for semantic `[[kind:id|label]]` tags (spec §3.4).
  * Entity suggestions come from the YAML-backed knowledge base, so writers can
- * insert characters/terms without remembering ids.
+ * insert characters/terms without remembering ids. The completed tag kinds come
+ * from the EFFECTIVE type list ({@link EntityTypeRegistryService}) — built-in AND
+ * author-declared — read fresh on every keystroke, so a type the author adds to
+ * `entities/types.yaml` starts completing without any explicit refresh.
  */
 @injectable()
 export class SemanticMarkdownCompletionProvider implements FrontendApplicationContribution {
   @inject(NarrativeEntityService)
   protected readonly narrativeEntities!: NarrativeEntityService;
+
+  @inject(EntityTypeRegistryService)
+  protected readonly entityTypeRegistry!: EntityTypeRegistryService;
 
   protected readonly toDispose = new DisposableCollection();
   protected cachedEntities: NarrativeEntity[] = [];
@@ -80,7 +87,8 @@ export class SemanticMarkdownCompletionProvider implements FrontendApplicationCo
     }
 
     // Bare-kind scaffolds so the syntax is discoverable even without entities.
-    for (const kind of ENTITY_TAG_KINDS) {
+    // Kinds are the effective tag kinds (built-in + author-declared), read fresh.
+    for (const kind of this.tagKinds()) {
       if (kindPrefix && !kind.startsWith(kindPrefix.toLowerCase())) {
         continue;
       }
@@ -99,12 +107,22 @@ export class SemanticMarkdownCompletionProvider implements FrontendApplicationCo
   }
 
   /**
-   * Map an entity kind to the tag kind used inside `[[kind:id|label]]`.
-   * Characters use the shorthand `char`; artifacts/locations/terms use their
-   * kind verbatim so their tags complete directly (spec §4.3/§5.2).
+   * The effective tag kinds (built-in + author-declared) for the open book, in
+   * registry order. Read fresh so an author type added to `entities/types.yaml`
+   * appears without an explicit refresh.
+   */
+  protected tagKinds(): string[] {
+    return this.entityTypeRegistry.getEffectiveTypes().map(type => type.tagKind);
+  }
+
+  /**
+   * Map an entity kind to the tag kind used inside `[[kind:id|label]]` via the
+   * effective type list: characters use the shorthand `char`; every other built-in
+   * and each author type uses its declared tag kind (spec §4.3/§5.2). An entity of
+   * an unknown kind (no matching effective type) falls back to its kind verbatim.
    */
   protected toTagKind(kind: NarrativeEntity['kind']): string {
-    return entityKindTags()[kind] ?? kind;
+    return this.entityTypeRegistry.getEffectiveTypes().find(type => type.id === kind)?.tagKind ?? kind;
   }
 
   protected toCompletionItemKind(kind: NarrativeEntity['kind']): monaco.languages.CompletionItemKind {

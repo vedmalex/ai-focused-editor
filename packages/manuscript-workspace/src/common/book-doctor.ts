@@ -31,15 +31,11 @@ import {
   type ReconstructedEntry
 } from './manifest-reconstruction';
 import {
-  entityTypeById,
-  entityTypeByTagKind,
-  tagKindToEntityKind
+  BASE_ENTITY_TYPES,
+  type EntityTypeDescriptor,
+  type EntityTypeProblem
 } from './entity-type-registry';
-import {
-  buildEntityYaml,
-  entityRelativePath,
-  type CreatableEntityKind
-} from './entity-creation';
+import { buildEntityYaml } from './entity-creation';
 
 /**
  * Manifest reconstruction metadata attached to the special `manifest.yaml` fix.
@@ -194,8 +190,20 @@ export interface BookDoctorInput {
    * findings. Empty/absent when no manuscript text was scanned.
    */
   entityTagOccurrences?: EntityTagOccurrence[];
-  /** Entity cards already present on disk (scanned per registry directory). */
+  /** Entity cards already present on disk (scanned per effective-type directory). */
   existingEntityCards?: EntityCardRef[];
+  /**
+   * The EFFECTIVE entity types (built-in + author-declared from `entities/types.yaml`)
+   * the entity checks resolve tag/card kinds against. When absent, the built-in set
+   * is used, so a caller that passes no author types behaves exactly as before.
+   */
+  effectiveEntityTypes?: readonly EntityTypeDescriptor[];
+  /**
+   * Validation problems from parsing `entities/types.yaml` (from the registry
+   * parse), surfaced as `entity-type-problem` findings. Empty/absent when the file
+   * is absent, empty, or fully valid.
+   */
+  entityTypeProblems?: readonly EntityTypeProblem[];
 }
 
 function errorMessage(error: unknown): string {
@@ -455,7 +463,36 @@ export function excerptsParseFinding(content: string): BookDoctorFinding | undef
 /* Entity checks (STAGE — restore/diagnose the entity base from the text)    */
 /* ----------------------------------------------------------------------- */
 
-/** Composite `(kind, id)` map key. ` ` cannot occur in a kind or id. */
+/* ----------------------------------------------------------------------- */
+/* Effective-type lookups (STAGE — author-declared types go dynamic)         */
+/*                                                                           */
+/* The entity checks below resolve tag/card kinds against the EFFECTIVE type */
+/* list (built-in + author-declared) passed in, defaulting to the built-in   */
+/* set so every prior caller/behaviour stays byte-identical. An author type  */
+/* declared in entities/types.yaml is thus treated as known.                 */
+/* ----------------------------------------------------------------------- */
+
+/** The descriptor in `types` whose tag kind matches, or undefined. */
+function typeByTagKind(types: readonly EntityTypeDescriptor[], tagKind: string): EntityTypeDescriptor | undefined {
+  return types.find(type => type.tagKind === tagKind);
+}
+
+/** The descriptor in `types` whose kind id matches, or undefined. */
+function typeById(types: readonly EntityTypeDescriptor[], id: string): EntityTypeDescriptor | undefined {
+  return types.find(type => type.id === id);
+}
+
+/** Map a tag kind to its kind id via `types`; an unknown tag kind passes through verbatim. */
+function effectiveTagKindToKind(types: readonly EntityTypeDescriptor[], tagKind: string): string {
+  return typeByTagKind(types, tagKind)?.id ?? tagKind;
+}
+
+/** Workspace-relative card path from a descriptor: `entities/<dir>/<id>.yaml`. */
+function entityCardPath(descriptor: EntityTypeDescriptor, id: string): string {
+  return `entities/${descriptor.directory}/${id}.yaml`;
+}
+
+/** Composite `(kind, id)` map key: a single space separates the two tokens. */
 function entityCardKey(kind: string, id: string): string {
   return `${kind} ${id}`;
 }
@@ -501,16 +538,18 @@ function entityCardName(occurrence: EntityTagOccurrence): string {
 
 /**
  * Entity check A — `entity-card-missing` (FIXABLE): every occurrence whose tag
- * kind resolves to a REGISTRY entity type but whose `entities/<dir>/<id>.yaml`
- * card is absent becomes one create fix per unique `(kind, id)`. Bare `[[id]]`
- * occurrences (no kind) can never create a card — a card needs a kind — and are
- * skipped here; unknown (non-registry) kinds are skipped too (see check C). The
+ * kind resolves to an EFFECTIVE entity type (built-in OR author-declared) but
+ * whose `entities/<dir>/<id>.yaml` card is absent becomes one create fix per
+ * unique `(kind, id)`, the directory taken from the resolved descriptor. Bare
+ * `[[id]]` occurrences (no kind) can never create a card — a card needs a kind —
+ * and are skipped here; unknown (non-effective) kinds are skipped too (check C). The
  * seed name prefers the most frequent label across occurrences, else the
  * humanized id. The description carries the mention count and first file.
  */
 export function entityCardMissingFixes(
   occurrences: EntityTagOccurrence[],
-  existingCards: EntityCardRef[]
+  existingCards: EntityCardRef[],
+  effectiveTypes: readonly EntityTypeDescriptor[] = BASE_ENTITY_TYPES
 ): BookDoctorFix[] {
   const existing = new Set(existingCards.map(card => entityCardKey(card.kind, card.id)));
   const fixes: BookDoctorFix[] = [];
@@ -519,9 +558,9 @@ export function entityCardMissingFixes(
       // A bare `[[id]]` names no kind — a card cannot be materialized from it.
       continue;
     }
-    const descriptor = entityTypeByTagKind(occurrence.kind);
+    const descriptor = typeByTagKind(effectiveTypes, occurrence.kind);
     if (!descriptor) {
-      // Well-formed but non-registry kind — reported by entityUnknownKindFindings.
+      // Well-formed but non-effective kind — reported by entityUnknownKindFindings.
       continue;
     }
     const entityKind = descriptor.id;
@@ -530,7 +569,7 @@ export function entityCardMissingFixes(
     }
     const name = entityCardName(occurrence);
     fixes.push({
-      path: entityRelativePath(entityKind as CreatableEntityKind, occurrence.id),
+      path: entityCardPath(descriptor, occurrence.id),
       kind: 'file',
       seed: buildEntityYaml({ id: occurrence.id, name }),
       code: 'entity-card-missing',
@@ -550,22 +589,23 @@ export function entityCardMissingFixes(
  */
 export function entityCardOrphanFindings(
   occurrences: EntityTagOccurrence[],
-  existingCards: EntityCardRef[]
+  existingCards: EntityCardRef[],
+  effectiveTypes: readonly EntityTypeDescriptor[] = BASE_ENTITY_TYPES
 ): BookDoctorFinding[] {
   const findings: BookDoctorFinding[] = [];
   for (const card of existingCards) {
     const referenced = occurrences.some(
       occurrence =>
         occurrence.id === card.id &&
-        (occurrence.kind === undefined || tagKindToEntityKind(occurrence.kind) === card.kind)
+        (occurrence.kind === undefined || effectiveTagKindToKind(effectiveTypes, occurrence.kind) === card.kind)
     );
     if (referenced) {
       continue;
     }
-    const descriptor = entityTypeById(card.kind);
+    const descriptor = typeById(effectiveTypes, card.kind);
     const label = descriptor?.label ?? card.kind;
     const path = descriptor
-      ? entityRelativePath(card.kind as CreatableEntityKind, card.id)
+      ? entityCardPath(descriptor, card.id)
       : `entities/${card.kind}/${card.id}.yaml`;
     findings.push({
       kind: 'entity',
@@ -580,15 +620,21 @@ export function entityCardOrphanFindings(
 
 /**
  * Entity check C — `entity-tag-unknown-kind` (INFORMATIONAL): tags whose kind is
- * well-formed (`[a-z][\w-]*`) but not in the registry (e.g. `[[spell:fireball]]`).
- * Grouped by kind with the total tag count and the distinct id count. Phrased so
- * it reads as a prompt to define the type (stage-4 author-defined types tie-in).
+ * well-formed (`[a-z][\w-]*`) but not in the EFFECTIVE type list — neither a
+ * built-in nor an author-declared type (e.g. `[[spell:fireball]]` when no `spell`
+ * type is declared). A kind an author DID declare in `entities/types.yaml` is
+ * treated as known and never reported here. Grouped by kind with the total tag
+ * count and the distinct id count. Phrased so it reads as a prompt to define the
+ * type (the author-defined-types tie-in).
  */
-export function entityUnknownKindFindings(occurrences: EntityTagOccurrence[]): BookDoctorFinding[] {
+export function entityUnknownKindFindings(
+  occurrences: EntityTagOccurrence[],
+  effectiveTypes: readonly EntityTypeDescriptor[] = BASE_ENTITY_TYPES
+): BookDoctorFinding[] {
   const wellFormed = /^[a-z][\w-]*$/;
   const byKind = new Map<string, { count: number; ids: Set<string> }>();
   for (const occurrence of occurrences) {
-    if (!occurrence.kind || entityTypeByTagKind(occurrence.kind) || !wellFormed.test(occurrence.kind)) {
+    if (!occurrence.kind || typeByTagKind(effectiveTypes, occurrence.kind) || !wellFormed.test(occurrence.kind)) {
       continue;
     }
     const entry = byKind.get(occurrence.kind) ?? { count: 0, ids: new Set<string>() };
@@ -610,6 +656,29 @@ export function entityUnknownKindFindings(occurrences: EntityTagOccurrence[]): B
 }
 
 /**
+ * Entity check D — `entity-type-problem` (INFORMATIONAL): surfaces each validation
+ * problem the registry found while parsing the book's `entities/types.yaml` (a bad
+ * shape, a missing/invalid id, a collision with a built-in or another author type,
+ * …). Each problem becomes one report-only row so the author can see WHY a declared
+ * type was rejected (a rejected type never reaches the effective list, so its tags
+ * would otherwise silently show up under `entity-tag-unknown-kind`). The parser's
+ * English message is carried verbatim; `params` expose the offending id (or the
+ * problem code when none was captured) and that message for localized rendering.
+ */
+export function entityTypeProblemFindings(problems: readonly EntityTypeProblem[]): BookDoctorFinding[] {
+  return problems.map(problem => {
+    const subject = problem.id && problem.id.trim() ? problem.id : problem.code;
+    return {
+      kind: 'entity',
+      code: 'entity-type-problem',
+      params: [subject, problem.message],
+      label: `entities/types.yaml: problem with "${subject}"`,
+      detail: problem.message
+    };
+  });
+}
+
+/**
  * Compose the full {@link BookDoctorReport} from resolved inputs. Fixes are
  * de-duplicated by path, preserving the parents-before-children order the
  * scaffold guarantees so a consumer can create them sequentially.
@@ -625,7 +694,8 @@ export function entityUnknownKindFindings(occurrences: EntityTagOccurrence[]): B
  *    the doctor is restoring an old book (content present + folder name known).
  *
  * Findings are appended in check order: metadata, the sources parse checks, then
- * the entity findings (orphan cards, unknown tag kinds).
+ * the entity findings (orphan cards, unknown tag kinds, then `entities/types.yaml`
+ * validation problems).
  */
 export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorReport {
   const fixes: BookDoctorFix[] = [];
@@ -669,10 +739,12 @@ export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorRepo
     }
   }
 
-  // Entity base: create a card for every registry-kind tag that has none.
+  // Entity base: create a card for every effective-kind (built-in OR author) tag
+  // that has none. Author-declared types come in via `effectiveEntityTypes`.
   const occurrences = input.entityTagOccurrences ?? [];
   const existingCards = input.existingEntityCards ?? [];
-  for (const fix of entityCardMissingFixes(occurrences, existingCards)) {
+  const effectiveTypes = input.effectiveEntityTypes ?? BASE_ENTITY_TYPES;
+  for (const fix of entityCardMissingFixes(occurrences, existingCards, effectiveTypes)) {
     push(fix);
   }
 
@@ -692,8 +764,9 @@ export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorRepo
       findings.push(finding);
     }
   }
-  findings.push(...entityCardOrphanFindings(occurrences, existingCards));
-  findings.push(...entityUnknownKindFindings(occurrences));
+  findings.push(...entityCardOrphanFindings(occurrences, existingCards, effectiveTypes));
+  findings.push(...entityUnknownKindFindings(occurrences, effectiveTypes));
+  findings.push(...entityTypeProblemFindings(input.entityTypeProblems ?? []));
 
   return { fixes, findings };
 }

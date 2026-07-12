@@ -1730,6 +1730,32 @@
   cursor: help;
 }
 
+/* ---------- entity editor: preserved (non-schema) keys ---------- */
+
+.afe-entity-editor-unknown {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.afe-entity-editor-unknown-label {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-entity-editor-unknown-chip {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: var(--theia-ui-font-size0);
+  font-family: var(--theia-code-font-family, monospace);
+  color: var(--theia-descriptionForeground);
+  background: var(--theia-editorWidget-background, transparent);
+  border: 1px dashed var(--theia-descriptionForeground);
+}
+
 /* ---------- manifest form drag handle ---------- */
 
 .afe-form-editor-tree-row {

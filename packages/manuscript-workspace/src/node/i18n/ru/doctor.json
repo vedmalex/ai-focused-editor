@@ -42,6 +42,8 @@
       "problem-entity-card-orphan-detail": "Карточка {0} {2} нигде не упоминается тегами в рукописи. Возможно, это задел на будущее — диагностика её не удаляет.",
       "problem-entity-tag-unknown-kind-label": "Неизвестный тип сущности: {0}",
       "problem-entity-tag-unknown-kind-detail": "Тегов с неизвестным типом «{0}» — {1} (различных id: {2}). Определите этот тип, чтобы его теги создавали карточки.",
+      "problem-entity-type-problem-label": "entities/types.yaml: проблема с типом «{0}»",
+      "problem-entity-type-problem-detail": "{1}",
       "report-more-files": "…и ещё {0}"
     }
   }

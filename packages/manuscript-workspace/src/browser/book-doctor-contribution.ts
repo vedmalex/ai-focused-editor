@@ -49,7 +49,13 @@ import {
 } from '../common/manifest-reconstruction';
 import { parseSemanticMarkdown } from '@ai-focused-editor/semantic-markdown';
 import { parseBareEntityTags } from '../common/link-navigation';
-import { BASE_ENTITY_TYPES } from '../common/entity-type-registry';
+import {
+  BASE_ENTITY_TYPES,
+  mergeEntityTypes,
+  parseEntityTypesYaml,
+  type EffectiveEntityType,
+  type EntityTypeProblem
+} from '../common/entity-type-registry';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import { AFE_MANUSCRIPT_SECTION_CONTEXT_KEY } from './manuscript-tree';
@@ -232,7 +238,11 @@ export class BookDoctorContribution
     // occurrences the entity checks need.
     const { candidates: manuscriptCandidates, occurrences: entityTagOccurrences } =
       await this.collectManuscriptData(root);
-    const existingEntityCards = await this.collectExistingEntityCards(root);
+    // Author-declared entity types (entities/types.yaml) fold into the effective
+    // list so the entity checks treat them as known and scan their directories.
+    const { types: effectiveEntityTypes, problems: entityTypeProblems } =
+      await this.loadEntityTypes(root);
+    const existingEntityCards = await this.collectExistingEntityCards(root, effectiveEntityTypes);
     const contentHasMarkdown = manuscriptCandidates.some(candidate =>
       normalizeManifestPath(candidate.path).startsWith('content/')
     );
@@ -278,8 +288,28 @@ export class BookDoctorContribution
       citationsContent,
       excerptsContent,
       entityTagOccurrences,
-      existingEntityCards
+      existingEntityCards,
+      effectiveEntityTypes,
+      entityTypeProblems
     });
+  }
+
+  /**
+   * Load and parse the book's `entities/types.yaml`, folding the author-declared
+   * types onto the built-in set to produce the EFFECTIVE type list plus any
+   * validation problems. A missing/empty file yields just the built-in set and no
+   * problems (the parse is tolerant), so the doctor works unchanged for books that
+   * declare no author types.
+   */
+  protected async loadEntityTypes(
+    root: URI
+  ): Promise<{ types: EffectiveEntityType[]; problems: EntityTypeProblem[] }> {
+    const text = await this.readTextIfExists(root.resolve('entities/types.yaml'));
+    const parsed = parseEntityTypesYaml(text ?? '');
+    return {
+      types: mergeEntityTypes(BASE_ENTITY_TYPES, parsed.types),
+      problems: parsed.problems
+    };
   }
 
   /** Probe every candidate path in parallel; return the normalized subset that exists. */
@@ -402,13 +432,17 @@ export class BookDoctorContribution
 
   /**
    * List the entity cards already present on disk, one `{kind, id}` per
-   * `entities/<dir>/<id>.yaml` file, scanning each registry type's directory.
-   * `kind` is the registry KIND id (e.g. `character`), not the tag kind. A
-   * missing `entities/` subtree is a no-op.
+   * `entities/<dir>/<id>.yaml` file, scanning each EFFECTIVE type's directory
+   * (built-in AND author-declared, so an author type's cards are picked up).
+   * `kind` is the KIND id (e.g. `character`, or an author id like `sloka`), not
+   * the tag kind. A missing `entities/` subtree is a no-op.
    */
-  protected async collectExistingEntityCards(root: URI): Promise<EntityCardRef[]> {
+  protected async collectExistingEntityCards(
+    root: URI,
+    effectiveTypes: readonly { id: string; directory: string }[] = BASE_ENTITY_TYPES
+  ): Promise<EntityCardRef[]> {
     const cards: EntityCardRef[] = [];
-    for (const type of BASE_ENTITY_TYPES) {
+    for (const type of effectiveTypes) {
       const dir = root.resolve(`entities/${type.directory}`);
       const stat = await this.fileService.resolve(dir).catch(() => undefined);
       for (const child of stat?.children ?? []) {
@@ -531,6 +565,9 @@ export class BookDoctorContribution
       case 'entity-tag-unknown-kind':
         // params: [kind, tag count, id count]
         return nls.localize('ai-focused-editor/doctor/problem-entity-tag-unknown-kind-label', 'Unknown entity type: {0}', ...(finding.params ?? []));
+      case 'entity-type-problem':
+        // params: [offending id-or-code, parser message]
+        return nls.localize('ai-focused-editor/doctor/problem-entity-type-problem-label', 'entities/types.yaml: problem with "{0}"', ...(finding.params ?? []));
       default:
         return finding.label;
     }
@@ -555,6 +592,9 @@ export class BookDoctorContribution
         return nls.localize('ai-focused-editor/doctor/problem-entity-card-orphan-detail', 'The {0} card {2} is never referenced by any tag in the manuscript. It may be intentional groundwork — the doctor never deletes it.', ...params);
       case 'entity-tag-unknown-kind':
         return nls.localize('ai-focused-editor/doctor/problem-entity-tag-unknown-kind-detail', '{1} tag(s) use the unknown entity type "{0}" across {2} id(s). Define this type to turn its tags into entity cards.', ...params);
+      case 'entity-type-problem':
+        // {1} is the parser's (English) validation message; {0} is the id-or-code.
+        return nls.localize('ai-focused-editor/doctor/problem-entity-type-problem-detail', '{1}', ...params);
       default:
         return finding.detail;
     }
