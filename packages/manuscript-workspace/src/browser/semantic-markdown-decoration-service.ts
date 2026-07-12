@@ -6,27 +6,26 @@ import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import type { EditorDecoration } from '@theia/editor/lib/browser/decorations/editor-decoration';
 import type { EditorWidget } from '@theia/editor/lib/browser/editor-widget';
 import type { TextEditor } from '@theia/editor/lib/browser/editor';
-import type { NarrativeEntity } from '../common';
-import { entityTypeByTagKind, NarrativeEntityService, tagKindToEntityKind } from '../common';
 
 const DECORATION_CLASS_PREFIX = 'afe-semantic-tag';
 const DECORATION_UPDATE_DELAY_MS = 150;
-const ENTITY_CACHE_TTL_MS = 5000;
 
+/**
+ * Applies the `.afe-semantic-tag` styling decorations to `[[kind:id|label]]`
+ * tags in the markdown editor. Hover CONTENT is owned by the separate
+ * {@link SemanticEntityHoverContribution} (a Monaco hover provider that renders
+ * the full entity card), so this service sets ONLY the decoration `className` and
+ * carries no `hoverMessage` — the two never duplicate rows.
+ */
 @injectable()
 export class SemanticMarkdownDecorationService implements FrontendApplicationContribution {
   @inject(EditorManager)
   protected readonly editorManager!: EditorManager;
 
-  @inject(NarrativeEntityService)
-  protected readonly narrativeEntities!: NarrativeEntityService;
-
   protected readonly toDispose = new DisposableCollection();
   protected readonly editorDisposables = new Map<TextEditor, DisposableCollection>();
   protected readonly decorationIds = new Map<TextEditor, string[]>();
   protected readonly pendingUpdates = new Map<TextEditor, ReturnType<typeof setTimeout>>();
-  protected entityCache = new Map<string, NarrativeEntity>();
-  protected entityCacheExpiresAt = 0;
 
   onStart(): void {
     this.toDispose.push(this.editorManager.onCurrentEditorChanged(widget => this.trackEditor(widget)));
@@ -93,12 +92,10 @@ export class SemanticMarkdownDecorationService implements FrontendApplicationCon
 
     const text = editor.document.getText();
     const semanticDocument = parseSemanticMarkdown(text);
-    const entities = await this.getEntityIndex();
     const newDecorations: EditorDecoration[] = semanticDocument.tags.map(tag => ({
       range: tag.range,
       options: {
-        className: this.getDecorationClassName(tag.kind),
-        hoverMessage: this.getHoverMessage(tag.kind, tag.id, tag.label, entities)
+        className: this.getDecorationClassName(tag.kind)
       }
     }));
 
@@ -107,45 +104,6 @@ export class SemanticMarkdownDecorationService implements FrontendApplicationCon
       oldDecorations,
       newDecorations
     }));
-  }
-
-  /**
-   * Hovers surface the YAML entity card behind the tag (summary, aliases),
-   * not only the literal tag text (spec §4.3/FR-006).
-   */
-  protected getHoverMessage(kind: string, id: string, label: string, entities: Map<string, NarrativeEntity>): string {
-    const entityKind = tagKindToEntityKind(kind);
-    const entity = entities.get(`${entityKind}:${id}`);
-    const header = `${this.getTagLabel(kind)}: ${entity?.label ?? label} (${id})`;
-    if (!entity) {
-      return header;
-    }
-    const parts = [header];
-    if (entity.summary) {
-      parts.push(entity.summary);
-    }
-    if (entity.aliases.length > 0) {
-      parts.push(`Also known as: ${entity.aliases.join(', ')}`);
-    }
-    if (entity.epithets && entity.epithets.length > 0) {
-      parts.push(`Epithets: ${entity.epithets.join(', ')}`);
-    }
-    return parts.join('\n\n');
-  }
-
-  protected async getEntityIndex(): Promise<Map<string, NarrativeEntity>> {
-    const now = Date.now();
-    if (now < this.entityCacheExpiresAt) {
-      return this.entityCache;
-    }
-    try {
-      const snapshot = await this.narrativeEntities.getSnapshot();
-      this.entityCache = new Map(snapshot.entities.map(entity => [`${entity.kind}:${entity.id}`, entity]));
-    } catch {
-      // Keep the last known entity index when the knowledge base is unavailable.
-    }
-    this.entityCacheExpiresAt = now + ENTITY_CACHE_TTL_MS;
-    return this.entityCache;
   }
 
   protected clearDecorations(editor: TextEditor): void {
@@ -169,9 +127,5 @@ export class SemanticMarkdownDecorationService implements FrontendApplicationCon
 
   protected normalizeKind(kind: string): string {
     return kind.replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
-  }
-
-  protected getTagLabel(kind: string): string {
-    return entityTypeByTagKind(kind)?.label ?? 'Semantic tag';
   }
 }

@@ -282,6 +282,12 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 42 — Full entity card preview on hover (shipped)
+
+- **Hover над тегом `[[kind:id|label]]` показывает карточку целиком**: заголовок «Название — Тип · id», затем ВСЕ поля по схеме типа (списки через запятую, длинные тексты абзацем с обрезкой ~280 знаков по границе слова), неизвестные yaml-ключи карточки тоже видны; внизу — кликабельная ссылка «Открыть карточку» (через существующий openTarget → открывается форм-редактор). Работает на всём диапазоне тега, включая ярлык (раньше кликабельной была только часть `[[kind:id`), и для авторских типов (проверено на sloka: русские Summary/Notes рендерятся).
+- Реализация: чистый `common/entity-hover.ts` (buildEntityHoverMarkdown, i18n-агностичен через localize-хуки, экранирует `[]<>` в значениях; 16 тестов) + Monaco HoverProvider `semantic-entity-hover-contribution.ts` (isTrusted markdown, TTL-кэш сущностей 5с, чтение YAML карточки через FileService, никогда не бросает). Старый трёхполевый hoverMessage из декораций удалён (декорации теперь только красят) — дублирующих блоков нет.
+- Live-проба: полная карточка Кришны (Aliases/Epithets/Summary/Backstory/Arc/Speech patterns/Notes) при наведении на ярлык, карточка шлоки для авторского типа, клик «Open card» из hover открыл форму bg-2-47. 907 тестов / 47 файлов; build 0 ошибок.
+
 ## Wave 41 — Entity types form editor (shipped)
 
 - **Форма для `entities/types.yaml`**: клик по «Типы сущностей» в дереве открывает форм-редактор (opener priority 500, сырой YAML — через Open With). Встроенные четыре типа показаны read-only карточками с бейджем «встроенный» (справка, переопределить нельзя); авторские типы — раскрывающиеся карточки: id (kebab-подсказка)/название/вид тега/каталог/значок/акцент + суб-редактор схемы полей (имя/вид text|textarea|list/подпись; добавление/удаление/порядок; служебные id и label закреплены сверху и не удаляются).
