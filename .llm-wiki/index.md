@@ -23,7 +23,7 @@ updated: 2026-07-10T04:28:50.802Z
 | [theia-extensions-vs-plugins](./pages/theia-extensions-vs-plugins.md) | Eclipse Theia offers **four complementary extension mechanisms**, each targeting | summary | 2026-07-09 |
 | [theia-ai](./pages/theia-ai.md) | Theia AI is a framework for integrating tailored AI capabilities into Theia-base | summary | 2026-07-09 |
 | [preferences-system](./pages/preferences-system.md) | Theia's preferences system lets an extension contribute type-safe configuration: | concept | 2026-07-09 |
-| [ai-focused-editor-feature-map](./pages/ai-focused-editor-feature-map.md) | A complete, code-accurate map of the **AI Focused Editor**, a [Theia](https://th | concept | 2026-07-11 |
+| [ai-focused-editor-feature-map](./pages/ai-focused-editor-feature-map.md) | A complete, code-accurate map of the **AI Focused Editor**, a [Theia](https://th | concept | 2026-07-12 |
 | [theia-preferences](./pages/theia-preferences.md) | Theia's preferences system lets extensions contribute configuration options, shi | summary | 2026-07-09 |
 | [theia-architecture-overview](./pages/theia-architecture-overview.md) | Theia runs a single codebase across three deployment targets — native desktop (E | summary | 2026-07-09 |
 | [theia-ai-agents](./pages/theia-ai-agents.md) | Theia AI is Theia's native, framework-level subsystem for building tailored AI c | concept | 2026-07-09 |
