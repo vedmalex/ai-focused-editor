@@ -25,6 +25,8 @@ import {
   NarrativeEntityBackendServicePath,
   NarrativeGraphBackendService,
   NarrativeGraphBackendServicePath,
+  ObsidianPluginBackendService,
+  ObsidianPluginBackendServicePath,
   OfficePreviewService,
   OfficePreviewServicePath,
   SourceLibraryBackendService,
@@ -37,6 +39,7 @@ import { NodeGitStatusService } from './node-git-status-service';
 import { NodeOfficePreviewService } from './node-office-preview-service';
 import { NodeLocalAiConnectionService } from './node-local-ai-connection-service';
 import { NodeManuscriptWorkspaceService } from './node-manuscript-workspace-service';
+import { NodeObsidianPluginService } from './node-obsidian-plugin-service';
 import {
   NodeAiModeRegistryService,
   NodeNarrativeEntityService,
@@ -75,6 +78,8 @@ export default new ContainerModule(bind => {
   bind(NarrativeGraphBackendService).toService(NodeNarrativeGraphService);
   bind(NodeOfficePreviewService).toSelf().inSingletonScope();
   bind(OfficePreviewService).toService(NodeOfficePreviewService);
+  bind(NodeObsidianPluginService).toSelf().inSingletonScope();
+  bind(ObsidianPluginBackendService).toService(NodeObsidianPluginService);
   bind(ConnectionHandler).toDynamicValue(ctx =>
     new RpcConnectionHandler<LocalAiStreamClient>(LocalAiConnectionServicePath, client => {
       const service = ctx.container.get<NodeLocalAiConnectionService>(NodeLocalAiConnectionService);
@@ -120,6 +125,11 @@ export default new ContainerModule(bind => {
   bind(ConnectionHandler).toDynamicValue(ctx =>
     new RpcConnectionHandler(OfficePreviewServicePath, () =>
       ctx.container.get(OfficePreviewService)
+    )
+  ).inSingletonScope();
+  bind(ConnectionHandler).toDynamicValue(ctx =>
+    new RpcConnectionHandler(ObsidianPluginBackendServicePath, () =>
+      ctx.container.get(ObsidianPluginBackendService)
     )
   ).inSingletonScope();
   bind(BackendApplicationContribution).to(ManuscriptWorkspaceBackendContribution).inSingletonScope();

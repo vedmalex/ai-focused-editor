@@ -23,6 +23,7 @@ export * from './manuscript-workspace-protocol';
 export * from './model-provider-protocol';
 export * from './narrative-entity-protocol';
 export * from './narrative-graph-protocol';
+export * from './obsidian-plugin-protocol';
 export * from './office-preview';
 export * from './relations-map';
 export * from './office-preview-protocol';

@@ -25,7 +25,7 @@ import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { parse } from 'yaml';
-import { ManuscriptWorkspaceService } from '../common';
+import { ManuscriptWorkspaceService, ObsidianPluginBackendService } from '../common';
 import {
   extractMetadataFields,
   flattenManifestRows,
@@ -39,7 +39,8 @@ import {
   type BookDoctorFix,
   type BookDoctorReport,
   type EntityCardRef,
-  type EntityTagOccurrence
+  type EntityTagOccurrence,
+  type ObsidianPluginCheckInput
 } from '../common/book-doctor';
 import {
   appendEntriesToManifest,
@@ -143,6 +144,9 @@ export class BookDoctorContribution
 
   @inject(UntitledResourceResolver)
   protected readonly untitledResources!: UntitledResourceResolver;
+
+  @inject(ObsidianPluginBackendService)
+  protected readonly obsidianPlugin!: ObsidianPluginBackendService;
 
   registerCommands(registry: CommandRegistry): void {
     registry.registerCommand(BookDoctorCommands.DOCTOR, {
@@ -276,6 +280,10 @@ export class BookDoctorContribution
     const citationsContent = await this.readTextIfExists(root.resolve('sources/citations.yaml'));
     const excerptsContent = await this.readTextIfExists(root.resolve('sources/excerpts.jsonl'));
 
+    // Obsidian companion plugin status (bundled/installed versions + .obsidian/).
+    // A backend hiccup must never break the doctor, so it degrades to no fix.
+    const obsidianPlugin = await this.gatherObsidianPluginInput(rootUri);
+
     return assembleBookDoctorReport({
       scaffoldEntries,
       exists,
@@ -290,8 +298,31 @@ export class BookDoctorContribution
       entityTagOccurrences,
       existingEntityCards,
       effectiveEntityTypes,
-      entityTypeProblems
+      entityTypeProblems,
+      obsidianPlugin
     });
+  }
+
+  /**
+   * Ask the backend for the Obsidian-plugin status (bundled/installed versions +
+   * `.obsidian/` presence). Returns undefined — so the check is skipped and no
+   * plugin fix is offered — when the backend is unreachable or the app shipped
+   * without the plugin assets (a `null` bundled version).
+   */
+  protected async gatherObsidianPluginInput(rootUri: string): Promise<ObsidianPluginCheckInput | undefined> {
+    try {
+      const status = await this.obsidianPlugin.getStatus(rootUri);
+      if (status.bundledVersion == null) {
+        return undefined;
+      }
+      return {
+        installedVersion: status.installedVersion,
+        bundledVersion: status.bundledVersion,
+        hasObsidianDir: status.hasObsidianDir
+      };
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -540,6 +571,12 @@ export class BookDoctorContribution
       case 'entity-card-missing':
         // params: [entity label, card name, mention count, first file]
         return nls.localize('ai-focused-editor/doctor/problem-entity-card-missing', 'Create the {0} card "{1}" — {2} mention(s), first in {3}.', ...params);
+      case 'install-obsidian-plugin':
+        // params: [bundled version]
+        return nls.localize('ai-focused-editor/doctor/problem-install-obsidian-plugin', 'Install the Obsidian companion plugin (AFE Companion {0}) into this book — the folder becomes a ready Obsidian vault.', ...params);
+      case 'update-obsidian-plugin':
+        // params: [installed version, bundled version]
+        return nls.localize('ai-focused-editor/doctor/problem-update-obsidian-plugin', 'Update the Obsidian companion plugin (installed {0}, bundled {1}).', ...params);
       default:
         return fix.description;
     }
@@ -789,10 +826,39 @@ export class BookDoctorContribution
   ): Promise<void> {
     let created = 0;
     let skipped = 0;
+    // Extra, standalone info lines (currently the Obsidian-plugin install result),
+    // shown after the created/skipped summary so their guidance stays readable.
+    const extraMessages: string[] = [];
 
     for (const fix of fixes) {
       const uri = root.resolve(fix.path);
       try {
+        if (fix.obsidianPlugin) {
+          // Routed through the backend installer — writes into <book>/.obsidian/,
+          // which is outside the normal FileService create flow.
+          const result = await this.obsidianPlugin.install(root.toString());
+          if (!result.ok) {
+            skipped += 1;
+            extraMessages.push(nls.localize(
+              'ai-focused-editor/doctor/obsidian-install-failed',
+              'Could not install the Obsidian plugin: {0}',
+              result.message ?? nls.localize('ai-focused-editor/doctor/obsidian-assets-missing', 'plugin assets unavailable')
+            ));
+            continue;
+          }
+          created += 1;
+          extraMessages.push(result.partial
+            ? nls.localize(
+                'ai-focused-editor/doctor/obsidian-installed-partial',
+                'Plugin installed into .obsidian/plugins/afe-companion, but community-plugins.json was left untouched ({0}) — enable AFE Companion manually in Obsidian.',
+                result.message ?? nls.localize('ai-focused-editor/doctor/obsidian-unparseable', 'unreadable')
+              )
+            : nls.localize(
+                'ai-focused-editor/doctor/obsidian-installed',
+                'Plugin installed into .obsidian/plugins/afe-companion — enable it in Obsidian (Community plugins).'
+              ));
+          continue;
+        }
         if (fix.manifest?.mode === 'append') {
           // Append-only: merge the new entries into the EXISTING manifest,
           // preserving its comments/format — never a wholesale rewrite.
@@ -838,6 +904,9 @@ export class BookDoctorContribution
       ));
     }
     await this.messages.info(`${parts.join(', ')}.`);
+    for (const message of extraMessages) {
+      await this.messages.info(message);
+    }
   }
 
   /** Refresh the manuscript navigator so new files/folders appear; missing widget is a no-op. */

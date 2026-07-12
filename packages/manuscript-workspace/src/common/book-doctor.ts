@@ -36,6 +36,7 @@ import {
   type EntityTypeProblem
 } from './entity-type-registry';
 import { buildEntityYaml } from './entity-creation';
+import { OBSIDIAN_PLUGIN_ID } from './obsidian-plugin-protocol';
 
 /**
  * Manifest reconstruction metadata attached to the special `manifest.yaml` fix.
@@ -60,6 +61,23 @@ export interface ManifestReconstructionFix {
   samplePaths: string[];
 }
 
+/**
+ * Marker attached to the Obsidian-plugin install/update fix. Carries the versions
+ * (for the label/message) and whether the book already has an `.obsidian/` dir.
+ */
+export interface ObsidianPluginFix {
+  /** `install` — the plugin is absent; `update` — an older version is installed. */
+  mode: 'install' | 'update';
+  /** `hint` for a missing plugin (a gentle convenience), `warning` for an outdated one. */
+  severity: 'hint' | 'warning';
+  /** Installed version (`null` for a fresh install). */
+  installedVersion: string | null;
+  /** Bundled version that will be written. */
+  bundledVersion: string;
+  /** Whether the book folder already has an `.obsidian/` directory. */
+  hasObsidianDir: boolean;
+}
+
 /** An auto-fixable gap the doctor offers to create (folder or seeded file). */
 export interface BookDoctorFix {
   /** Workspace-relative path to create (forward slashes, no leading `./`). */
@@ -72,6 +90,12 @@ export interface BookDoctorFix {
   description: string;
   /** Present on the `manifest.yaml` reconstruction/append fix (see above). */
   manifest?: ManifestReconstructionFix;
+  /**
+   * Present on the Obsidian-plugin install/update fix. Its presence tells the
+   * browser to route the fix through the backend `ObsidianPluginBackendService`
+   * (writing into `<book>/.obsidian/`) instead of the normal FileService create.
+   */
+  obsidianPlugin?: ObsidianPluginFix;
   /**
    * Stable kebab-case identifier for the fix kind (e.g. `create-folder`). The
    * rendering contribution maps it to a localized {@link description}; when
@@ -204,6 +228,22 @@ export interface BookDoctorInput {
    * is absent, empty, or fully valid.
    */
   entityTypeProblems?: readonly EntityTypeProblem[];
+  /**
+   * Obsidian-companion-plugin status (bundled/installed versions + `.obsidian/`
+   * presence), gathered from the backend. When present, drives the install/update
+   * fix. Absent (or a `null` bundled version) yields no plugin fix.
+   */
+  obsidianPlugin?: ObsidianPluginCheckInput;
+}
+
+/** Resolved inputs for {@link obsidianPluginFindings}. */
+export interface ObsidianPluginCheckInput {
+  /** Version of the currently-installed plugin, or `null`/absent when not installed. */
+  installedVersion?: string | null;
+  /** Version bundled with the app, or `null` when the assets are unavailable. */
+  bundledVersion: string | null;
+  /** Whether the book folder already has an `.obsidian/` directory. */
+  hasObsidianDir: boolean;
 }
 
 function errorMessage(error: unknown): string {
@@ -678,6 +718,95 @@ export function entityTypeProblemFindings(problems: readonly EntityTypeProblem[]
   });
 }
 
+/* ----------------------------------------------------------------------- */
+/* Obsidian companion plugin (install the field notebook into the book)      */
+/* ----------------------------------------------------------------------- */
+
+/**
+ * Compare two semver-ish version strings by their leading numeric triple
+ * (`major.minor.patch`; a missing component is 0, non-numeric junk is 0, extra
+ * components beyond the third are ignored). Returns a negative number when `a` is
+ * older than `b`, a positive number when newer, and 0 when equal. Pure and total
+ * — never throws on malformed input (both sides degrade to their numeric prefix).
+ */
+export function compareVersionTriples(a: string, b: string): number {
+  const parse = (value: string): [number, number, number] => {
+    const parts = value.trim().split('.');
+    const at = (index: number): number => {
+      const digits = /^\d+/.exec(parts[index]?.trim() ?? '');
+      return digits ? Number.parseInt(digits[0], 10) : 0;
+    };
+    return [at(0), at(1), at(2)];
+  };
+  const left = parse(a);
+  const right = parse(b);
+  for (let index = 0; index < 3; index++) {
+    if (left[index] !== right[index]) {
+      return left[index] - right[index];
+    }
+  }
+  return 0;
+}
+
+/**
+ * Obsidian-plugin check — offer to install the AFE Companion plugin when it is
+ * absent (a `hint`, since installing it turns the book folder into a ready
+ * Obsidian vault) or to update it when an OLDER version is installed (a
+ * `warning`). Returns a single fix routed through the backend installer (marked
+ * with {@link ObsidianPluginFix}), or an empty list when nothing is needed.
+ *
+ * A `null` `bundledVersion` (the app shipped without the plugin assets) yields NO
+ * fix — there is nothing to install from. An installed version equal to or newer
+ * than the bundled one also yields nothing.
+ */
+export function obsidianPluginFindings(input: ObsidianPluginCheckInput): BookDoctorFix[] {
+  const { bundledVersion, hasObsidianDir } = input;
+  if (bundledVersion == null) {
+    return [];
+  }
+  const installedVersion = input.installedVersion ?? null;
+  const path = `.obsidian/plugins/${OBSIDIAN_PLUGIN_ID}`;
+
+  if (installedVersion == null) {
+    return [{
+      path,
+      kind: 'file',
+      code: 'install-obsidian-plugin',
+      params: [bundledVersion],
+      description:
+        `Install the Obsidian companion plugin (AFE Companion ${bundledVersion}) into this book — ` +
+        'the folder becomes a ready Obsidian vault.',
+      obsidianPlugin: {
+        mode: 'install',
+        severity: 'hint',
+        installedVersion: null,
+        bundledVersion,
+        hasObsidianDir
+      }
+    }];
+  }
+
+  if (compareVersionTriples(installedVersion, bundledVersion) < 0) {
+    return [{
+      path,
+      kind: 'file',
+      code: 'update-obsidian-plugin',
+      params: [installedVersion, bundledVersion],
+      description:
+        `Update the Obsidian companion plugin (installed ${installedVersion}, bundled ${bundledVersion}).`,
+      obsidianPlugin: {
+        mode: 'update',
+        severity: 'warning',
+        installedVersion,
+        bundledVersion,
+        hasObsidianDir
+      }
+    }];
+  }
+
+  return [];
+}
+
 /**
  * Compose the full {@link BookDoctorReport} from resolved inputs. Fixes are
  * de-duplicated by path, preserving the parents-before-children order the
@@ -746,6 +875,14 @@ export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorRepo
   const effectiveTypes = input.effectiveEntityTypes ?? BASE_ENTITY_TYPES;
   for (const fix of entityCardMissingFixes(occurrences, existingCards, effectiveTypes)) {
     push(fix);
+  }
+
+  // Obsidian companion plugin: offer to install/update the field notebook into
+  // the book's `.obsidian/` so the folder doubles as a ready Obsidian vault.
+  if (input.obsidianPlugin) {
+    for (const fix of obsidianPluginFindings(input.obsidianPlugin)) {
+      push(fix);
+    }
   }
 
   const findings: BookDoctorFinding[] = [];

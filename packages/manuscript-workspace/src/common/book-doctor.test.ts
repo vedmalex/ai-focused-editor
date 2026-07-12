@@ -13,9 +13,11 @@ import {
   excerptsParseFinding,
   humanizeEntityId,
   manifestAppendFix,
+  compareVersionTriples,
   manifestChapterFixes,
   manifestRecreateFix,
   metadataFindings,
+  obsidianPluginFindings,
   preferredEntityLabel,
   scaffoldFixes,
   type EntityCardRef,
@@ -458,6 +460,68 @@ describe('entityTypeProblemFindings', () => {
     expect(findings).toHaveLength(1);
     expect(findings[0].code).toBe('entity-type-problem');
     expect(findings[0].params?.[0]).toBe('character');
+  });
+});
+
+describe('compareVersionTriples', () => {
+  test('orders by the numeric major.minor.patch triple', () => {
+    expect(compareVersionTriples('0.1.0', '0.2.0')).toBeLessThan(0);
+    expect(compareVersionTriples('0.2.0', '0.1.0')).toBeGreaterThan(0);
+    expect(compareVersionTriples('1.0.0', '0.9.9')).toBeGreaterThan(0);
+    expect(compareVersionTriples('0.1.0', '0.1.0')).toBe(0);
+  });
+
+  test('treats missing components as 0 and ignores extra/non-numeric junk', () => {
+    expect(compareVersionTriples('1', '1.0.0')).toBe(0);
+    expect(compareVersionTriples('1.2', '1.2.0')).toBe(0);
+    // A 4th component beyond the triple is ignored.
+    expect(compareVersionTriples('1.2.3.4', '1.2.3')).toBe(0);
+    // A numeric lead is kept (trailing junk after the digits is dropped).
+    expect(compareVersionTriples('0.1.0-beta', '0.1.0')).toBe(0);
+    // A component with no leading digit degrades to 0 (so 'v2' < '2').
+    expect(compareVersionTriples('v2.0.0', '2.0.0')).toBeLessThan(0);
+  });
+});
+
+describe('obsidianPluginFindings', () => {
+  test('offers an install (hint) fix when the plugin is not installed', () => {
+    const fixes = obsidianPluginFindings({ installedVersion: null, bundledVersion: '0.1.0', hasObsidianDir: false });
+    expect(fixes).toHaveLength(1);
+    expect(fixes[0].code).toBe('install-obsidian-plugin');
+    expect(fixes[0].path).toBe('.obsidian/plugins/afe-companion');
+    expect(fixes[0].params).toEqual(['0.1.0']);
+    expect(fixes[0].obsidianPlugin).toEqual({
+      mode: 'install',
+      severity: 'hint',
+      installedVersion: null,
+      bundledVersion: '0.1.0',
+      hasObsidianDir: false
+    });
+  });
+
+  test('offers install regardless of whether .obsidian already exists (threads hasObsidianDir)', () => {
+    const fixes = obsidianPluginFindings({ bundledVersion: '0.1.0', hasObsidianDir: true });
+    expect(fixes).toHaveLength(1);
+    expect(fixes[0].obsidianPlugin?.hasObsidianDir).toBe(true);
+  });
+
+  test('offers an update (warning) fix when an older version is installed', () => {
+    const fixes = obsidianPluginFindings({ installedVersion: '0.1.0', bundledVersion: '0.2.0', hasObsidianDir: true });
+    expect(fixes).toHaveLength(1);
+    expect(fixes[0].code).toBe('update-obsidian-plugin');
+    expect(fixes[0].params).toEqual(['0.1.0', '0.2.0']);
+    expect(fixes[0].obsidianPlugin?.mode).toBe('update');
+    expect(fixes[0].obsidianPlugin?.severity).toBe('warning');
+  });
+
+  test('offers nothing when the installed version is equal or newer', () => {
+    expect(obsidianPluginFindings({ installedVersion: '0.2.0', bundledVersion: '0.2.0', hasObsidianDir: true })).toEqual([]);
+    expect(obsidianPluginFindings({ installedVersion: '0.3.0', bundledVersion: '0.2.0', hasObsidianDir: true })).toEqual([]);
+  });
+
+  test('offers nothing when the bundled version is unavailable (null)', () => {
+    expect(obsidianPluginFindings({ installedVersion: null, bundledVersion: null, hasObsidianDir: false })).toEqual([]);
+    expect(obsidianPluginFindings({ installedVersion: '0.1.0', bundledVersion: null, hasObsidianDir: true })).toEqual([]);
   });
 });
 
