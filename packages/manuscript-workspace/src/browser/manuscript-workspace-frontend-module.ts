@@ -68,6 +68,7 @@ import { GitActionsContribution } from './git-actions-contribution';
 import { ManuscriptAiContextAssembler } from './manuscript-ai-context-assembler';
 import { ManuscriptContextVariableContribution } from './manuscript-context-variable-contribution';
 import { ChatContextActionsContribution } from './chat-context-actions-contribution';
+import { ChatContextSetsContribution } from './chat-context-sets-contribution';
 import { ManuscriptChatAgentContribution } from './manuscript-chat-agent-contribution';
 import {
   ManuscriptCreateDiagramTool,
@@ -162,6 +163,10 @@ export default new ContainerModule(bind => {
   bind(ChatContextActionsContribution).toSelf().inSingletonScope();
   bind(CommandContribution).toService(ChatContextActionsContribution);
   bind(MenuContribution).toService(ChatContextActionsContribution);
+  bind(ChatContextSetsContribution).toSelf().inSingletonScope();
+  bind(AIVariableContribution).toService(ChatContextSetsContribution);
+  bind(CommandContribution).toService(ChatContextSetsContribution);
+  bind(MenuContribution).toService(ChatContextSetsContribution);
   bind(AiProfilePreferenceService).toSelf().inSingletonScope();
   bind(AiVerificationService).toSelf().inSingletonScope();
   bind(AiProfileStatusBarContribution).toSelf().inSingletonScope();

@@ -11,6 +11,7 @@ export const AI_FOCUSED_EDITOR_AI_ALIASES = 'aiFocusedEditor.ai.aliases';
 export const AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS = 'aiFocusedEditor.ai.activeAlias';
 export const AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT = 'aiFocusedEditor.ai.pinnedEndpoint';
 export const AI_FOCUSED_EDITOR_AI_REQUEST_LOG = 'aiFocusedEditor.ai.requestLog';
+export const AI_FOCUSED_EDITOR_AI_MANUSCRIPT_OVERVIEW = 'aiFocusedEditor.ai.manuscriptOverview';
 export const AI_FOCUSED_EDITOR_PREVIEW_SHOW_TAG_CHIPS = 'aiFocusedEditor.preview.showTagChips';
 export const AI_FOCUSED_EDITOR_WELCOME_SHOW_ON_STARTUP = 'aiFocusedEditor.welcome.showOnStartup';
 export const AI_FOCUSED_EDITOR_LIBRARY_PATH = 'aiFocusedEditor.library.path';
@@ -104,6 +105,16 @@ export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
         nls.localize('ai-focused-editor/ai-log/pref-request-log-full', 'Full — also store the request prompts and the response text. WARNING: this writes your manuscript text into ai/chat/requests-<date>.jsonl in the workspace.')
       ],
       description: nls.localize('ai-focused-editor/ai-log/pref-request-log-desc', 'Debug logging of AI requests to ai/chat/requests-<date>.jsonl (one record per failover leg: what was sent and received per endpoint/alias). "metadata" logs routing metadata only; "full" ALSO writes the prompts and response text — i.e. your manuscript content — into the workspace log file. Leave "off" unless you are diagnosing AI behavior.')
+    },
+    [AI_FOCUSED_EDITOR_AI_MANUSCRIPT_OVERVIEW]: {
+      type: 'string',
+      enum: ['full', 'compact'],
+      default: 'full',
+      enumDescriptions: [
+        nls.localize('ai-focused-editor/chat-context/pref-overview-full', 'Full — the {{manuscript}} overview lists every entity and source (the historical format).'),
+        nls.localize('ai-focused-editor/chat-context/pref-overview-compact', 'Compact — the {{manuscript}} overview keeps only the manifest structure plus entity/source/note counts, dropping the expanded listings.')
+      ],
+      description: nls.localize('ai-focused-editor/chat-context/pref-overview-desc', 'How much the {{manuscript}} whole-project overview includes. "full" lists every entity card and source file; "compact" keeps only the manifest structure skeleton and entity/source/note counts. Compact trims the always-on agent context for large books.')
     },
     [AI_FOCUSED_EDITOR_PREVIEW_SHOW_TAG_CHIPS]: {
       type: 'boolean',

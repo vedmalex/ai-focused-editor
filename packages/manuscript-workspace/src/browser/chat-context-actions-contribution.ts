@@ -13,10 +13,19 @@ import URI from '@theia/core/lib/common/uri';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { ApplicationShell, WidgetManager } from '@theia/core/lib/browser';
 import type { TreeNode } from '@theia/core/lib/browser/tree';
+import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
+import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { ChatService } from '@theia/ai-chat/lib/common';
 import type { AIVariable } from '@theia/ai-core';
 import { FILE_VARIABLE } from '@theia/ai-core/lib/browser/file-variable-contribution';
+import {
+  buildChapterBundle,
+  SourceLibraryService,
+  type ChapterBundleItem,
+  type ChapterBundleVariable,
+  type SourceLibraryService as SourceLibraryServiceType
+} from '../common';
 import {
   AuthorMaterialTreeNode,
   ManuscriptTreeNode
@@ -53,7 +62,20 @@ export namespace ChatContextCommands {
     'ai-focused-editor/chat-context/send-selection',
     'ai-focused-editor/chat-context/category'
   );
+  export const CHAPTER_WORKING_SET: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.chat.chapterWorkingSet', category: CATEGORY, label: 'Work with Chapter...' },
+    'ai-focused-editor/chat-context/chapter-working-set',
+    'ai-focused-editor/chat-context/category'
+  );
 }
+
+/** Map a bundle item's variable name to the chat-context variable it attaches through. */
+const BUNDLE_VARIABLE: Record<ChapterBundleVariable, AIVariable> = {
+  chapter: CHAPTER_CONTEXT_VARIABLE,
+  entity: ENTITY_CONTEXT_VARIABLE,
+  citation: CITATION_CONTEXT_VARIABLE,
+  source: SOURCE_CONTEXT_VARIABLE
+};
 
 /** A resolved attach target: which context variable, and the argument to pass. */
 interface ContextTarget {
@@ -68,6 +90,14 @@ interface CategoryPick extends QuickPickItem {
 interface ArtifactPick extends QuickPickItem {
   variable: AIVariable;
   arg: string;
+}
+
+/** A row in the chapter working-set multi-select: a content item or an "Add …" action. */
+interface BundlePickItem extends QuickPickItem {
+  /** The attach target for a content row; absent on action rows. */
+  target?: ContextTarget;
+  /** Which extension picker an action row opens. */
+  action?: 'add-source' | 'add-note';
 }
 
 /**
@@ -109,6 +139,15 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
   @inject(ManuscriptContextVariableContribution)
   protected readonly variables!: ManuscriptContextVariableContribution;
 
+  @inject(SourceLibraryService)
+  protected readonly sourceLibrary!: SourceLibraryServiceType;
+
+  @inject(FileService)
+  protected readonly fileService!: FileService;
+
+  @inject(EditorManager)
+  protected readonly editorManager!: EditorManager;
+
   registerCommands(commands: CommandRegistry): void {
     commands.registerCommand(ChatContextCommands.ADD_CONTEXT, {
       execute: () => this.addContextInteractively()
@@ -118,6 +157,9 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
       isEnabled: () => this.selectedContextTarget() !== undefined,
       isVisible: () => this.selectedContextTarget() !== undefined
     });
+    commands.registerCommand(ChatContextCommands.CHAPTER_WORKING_SET, {
+      execute: () => this.chapterWorkingSet()
+    });
   }
 
   registerMenus(menus: MenuModelRegistry): void {
@@ -126,11 +168,19 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
       commandId: ChatContextCommands.ADD_CONTEXT.id,
       order: '0'
     });
+    menus.registerMenuAction([...AiFocusedEditorMenus.MAIN, '1b_chat'], {
+      commandId: ChatContextCommands.CHAPTER_WORKING_SET.id,
+      order: '1'
+    });
     // Manuscript navigator context menu: a dedicated `3_chat` group after the
     // create (`1_create`) and book (`2_book`) groups.
     menus.registerMenuAction([...ManuscriptTreeWidget.CONTEXT_MENU, '3_chat'], {
       commandId: ChatContextCommands.SEND_SELECTION.id,
       order: '0'
+    });
+    menus.registerMenuAction([...ManuscriptTreeWidget.CONTEXT_MENU, '3_chat'], {
+      commandId: ChatContextCommands.CHAPTER_WORKING_SET.id,
+      order: '1'
     });
   }
 
@@ -359,6 +409,200 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
     return root.relative(new URI(materialUri))?.toString();
   }
 
+  // --- "Work with Chapter..." bundle -----------------------------------------
+
+  /**
+   * Build a chapter working set — the chapter plus the entities, citations, and
+   * sources it references — and attach the author-approved subset to the chat.
+   *
+   * The chapter defaults to the manuscript-tree selection (when a file node is
+   * selected) or the active editor; otherwise the author picks one. Everything
+   * is preselected in a multi-select QuickPick so the author only unchecks
+   * noise, and can extend the set with extra source/note pickers.
+   */
+  protected async chapterWorkingSet(): Promise<void> {
+    const chapter = await this.chooseChapter();
+    if (!chapter) {
+      return;
+    }
+    const rootUri = this.workspaceService.tryGetRoots()[0]?.resource;
+    if (!rootUri) {
+      this.messages.info(nls.localize('ai-focused-editor/chat-context/no-workspace', 'Open a manuscript workspace folder first.'));
+      return;
+    }
+
+    let chapterText: string;
+    try {
+      chapterText = (await this.fileService.read(rootUri.resolve(chapter.path))).value;
+    } catch (error) {
+      this.messages.error(nls.localize(
+        'ai-focused-editor/chat-context/chapter-read-failed',
+        'Could not read chapter {0}: {1}',
+        chapter.path,
+        error instanceof Error ? error.message : String(error)
+      ));
+      return;
+    }
+
+    const snapshot = await this.sourceLibrary.getSnapshot();
+    const bundle = buildChapterBundle(chapterText, {
+      chapterPath: chapter.path,
+      chapterLabel: chapter.title,
+      citations: snapshot.citations,
+      excerpts: snapshot.excerpts
+    });
+
+    await this.attachChapterBundle(bundle);
+  }
+
+  /**
+   * Resolve the chapter to work with, preselecting the tree selection or active
+   * editor. Returns `undefined` when the author cancels or no chapters exist.
+   */
+  protected async chooseChapter(): Promise<{ path: string; title: string } | undefined> {
+    const chapters = await this.variables.collectChapters();
+    if (chapters.length === 0) {
+      this.messages.info(nls.localize('ai-focused-editor/chat-context/no-chapters', 'This workspace has no Markdown chapters yet.'));
+      return undefined;
+    }
+    const defaultPath = this.selectedChapterPath() ?? this.activeEditorChapterPath(chapters);
+    const items = chapters.map(chapter => ({ label: chapter.title, description: chapter.path, value: chapter.path }));
+    const activeItem = defaultPath ? items.find(item => item.value === defaultPath) : undefined;
+    const picked = await this.quickInput.showQuickPick(items, {
+      title: ChatContextCommands.CHAPTER_WORKING_SET.label,
+      placeholder: nls.localize('ai-focused-editor/chat-context/pick-chapter', 'Select a chapter'),
+      activeItem
+    });
+    if (!picked) {
+      return undefined;
+    }
+    const match = chapters.find(chapter => chapter.path === picked.value);
+    return match ? { path: match.path, title: match.title } : undefined;
+  }
+
+  /** Workspace-relative path of a selected manuscript-tree file node, if any. */
+  protected selectedChapterPath(): string | undefined {
+    const widget = this.widgetManager.tryGetWidget<ManuscriptTreeWidget>(ManuscriptTreeWidget.ID);
+    const node = widget?.manuscriptModel.selectedNodes[0];
+    return node && ManuscriptTreeNode.isFile(node) && node.manuscript.path.endsWith('.md')
+      ? node.manuscript.path
+      : undefined;
+  }
+
+  /** The active editor's path, when it matches a known chapter. */
+  protected activeEditorChapterPath(chapters: { path: string; title: string }[]): string | undefined {
+    const editor = this.editorManager.currentEditor?.editor ?? this.editorManager.activeEditor?.editor;
+    if (!editor) {
+      return undefined;
+    }
+    const relative = this.relativePath(editor.uri.toString());
+    return relative && chapters.some(chapter => chapter.path === relative) ? relative : undefined;
+  }
+
+  /**
+   * Present the bundle as a preselected multi-select QuickPick. Two extra rows
+   * ("Add source…"/"Add note…") carry an inline button that opens the matching
+   * picker to extend the set. On accept, the checked items are attached.
+   */
+  protected async attachChapterBundle(bundle: ChapterBundleItem[]): Promise<void> {
+    const addButton = {
+      iconClass: 'codicon codicon-add',
+      tooltip: nls.localize('ai-focused-editor/chat-context/bundle-extend', 'Add to the working set')
+    };
+    const toRow = (target: ContextTarget, label: string, detail?: string): BundlePickItem =>
+      ({ label, description: detail, target });
+
+    const rows: BundlePickItem[] = bundle.map(item => toRow(
+      { variable: BUNDLE_VARIABLE[item.variable], arg: item.arg },
+      item.label,
+      item.detail
+    ));
+    const addSourceRow: BundlePickItem = {
+      label: nls.localize('ai-focused-editor/chat-context/bundle-add-source', 'Add source…'),
+      alwaysShow: true,
+      buttons: [addButton],
+      action: 'add-source'
+    };
+    const addNoteRow: BundlePickItem = {
+      label: nls.localize('ai-focused-editor/chat-context/bundle-add-note', 'Add note…'),
+      alwaysShow: true,
+      buttons: [addButton],
+      action: 'add-note'
+    };
+
+    const quickPick = this.quickInput.createQuickPick<BundlePickItem>();
+    quickPick.title = ChatContextCommands.CHAPTER_WORKING_SET.label;
+    quickPick.canSelectMany = true;
+    quickPick.placeholder = nls.localize(
+      'ai-focused-editor/chat-context/bundle-placeholder',
+      'Uncheck anything you do not want; the checked items are attached to the chat.'
+    );
+    quickPick.items = [...rows, addSourceRow, addNoteRow];
+    quickPick.selectedItems = rows;
+
+    quickPick.onDidTriggerItemButton(async event => {
+      const added = await this.pickBundleExtension((event.item as BundlePickItem).action);
+      if (!added) {
+        return;
+      }
+      const contentRows = quickPick.items.filter((item): item is BundlePickItem =>
+        QuickPickItem.is(item) && (item as BundlePickItem).target !== undefined);
+      if (contentRows.some(row => row.target && this.sameTarget(row.target, added.target))) {
+        return;
+      }
+      const newRow = toRow(added.target, added.label, added.detail);
+      const selected = quickPick.selectedItems.filter((item): item is BundlePickItem => QuickPickItem.is(item));
+      quickPick.items = [...contentRows, newRow, addSourceRow, addNoteRow];
+      quickPick.selectedItems = [...selected, newRow];
+    });
+
+    return new Promise<void>(resolve => {
+      let accepted = false;
+      quickPick.onDidAccept(async () => {
+        accepted = true;
+        const targets = quickPick.selectedItems
+          .filter((item): item is BundlePickItem => QuickPickItem.is(item) && (item as BundlePickItem).target !== undefined)
+          .map(item => item.target!);
+        quickPick.hide();
+        if (targets.length > 0) {
+          await this.attachMany(targets);
+        }
+        resolve();
+      });
+      quickPick.onDidHide(() => {
+        quickPick.dispose();
+        if (!accepted) {
+          resolve();
+        }
+      });
+      quickPick.show();
+    });
+  }
+
+  /** Open the source/note picker for an "Add …" row; returns the new target. */
+  protected async pickBundleExtension(
+    action: BundlePickItem['action']
+  ): Promise<{ target: ContextTarget; label: string; detail: string } | undefined> {
+    if (action === 'add-source') {
+      const path = await this.variables.pickSource();
+      return path ? { target: { variable: SOURCE_CONTEXT_VARIABLE, arg: path }, label: this.baseName(path), detail: path } : undefined;
+    }
+    if (action === 'add-note') {
+      const path = await this.variables.pickNote();
+      return path ? { target: { variable: NOTE_CONTEXT_VARIABLE, arg: path }, label: this.baseName(path), detail: path } : undefined;
+    }
+    return undefined;
+  }
+
+  protected sameTarget(left: ContextTarget, right: ContextTarget): boolean {
+    return left.variable.name === right.variable.name && left.arg === right.arg;
+  }
+
+  protected baseName(path: string): string {
+    const slash = path.replace(/\/+$/, '').lastIndexOf('/');
+    return slash < 0 ? path : path.slice(slash + 1);
+  }
+
   // --- Attach + reveal -------------------------------------------------------
 
   /**
@@ -379,6 +623,26 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
       'ai-focused-editor/chat-context/attached',
       'Added "{0}" to the chat context.',
       label
+    ));
+  }
+
+  /**
+   * Attach several targets in one go (the chapter working set), then reveal the
+   * chat and report a per-kind summary.
+   */
+  protected async attachMany(targets: ContextTarget[]): Promise<void> {
+    const session = this.chatService.getActiveSession() ?? this.chatService.createSession();
+    session.model.context.addVariables(...targets.map(target => ({ variable: target.variable, arg: target.arg })));
+    await this.revealChatView();
+    const count = (name: string): number => targets.filter(target => target.variable.name === name).length;
+    this.messages.info(nls.localize(
+      'ai-focused-editor/chat-context/bundle-attached',
+      'Attached to chat: {0} chapter, {1} entities, {2} citations, {3} sources, {4} notes.',
+      count('chapter'),
+      count('entity'),
+      count('citation'),
+      count('source'),
+      count('note')
     ));
   }
 

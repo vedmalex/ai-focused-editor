@@ -749,7 +749,7 @@ export class ManuscriptContextVariableContribution implements AIVariableContribu
     return picked?.value;
   }
 
-  protected async pickSource(): Promise<string | undefined> {
+  async pickSource(): Promise<string | undefined> {
     const sources = await this.collectSources();
     if (sources.length === 0) {
       return undefined;
@@ -761,7 +761,7 @@ export class ManuscriptContextVariableContribution implements AIVariableContribu
     return picked?.value;
   }
 
-  protected async pickNote(): Promise<string | undefined> {
+  async pickNote(): Promise<string | undefined> {
     const notes = await this.collectNotes();
     if (notes.length === 0) {
       return undefined;
