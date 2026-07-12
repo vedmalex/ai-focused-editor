@@ -292,3 +292,34 @@ export function knowledgeNoteRelativePath(category: string | undefined, title: s
 export function buildKnowledgeNoteMarkdown(title: string): string {
   return `# ${title}\n\n`;
 }
+
+/** Workspace-relative folder for a new book skill: `.prompts/skills/<slug>`. */
+export function skillFolderRelativePath(slug: string): string {
+  return `.prompts/skills/${slug}`;
+}
+
+/**
+ * Render a new `SKILL.md`: a YAML frontmatter block (`name`, `description`) —
+ * the exact contract Theia's SkillService reads — followed by a short starter
+ * body explaining that the skill becomes `{{skill:<slug>}}` in chat. The
+ * frontmatter is emitted through the YAML serializer so names/descriptions with
+ * colons, quotes, or other special characters stay valid.
+ */
+export function buildSkillMarkdown(slug: string, name: string, description: string): string {
+  const frontmatter = stringify({ name, description }).trimEnd();
+  return [
+    '---',
+    frontmatter,
+    '---',
+    '',
+    `# ${name}`,
+    '',
+    'Describe the voice, terminology, and formatting rules the AI should follow',
+    'for this book. The editor discovers this skill automatically and offers it in',
+    'the AI chat Skills list.',
+    '',
+    `Reference it from a prompt with \`{{skill:${slug}}}\` (or pull in every skill`,
+    'with `{{skills}}`).',
+    ''
+  ].join('\n');
+}

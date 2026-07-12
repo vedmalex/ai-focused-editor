@@ -26,7 +26,8 @@ const SECTION_ICONS: Record<AuthorMaterialsSectionKind, string> = {
   locations: 'codicon codicon-location afe-ico-locations',
   citations: 'codicon codicon-quote afe-ico-citations',
   sources: 'codicon codicon-library afe-ico-sources',
-  knowledge: 'codicon codicon-lightbulb afe-ico-knowledge'
+  knowledge: 'codicon codicon-lightbulb afe-ico-knowledge',
+  skills: 'codicon codicon-mortar-board afe-ico-skills'
 };
 
 /**
@@ -43,7 +44,8 @@ const MATERIAL_ICONS: Record<AuthorMaterialsSectionKind, string> = {
   locations: 'codicon codicon-milestone afe-ico-locations',
   citations: 'codicon codicon-bookmark afe-ico-citations',
   sources: 'codicon codicon-file afe-ico-sources',
-  knowledge: 'codicon codicon-note afe-ico-knowledge'
+  knowledge: 'codicon codicon-note afe-ico-knowledge',
+  skills: 'codicon codicon-mortar-board afe-ico-skills'
 };
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.tif', '.tiff', '.bmp'];

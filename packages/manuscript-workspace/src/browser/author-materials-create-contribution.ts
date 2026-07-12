@@ -26,6 +26,7 @@ import {
 } from '../common/knowledge-templates';
 import {
   buildEntityYaml,
+  buildSkillMarkdown,
   createSemanticEntityId,
   CreatableEntityKind,
   CREATABLE_ENTITY_KINDS,
@@ -35,6 +36,7 @@ import {
   entityRelativePath,
   KNOWLEDGE_CATEGORIES,
   knowledgeNoteRelativePath,
+  skillFolderRelativePath,
   uniqueRelativePath
 } from '../common/entity-creation';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
@@ -97,6 +99,11 @@ export namespace AuthorMaterialsCommands {
   export const NEW_DIAGRAM: Command = Command.toLocalizedCommand(
     { id: 'ai-focused-editor.authorMaterials.newDiagram', category: CATEGORY, label: 'New Diagram...' },
     'ai-focused-editor/create/new-diagram',
+    CATEGORY_KEY
+  );
+  export const NEW_SKILL: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.authorMaterials.newSkill', category: CATEGORY, label: 'New Skill...' },
+    'ai-focused-editor/create/new-skill',
     CATEGORY_KEY
   );
 }
@@ -307,6 +314,10 @@ export class AuthorMaterialsCreateContribution
       execute: () => this.createDiagram(),
       isEnabled: () => this.hasWorkspace()
     });
+    commands.registerCommand(AuthorMaterialsCommands.NEW_SKILL, {
+      execute: () => this.createSkill(),
+      isEnabled: () => this.hasWorkspace()
+    });
   }
 
   registerMenus(menus: MenuModelRegistry): void {
@@ -344,7 +355,8 @@ export class AuthorMaterialsCreateContribution
       { command: AuthorMaterialsCommands.NEW_CITATION, section: 'citations' },
       { command: AuthorMaterialsCommands.NEW_KNOWLEDGE_NOTE, section: 'knowledge' },
       { command: AuthorMaterialsCommands.ADD_SOURCE_FILE, section: 'sources' },
-      { command: AuthorMaterialsCommands.NEW_DIAGRAM, section: 'sources' }
+      { command: AuthorMaterialsCommands.NEW_DIAGRAM, section: 'sources' },
+      { command: AuthorMaterialsCommands.NEW_SKILL, section: 'skills' }
     ];
   }
 
@@ -668,6 +680,80 @@ export class AuthorMaterialsCreateContribution
 
     await this.openAndRefresh(fileUri);
     this.messages.info(nls.localize('ai-focused-editor/create/diagram-created', 'Created diagram "{0}".', trimmed));
+  }
+
+  /**
+   * Create a book-local AI skill (`.prompts/skills/<slug>/SKILL.md`) from a
+   * prompted name and an optional one-line description, then open the SKILL.md
+   * in the editor. The folder is unique-suffixed on collision so two skills with
+   * the same name never share a directory. Theia's SkillService discovers the
+   * new file automatically; this is only the authoring surface.
+   */
+  protected async createSkill(): Promise<void> {
+    const root = await this.getRoot();
+    if (!root) {
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/create/skill-no-workspace',
+        'Open a manuscript workspace before creating a skill.'
+      ));
+      return;
+    }
+
+    const name = await this.quickInput.input({
+      title: nls.localize('ai-focused-editor/create/skill-title', 'New Skill'),
+      prompt: nls.localize('ai-focused-editor/create/skill-prompt', 'Skill name'),
+      placeHolder: nls.localize('ai-focused-editor/create/skill-placeholder', 'e.g. Style guide'),
+      validateInput: async value => (value.trim()
+        ? undefined
+        : nls.localize('ai-focused-editor/create/skill-empty', 'Skill name cannot be empty.'))
+    });
+    const trimmedName = name?.trim();
+    if (!trimmedName) {
+      return;
+    }
+
+    // Optional one-line description; Enter with an empty box skips it.
+    const description = await this.quickInput.input({
+      title: nls.localize('ai-focused-editor/create/skill-title', 'New Skill'),
+      prompt: nls.localize('ai-focused-editor/create/skill-description-prompt', 'Skill description (optional)'),
+      placeHolder: nls.localize(
+        'ai-focused-editor/create/skill-description-placeholder',
+        'What this skill tells the AI to do — press Enter to skip'
+      )
+    });
+    const trimmedDescription = description?.trim()
+      || nls.localize('ai-focused-editor/create/skill-description-default', 'What this skill tells the AI to do.');
+
+    const slug = createSemanticEntityId('skill', trimmedName);
+    const existing = await this.collectExistingRelPaths(root, '.prompts/skills');
+    const relFolder = uniqueRelativePath(
+      skillFolderRelativePath(slug),
+      candidate => existing.has(candidate)
+    );
+    const finalSlug = relFolder.slice(relFolder.lastIndexOf('/') + 1);
+
+    await this.ensureFolder(root.resolve('.prompts'));
+    await this.ensureFolder(root.resolve('.prompts/skills'));
+    await this.ensureFolder(root.resolve(relFolder));
+
+    const fileUri = root.resolve(`${relFolder}/SKILL.md`);
+    try {
+      await this.fileService.create(
+        fileUri,
+        buildSkillMarkdown(finalSlug, trimmedName, trimmedDescription),
+        { overwrite: false }
+      );
+    } catch (error) {
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/create/skill-failed',
+        'Could not create skill: {0}',
+        this.detail(error)
+      ));
+      return;
+    }
+
+    await this.openAndRefresh(fileUri);
+    this.messages.info(nls.localize('ai-focused-editor/create/skill-created', 'Created skill "{0}".', trimmedName));
   }
 
   /**

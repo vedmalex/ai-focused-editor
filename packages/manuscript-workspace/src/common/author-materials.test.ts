@@ -44,6 +44,7 @@ function baseInput(overrides: Partial<AuthorMaterialsInput> = {}): AuthorMateria
     citationsUri: `${ROOT}/sources/citations.yaml`,
     sources: [],
     knowledge: [],
+    skills: [],
     ...overrides
   };
 }
@@ -81,6 +82,9 @@ describe('counts', () => {
       knowledge: [
         { name: 'world.md', path: 'knowledge/world.md', uri: `${ROOT}/knowledge/world.md` },
         { name: 'notes.txt', path: 'knowledge/notes.txt', uri: `${ROOT}/knowledge/notes.txt` }
+      ],
+      skills: [
+        { id: 'style-guide', label: 'Style Guide', path: '.prompts/skills/style-guide/SKILL.md', uri: `${ROOT}/.prompts/skills/style-guide/SKILL.md` }
       ]
     }));
     const byKind = Object.fromEntries(sections.map(section => [section.kind, section.count]));
@@ -92,6 +96,7 @@ describe('counts', () => {
     expect(byKind.citations).toBe(1);
     expect(byKind.sources).toBe(1); // directory excluded
     expect(byKind.knowledge).toBe(1); // .txt excluded
+    expect(byKind.skills).toBe(1);
   });
 
   test('countManuscriptFiles counts leaves recursively', () => {
@@ -229,6 +234,37 @@ describe('allowed material types', () => {
     expect(images.children![0].itemType).toBe('folder');
     expect(images.children![0].label).toBe('maps');
     expect(images.children![0].children![0].label).toBe('map.png');
+  });
+});
+
+describe('skill items', () => {
+  test('skills are listed, sorted by label, and open their SKILL.md', () => {
+    const sections = buildAuthorMaterialsSections(baseInput({
+      skills: [
+        { id: 'voice', label: 'Voice', description: 'Narrative voice', path: '.prompts/skills/voice/SKILL.md', uri: `${ROOT}/.prompts/skills/voice/SKILL.md` },
+        { id: 'style-guide', label: 'Style Guide', path: '.prompts/skills/style-guide/SKILL.md', uri: `${ROOT}/.prompts/skills/style-guide/SKILL.md` }
+      ]
+    }));
+    const skills = sections.find(section => section.kind === 'skills')!;
+    expect(skills.count).toBe(2);
+    expect(skills.items.map(item => item.label)).toEqual(['Style Guide', 'Voice']);
+    expect(skills.items[0]).toMatchObject({
+      id: 'style-guide',
+      // no frontmatter description -> path is surfaced as secondary text
+      description: '.prompts/skills/style-guide/SKILL.md',
+      uri: `${ROOT}/.prompts/skills/style-guide/SKILL.md`
+    });
+    expect(skills.items[1].description).toBe('Narrative voice');
+  });
+
+  test('skill label falls back to the slug when the frontmatter name is blank', () => {
+    const sections = buildAuthorMaterialsSections(baseInput({
+      skills: [
+        { id: 'raw-slug', label: '   ', path: '.prompts/skills/raw-slug/SKILL.md', uri: `${ROOT}/.prompts/skills/raw-slug/SKILL.md` }
+      ]
+    }));
+    const skills = sections.find(section => section.kind === 'skills')!;
+    expect(skills.items[0].label).toBe('raw-slug');
   });
 });
 

@@ -8,11 +8,13 @@ import {
   KNOWLEDGE_CATEGORIES,
   buildEntityYaml,
   buildKnowledgeNoteMarkdown,
+  buildSkillMarkdown,
   createSemanticEntityId,
   entityRelativePath,
   knowledgeNoteRelativePath,
   selectionToSummary,
   shouldWrapSelectionAsTag,
+  skillFolderRelativePath,
   suggestEntityName,
   transliterate,
   uniqueRelativePath
@@ -394,5 +396,33 @@ describe('knowledgeNoteRelativePath', () => {
 describe('buildKnowledgeNoteMarkdown', () => {
   test('renders an H1 title followed by a blank line', () => {
     expect(buildKnowledgeNoteMarkdown('Chapter Two Outline')).toBe('# Chapter Two Outline\n\n');
+  });
+});
+
+describe('skillFolderRelativePath', () => {
+  test('builds .prompts/skills/<slug>', () => {
+    expect(skillFolderRelativePath('style-guide')).toBe('.prompts/skills/style-guide');
+  });
+});
+
+describe('buildSkillMarkdown', () => {
+  test('emits a SkillService-compatible frontmatter block and the slug reference', () => {
+    const body = buildSkillMarkdown('style-guide', 'Style guide', 'Voice and terminology rules');
+    // parseable frontmatter fence with name/description
+    const match = /^---\n([\s\S]*?)\n---/.exec(body);
+    expect(match).not.toBeNull();
+    const meta = parse(match![1]) as { name?: string; description?: string };
+    expect(meta.name).toBe('Style guide');
+    expect(meta.description).toBe('Voice and terminology rules');
+    // starter body references the {{skill:<slug>}} placeholder
+    expect(body).toContain('{{skill:style-guide}}');
+    expect(body).toContain('# Style guide');
+  });
+
+  test('quotes special characters so a colon in the name stays valid YAML', () => {
+    const body = buildSkillMarkdown('lore', 'Lore: canon', 'Rules: strict');
+    const meta = parse(/^---\n([\s\S]*?)\n---/.exec(body)![1]) as { name?: string; description?: string };
+    expect(meta.name).toBe('Lore: canon');
+    expect(meta.description).toBe('Rules: strict');
   });
 });

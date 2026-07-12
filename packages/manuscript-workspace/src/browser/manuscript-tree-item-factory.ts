@@ -35,7 +35,8 @@ const SECTION_LABEL_DEFAULTS: Record<AuthorMaterialsSectionKind, string> = {
   locations: 'Locations',
   citations: 'Citations',
   sources: 'Sources',
-  knowledge: 'Knowledge'
+  knowledge: 'Knowledge',
+  skills: 'Skills'
 };
 
 /** Entity sections nested under the single collapsible group node. */

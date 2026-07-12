@@ -17,7 +17,8 @@ export type AuthorMaterialsSectionKind =
   | 'locations'
   | 'citations'
   | 'sources'
-  | 'knowledge';
+  | 'knowledge'
+  | 'skills';
 
 /** Fixed top-level order of the navigator sections. */
 export const AUTHOR_MATERIALS_SECTION_ORDER: readonly AuthorMaterialsSectionKind[] = [
@@ -28,7 +29,8 @@ export const AUTHOR_MATERIALS_SECTION_ORDER: readonly AuthorMaterialsSectionKind
   'locations',
   'citations',
   'sources',
-  'knowledge'
+  'knowledge',
+  'skills'
 ];
 
 const SECTION_LABELS: Record<AuthorMaterialsSectionKind, string> = {
@@ -39,7 +41,8 @@ const SECTION_LABELS: Record<AuthorMaterialsSectionKind, string> = {
   locations: 'Locations',
   citations: 'Citations',
   sources: 'Sources',
-  knowledge: 'Knowledge'
+  knowledge: 'Knowledge',
+  skills: 'Skills'
 };
 
 const ENTITY_KIND_TO_SECTION: Record<NarrativeEntityKind, AuthorMaterialsSectionKind> = {
@@ -88,6 +91,25 @@ export interface KnowledgeFileEntry {
   uri: string;
 }
 
+/**
+ * A book-local AI skill discovered under `.prompts/skills/<slug>/SKILL.md`.
+ * `label` is the frontmatter `name` (falling back to the folder slug); opening
+ * the item opens its `SKILL.md`. Mirrors the Theia SkillService discovery so the
+ * navigator lists exactly what the AI chat's Skills picker offers.
+ */
+export interface SkillEntry {
+  /** Folder slug, e.g. `style-guide`; stable id within the section. */
+  id: string;
+  /** Frontmatter `name`, falling back to the folder slug. */
+  label: string;
+  /** Frontmatter `description`, if any (shown as secondary text). */
+  description?: string;
+  /** Workspace-relative path, e.g. `.prompts/skills/style-guide/SKILL.md`. */
+  path: string;
+  /** Absolute URI of the `SKILL.md`, opened on activation. */
+  uri: string;
+}
+
 export interface AuthorMaterialsInput {
   rootUri?: string;
   /** Manifest content (manuscript section is rendered from the live nodes). */
@@ -98,6 +120,8 @@ export interface AuthorMaterialsInput {
   citationsUri?: string;
   sources: SourceLibraryItem[];
   knowledge: KnowledgeFileEntry[];
+  /** Book-local AI skills scanned from `.prompts/skills/<slug>/SKILL.md`. */
+  skills: SkillEntry[];
 }
 
 export interface AuthorMaterialItem {
@@ -286,6 +310,10 @@ export function buildAuthorMaterialsSections(input: AuthorMaterialsInput): Autho
         const items = knowledgeItems(input.knowledge);
         return makeSection('knowledge', countMaterialFiles(items), items, false);
       }
+      case 'skills': {
+        const items = skillItems(input.skills);
+        return makeSection('skills', items.length, items, false);
+      }
     }
   });
 }
@@ -341,6 +369,22 @@ function sourceItems(items: SourceLibraryItem[]): AuthorMaterialItem[] {
 function knowledgeItems(files: KnowledgeFileEntry[]): AuthorMaterialItem[] {
   const allowed = files.filter(file => isKnowledgeFile(file.name));
   return buildMaterialFileTree(allowed, 'knowledge/');
+}
+
+/**
+ * One flat leaf per book skill, labelled by its frontmatter `name` (folder slug
+ * fallback applied upstream by the scanner), opening its `SKILL.md`. The
+ * description carries the frontmatter `description` when present, else the path.
+ */
+function skillItems(skills: SkillEntry[]): AuthorMaterialItem[] {
+  return skills
+    .map(skill => ({
+      id: skill.id,
+      label: skill.label?.trim() || skill.id,
+      description: skill.description?.trim() || skill.path,
+      uri: skill.uri
+    }))
+    .sort(byLabel);
 }
 
 function byLabel(left: AuthorMaterialItem, right: AuthorMaterialItem): number {
