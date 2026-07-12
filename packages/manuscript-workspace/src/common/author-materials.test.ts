@@ -13,6 +13,11 @@ import {
 import type { ManuscriptNode } from './manuscript-workspace-protocol';
 import type { NarrativeEntity, NarrativeEntityKind } from './narrative-entity-protocol';
 import type { CitationEntry, SourceLibraryItem } from './source-library-protocol';
+import {
+  BASE_ENTITY_TYPES,
+  mergeEntityTypes,
+  type EntityTypeDescriptor
+} from './entity-type-registry';
 
 const ROOT = 'file:///workspace';
 
@@ -265,6 +270,68 @@ describe('skill items', () => {
     }));
     const skills = sections.find(section => section.kind === 'skills')!;
     expect(skills.items[0].label).toBe('raw-slug');
+  });
+});
+
+describe('dynamic author-type sections', () => {
+  const faction: EntityTypeDescriptor = {
+    id: 'faction',
+    tagKind: 'faction',
+    directory: 'factions',
+    label: 'Фракция',
+    sectionKind: 'factions',
+    icon: 'codicon codicon-organization',
+    sectionIcon: 'codicon codicon-organization',
+    accentClass: 'afe-ico-faction',
+    fields: []
+  };
+  const effective = mergeEntityTypes(BASE_ENTITY_TYPES, [faction]);
+
+  test('author section is inserted after the built-in entity sections, before citations', () => {
+    const sections = buildAuthorMaterialsSections(baseInput({ effectiveEntityTypes: effective }));
+    expect(sections.map(section => section.kind)).toEqual([
+      'manuscript', 'characters', 'terms', 'artifacts', 'locations', 'factions',
+      'citations', 'sources', 'knowledge', 'skills'
+    ]);
+  });
+
+  test('author section uses its label verbatim and carries a book-origin descriptor', () => {
+    const sections = buildAuthorMaterialsSections(baseInput({ effectiveEntityTypes: effective }));
+    const factions = sections.find(section => section.kind === 'factions')!;
+    expect(factions.label).toBe('Фракция');
+    expect(factions.expandedByDefault).toBe(false);
+    expect(factions.entityType?.origin).toBe('book');
+    expect(factions.entityType?.icon).toBe('codicon codicon-organization');
+  });
+
+  test('entities route to the author section by their kind id', () => {
+    const sections = buildAuthorMaterialsSections(baseInput({
+      effectiveEntityTypes: effective,
+      entities: [
+        entity('faction' as NarrativeEntityKind, 'rebels', 'Повстанцы'),
+        entity('faction' as NarrativeEntityKind, 'empire', 'Империя'),
+        entity('character', 'alice', 'Alice')
+      ]
+    }));
+    const factions = sections.find(section => section.kind === 'factions')!;
+    expect(factions.count).toBe(2);
+    expect(factions.items.map(item => item.label)).toEqual(['Империя', 'Повстанцы']);
+    // Built-in sections are unaffected by the author kind.
+    const characters = sections.find(section => section.kind === 'characters')!;
+    expect(characters.items.map(item => item.label)).toEqual(['Alice']);
+  });
+
+  test('built-in entity sections carry a built-in-origin descriptor and plural label', () => {
+    const sections = buildAuthorMaterialsSections(baseInput({ effectiveEntityTypes: effective }));
+    const characters = sections.find(section => section.kind === 'characters')!;
+    expect(characters.entityType?.origin).toBe('built-in');
+    expect(characters.label).toBe('Characters');
+  });
+
+  test('an effective list with no author types yields exactly the base section order', () => {
+    const builtInOnly = mergeEntityTypes(BASE_ENTITY_TYPES, []);
+    const sections = buildAuthorMaterialsSections(baseInput({ effectiveEntityTypes: builtInOnly }));
+    expect(sections.map(section => section.kind)).toEqual([...AUTHOR_MATERIALS_SECTION_ORDER]);
   });
 });
 

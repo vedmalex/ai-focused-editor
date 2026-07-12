@@ -2,6 +2,7 @@
   "ai-focused-editor": {
     "create": {
       "category": "AI Focused Editor",
+      "new-entity": "Новая сущность…",
       "new-character": "Новый персонаж…",
       "new-term": "Новый термин…",
       "new-artifact": "Новый артефакт…",
@@ -19,6 +20,13 @@
       "create-entity-failed": "Не удалось создать материал: {1}",
       "entity-created": "Материал «{1}» создан.",
       "entity-placeholder": "например: {0}",
+      "new-entity-title": "Новая сущность",
+      "entity-type-placeholder": "Выберите тип сущности для создания",
+      "entity-type-author": "Тип автора",
+      "type-character": "Персонаж",
+      "type-term": "Термин",
+      "type-artifact": "Артефакт",
+      "type-location": "Локация",
       "placeholder-character": "Арджуна",
       "placeholder-term": "Дхарма",
       "placeholder-artifact": "Гандива",

@@ -13,6 +13,16 @@ export const MANUSCRIPT_TREE_ROOT_ID = 'ai-focused-editor.manuscript-tree.root';
 export const AFE_MANUSCRIPT_SECTION_CONTEXT_KEY = 'afeManuscriptSection';
 
 /**
+ * Boolean context-key name: true when the current manuscript-tree selection is an
+ * entity surface — the entities group, any entity section (built-in OR author),
+ * or an item/leaf within one. The generic «Новая сущность…» create action reads
+ * it so its `when` clause covers author section kinds without enumerating their
+ * (dynamic) string values — {@link AFE_MANUSCRIPT_SECTION_CONTEXT_KEY} alone can
+ * only match a fixed set of literals.
+ */
+export const AFE_MANUSCRIPT_SECTION_IS_ENTITY_CONTEXT_KEY = 'afeManuscriptSectionIsEntity';
+
+/**
  * Context-key value and node discriminator for the collapsible group that nests
  * the four entity sections (Characters, Terms, Artifacts, Locations) under a
  * single node — mirroring the on-disk `entities/` folder. Selecting the group
@@ -37,7 +47,12 @@ export interface ManuscriptTreeRootNode extends CompositeTreeNode {
 export interface AuthorMaterialsSectionGroupTreeNode extends CompositeTreeNode {
   readonly nodeType: 'section-group';
   readonly groupKind: typeof AUTHOR_MATERIALS_ENTITY_GROUP_KIND;
-  children: AuthorMaterialsSectionTreeNode[];
+  /**
+   * The nested entity sections, plus an optional trailing material leaf that
+   * opens `entities/types.yaml` (the author's entity-type declarations) so the
+   * types file is discoverable right under the group header.
+   */
+  children: (AuthorMaterialsSectionTreeNode | AuthorMaterialTreeNode)[];
   expanded: boolean;
   selected: boolean;
 }
@@ -54,6 +69,12 @@ export interface AuthorMaterialsSectionTreeNode extends CompositeTreeNode {
   children: TreeNode[];
   expanded: boolean;
   selected: boolean;
+  /**
+   * Explicit header icon class for author-declared entity sections (built-in
+   * sections leave this undefined and fall back to the static per-kind map in
+   * the label provider). Carries the descriptor's `sectionIcon` + accent.
+   */
+  readonly iconClass?: string;
 }
 
 /** A leaf material item (entity, citation, source, or knowledge file). */
@@ -64,6 +85,18 @@ export interface AuthorMaterialTreeNode extends TreeNode {
   readonly materialUri?: string;
   /** Secondary text rendered after the label. */
   readonly description?: string;
+  /**
+   * Explicit icon class for items whose section has no static per-kind icon
+   * (author-declared entity items; the `entities/types.yaml` leaf). Built-in
+   * section items leave this undefined and use the label provider's static map.
+   */
+  readonly iconClass?: string;
+  /**
+   * When set and {@link materialUri} does not yet exist on disk, the tree widget
+   * seeds the file with this content before opening it — used by the
+   * `entities/types.yaml` leaf so clicking it always lands in a real editor.
+   */
+  readonly createSeed?: string;
   selected: boolean;
 }
 

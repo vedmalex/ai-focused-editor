@@ -20,6 +20,8 @@ import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service
 import { Document, isSeq, parseDocument, YAMLSeq } from 'yaml';
 import type { AuthorMaterialsSectionKind } from '../common/author-materials';
 import { entityKindSections } from '../common/entity-type-registry';
+import type { EffectiveEntityType } from '../common/entity-type-registry';
+import { EntityTypeRegistryService } from './entity-type-registry-service';
 import {
   buildKnowledgeNoteBody,
   KNOWLEDGE_TEMPLATE_KINDS,
@@ -34,7 +36,6 @@ import {
   ENTITY_KIND_DIRECTORY,
   ENTITY_KIND_LABEL,
   ENTITY_KIND_TAG,
-  entityRelativePath,
   KNOWLEDGE_CATEGORIES,
   knowledgeNoteRelativePath,
   skillFolderRelativePath,
@@ -43,6 +44,7 @@ import {
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import {
   AFE_MANUSCRIPT_SECTION_CONTEXT_KEY,
+  AFE_MANUSCRIPT_SECTION_IS_ENTITY_CONTEXT_KEY,
   AUTHOR_MATERIALS_ENTITY_GROUP_KIND,
   AuthorMaterialFolderTreeNode,
   AuthorMaterialsSectionGroupTreeNode,
@@ -61,6 +63,16 @@ export namespace AuthorMaterialsCommands {
   // Theia-free common module, English this wave) so the product menu-bar text is
   // byte-identical to the previous `New ${ENTITY_KIND_LABEL.kind}...` literals.
   const CATEGORY_KEY = 'ai-focused-editor/create/category';
+
+  // Generic "create any entity type" command: offers a quick pick over ALL
+  // effective types (the built-in four plus author-declared types), then runs the
+  // same name -> slug -> create-yaml -> open flow. The four dedicated commands
+  // below stay for direct, per-section creation.
+  export const NEW_ENTITY: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.authorMaterials.newEntity', category: CATEGORY, label: 'New Entity...' },
+    'ai-focused-editor/create/new-entity',
+    CATEGORY_KEY
+  );
 
   export const NEW_CHARACTER: Command = Command.toLocalizedCommand(
     { id: 'ai-focused-editor.authorMaterials.newCharacter', category: CATEGORY, label: 'New Character...' },
@@ -150,6 +162,11 @@ const ENTITY_GROUP_SECTIONS: ReadonlySet<AuthorMaterialsSectionKind> = new Set(
   Object.values(ENTITY_SECTION)
 );
 
+interface EntityTypePick extends QuickPickItem {
+  /** The effective type this pick creates (`type` is reserved by QuickPickItem). */
+  entityType: EffectiveEntityType;
+}
+
 interface KnowledgeCategoryPick extends QuickPickItem {
   /** `undefined` files the note directly under `knowledge/`. */
   category: string | undefined;
@@ -225,8 +242,19 @@ export class AuthorMaterialsCreateContribution
   @inject(ContextKeyService)
   protected readonly contextKeyService!: ContextKeyService;
 
+  @inject(EntityTypeRegistryService)
+  protected readonly entityTypeRegistry!: EntityTypeRegistryService;
+
   /** Tracks the manuscript tree selection; drives the create-action `when` clauses. */
   protected sectionKey: ContextKey<string> | undefined;
+
+  /**
+   * Boolean companion to {@link sectionKey}: true when the selection is any entity
+   * surface (group / built-in or author entity section / an item within one). The
+   * generic create action's `when` clause reads it so author (dynamic) section
+   * kinds are covered without enumerating their string values.
+   */
+  protected sectionIsEntityKey: ContextKey<boolean> | undefined;
 
   /**
    * Create the section context key and keep it in sync with the manuscript
@@ -235,6 +263,10 @@ export class AuthorMaterialsCreateContribution
    */
   onStart(): void {
     this.sectionKey = this.contextKeyService.createKey<string>(AFE_MANUSCRIPT_SECTION_CONTEXT_KEY, 'none');
+    this.sectionIsEntityKey = this.contextKeyService.createKey<boolean>(
+      AFE_MANUSCRIPT_SECTION_IS_ENTITY_CONTEXT_KEY,
+      false
+    );
     for (const widget of this.widgetManager.getWidgets(ManuscriptTreeWidget.ID)) {
       if (widget instanceof ManuscriptTreeWidget) {
         this.trackTreeWidget(widget);
@@ -253,14 +285,44 @@ export class AuthorMaterialsCreateContribution
    */
   protected trackTreeWidget(widget: ManuscriptTreeWidget): void {
     const model = widget.manuscriptModel;
-    const sync = () => this.sectionKey?.set(this.sectionKeyFor(model.selectedNodes[0]));
+    const sync = () => {
+      const node = model.selectedNodes[0];
+      this.sectionKey?.set(this.sectionKeyFor(node));
+      this.sectionIsEntityKey?.set(this.isEntitySelection(node));
+    };
     sync();
     const selectionListener = model.onSelectionChanged(() => sync());
     const disposeListener = widget.onDidDispose(() => {
       selectionListener.dispose();
       disposeListener.dispose();
       this.sectionKey?.set('none');
+      this.sectionIsEntityKey?.set(false);
     });
+  }
+
+  /**
+   * True when `node` is any entity surface: the entities group, its
+   * `entities/types.yaml` leaf, or a section/item/folder whose section kind is an
+   * effective entity type's section kind (built-in OR author-declared). Read to
+   * gate the generic create action across dynamic author section kinds.
+   */
+  protected isEntitySelection(node: TreeNode | undefined): boolean {
+    if (node === undefined) {
+      return false;
+    }
+    if (AuthorMaterialsSectionGroupTreeNode.is(node)) {
+      return true;
+    }
+    if (AuthorMaterialsSectionTreeNode.is(node)
+      || AuthorMaterialTreeNode.is(node)
+      || AuthorMaterialFolderTreeNode.is(node)) {
+      const kind = node.sectionKind;
+      if (kind === AUTHOR_MATERIALS_ENTITY_GROUP_KIND) {
+        return true;
+      }
+      return this.entityTypeRegistry.getEffectiveTypes().some(type => type.sectionKind === kind);
+    }
+    return false;
   }
 
   /** Section context-key value for the current tree selection. */
@@ -289,6 +351,10 @@ export class AuthorMaterialsCreateContribution
     // in command.isVisible: a hidden command also disappears from the product menu
     // bar (DynamicMenuWidget honors command visibility), which is the bug this
     // fixes. Commands stay always-visible; only `isEnabled` guards a workspace.
+    commands.registerCommand(AuthorMaterialsCommands.NEW_ENTITY, {
+      execute: () => this.createEntityGeneric(),
+      isEnabled: () => this.hasWorkspace()
+    });
     for (const kind of CREATABLE_ENTITY_KINDS) {
       commands.registerCommand(ENTITY_COMMAND[kind], {
         execute: () => this.createEntity(kind),
@@ -325,7 +391,18 @@ export class AuthorMaterialsCreateContribution
     const contextGroup = [...ManuscriptTreeWidget.CONTEXT_MENU, '1_create'];
     const mainGroup = [...AiFocusedEditorMenus.MAIN, '1a_create'];
 
-    let order = 0;
+    // Generic "New Entity..." first (order '0'). Its context-menu `when` covers
+    // ANY entity surface via the boolean is-entity key (built-in + author section
+    // kinds), plus the empty (`none`) selection; the product menu bar is ungated.
+    const entityWhen = `${AFE_MANUSCRIPT_SECTION_CONTEXT_KEY} == 'none' || ${AFE_MANUSCRIPT_SECTION_IS_ENTITY_CONTEXT_KEY}`;
+    menus.registerMenuAction(contextGroup, {
+      commandId: AuthorMaterialsCommands.NEW_ENTITY.id,
+      order: '0',
+      when: entityWhen
+    });
+    menus.registerMenuAction(mainGroup, { commandId: AuthorMaterialsCommands.NEW_ENTITY.id, order: '0' });
+
+    let order = 1;
     for (const { command, section } of this.orderedCreateActions()) {
       const orderKey = String(order);
       // Tree context menu: section-gated via a `when` clause on the selection
@@ -358,12 +435,65 @@ export class AuthorMaterialsCreateContribution
   }
 
   /**
-   * Create a narrative entity (`entities/<dir>/<id>.yaml`) from a prompted name
-   * and open it in the entity form editor (registered at priority 500 so
-   * `OpenerService` selects it automatically).
+   * Create a built-in narrative entity from a prompted name and open it in the
+   * entity form editor. Delegates to {@link performEntityCreate} with the kind's
+   * registry-derived label/tag/directory and a per-kind example placeholder.
    */
   protected async createEntity(kind: CreatableEntityKind): Promise<void> {
-    const label = ENTITY_KIND_LABEL[kind];
+    await this.performEntityCreate({
+      label: ENTITY_KIND_LABEL[kind],
+      tagKind: ENTITY_KIND_TAG[kind],
+      directory: ENTITY_KIND_DIRECTORY[kind],
+      placeholder: this.entityPlaceholder(kind)
+    });
+  }
+
+  /**
+   * Generic entity creation: pick any effective type (built-in four localized +
+   * author-declared types verbatim, each with its icon), then run the shared
+   * name -> slug -> create-yaml -> open flow. `buildEntityYaml` works for any
+   * kind and the file lands in `entities/<directory>/`.
+   */
+  protected async createEntityGeneric(): Promise<void> {
+    const types = this.entityTypeRegistry.getEffectiveTypes();
+    if (types.length === 0) {
+      return;
+    }
+    const picks: EntityTypePick[] = types.map(type => ({
+      label: this.entityTypeLabel(type),
+      description: type.origin === 'book'
+        ? nls.localize('ai-focused-editor/create/entity-type-author', 'Author type')
+        : undefined,
+      iconClasses: this.entityTypeIconClasses(type),
+      entityType: type
+    }));
+    const picked = await this.quickInput.showQuickPick(picks, {
+      title: nls.localize('ai-focused-editor/create/new-entity-title', 'New Entity'),
+      placeholder: nls.localize('ai-focused-editor/create/entity-type-placeholder', 'Choose an entity type to create')
+    });
+    if (!picked) {
+      return;
+    }
+    await this.performEntityCreate({
+      label: this.entityTypeLabel(picked.entityType),
+      tagKind: picked.entityType.tagKind,
+      directory: picked.entityType.directory
+    });
+  }
+
+  /**
+   * Prompt for a name and create `entities/<directory>/<slug>.yaml`, then open it
+   * in the entity form editor (registered at priority 500 so `OpenerService`
+   * selects it automatically). Shared by the four dedicated commands and the
+   * generic quick-pick flow.
+   */
+  protected async performEntityCreate(spec: {
+    label: string;
+    tagKind: string;
+    directory: string;
+    placeholder?: string;
+  }): Promise<void> {
+    const { label, tagKind, directory } = spec;
     const root = await this.getRoot();
     if (!root) {
       this.messages.warn(nls.localize(
@@ -377,11 +507,9 @@ export class AuthorMaterialsCreateContribution
     const name = await this.quickInput.input({
       title: nls.localize('ai-focused-editor/create/create-entity-title', 'New {0}', label),
       prompt: nls.localize('ai-focused-editor/create/create-entity-prompt', '{0} name', label),
-      placeHolder: nls.localize(
-        'ai-focused-editor/create/entity-placeholder',
-        'e.g. {0}',
-        this.entityPlaceholder(kind)
-      ),
+      placeHolder: spec.placeholder
+        ? nls.localize('ai-focused-editor/create/entity-placeholder', 'e.g. {0}', spec.placeholder)
+        : undefined,
       validateInput: async value => (value.trim()
         ? undefined
         : nls.localize('ai-focused-editor/create/create-entity-empty', '{0} name cannot be empty.', label))
@@ -391,10 +519,10 @@ export class AuthorMaterialsCreateContribution
       return;
     }
 
-    const id = createSemanticEntityId(ENTITY_KIND_TAG[kind], trimmed);
-    const relDir = `entities/${ENTITY_KIND_DIRECTORY[kind]}`;
+    const id = createSemanticEntityId(tagKind, trimmed);
+    const relDir = `entities/${directory}`;
     const existing = await this.collectExistingRelPaths(root, relDir);
-    const relPath = uniqueRelativePath(entityRelativePath(kind, id), candidate => existing.has(candidate));
+    const relPath = uniqueRelativePath(`${relDir}/${id}.yaml`, candidate => existing.has(candidate));
 
     await this.ensureFolder(root.resolve('entities'));
     await this.ensureFolder(root.resolve(relDir));
@@ -419,6 +547,27 @@ export class AuthorMaterialsCreateContribution
       label.toLowerCase(),
       trimmed
     ));
+  }
+
+  /**
+   * Display label for an effective type in the picker: author types show their
+   * declared label VERBATIM (the author's language); the built-in four are
+   * localized (`Персонаж`/`Character`, …) via the registry `id`.
+   */
+  protected entityTypeLabel(type: EffectiveEntityType): string {
+    if (type.origin === 'book') {
+      return type.label;
+    }
+    return nls.localize(`ai-focused-editor/create/type-${type.id}`, type.label);
+  }
+
+  /** Codicon classes (+ accent) for a type's picker icon. */
+  protected entityTypeIconClasses(type: EffectiveEntityType): string[] {
+    const classes = type.icon.split(/\s+/).filter(Boolean);
+    if (type.accentClass) {
+      classes.push(type.accentClass);
+    }
+    return classes;
   }
 
   /**

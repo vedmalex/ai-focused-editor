@@ -1,6 +1,7 @@
 import type { ManuscriptNode } from './manuscript-workspace-protocol';
-import type { NarrativeEntity, NarrativeEntityKind } from './narrative-entity-protocol';
-import { entityKindSections } from './entity-type-registry';
+import type { NarrativeEntity } from './narrative-entity-protocol';
+import { BASE_ENTITY_TYPES, mergeEntityTypes } from './entity-type-registry';
+import type { EffectiveEntityType, EntityTypeProblem } from './entity-type-registry';
 import type { CitationEntry, SourceLibraryItem } from './source-library-protocol';
 
 /**
@@ -10,7 +11,13 @@ import type { CitationEntry, SourceLibraryItem } from './source-library-protocol
  * Theia tree nodes.
  */
 
-export type AuthorMaterialsSectionKind =
+/**
+ * The nine built-in navigator sections. Manuscript + the four built-in entity
+ * sections + citations/sources/knowledge/skills. Author-declared entity types
+ * contribute additional section kinds (their descriptor `sectionKind`) at
+ * runtime, which is why {@link AuthorMaterialsSectionKind} widens this union.
+ */
+export type BaseAuthorMaterialsSectionKind =
   | 'manuscript'
   | 'characters'
   | 'terms'
@@ -21,8 +28,20 @@ export type AuthorMaterialsSectionKind =
   | 'knowledge'
   | 'skills';
 
-/** Fixed top-level order of the navigator sections. */
-export const AUTHOR_MATERIALS_SECTION_ORDER: readonly AuthorMaterialsSectionKind[] = [
+/**
+ * Navigator section kind. The nine built-in sections stay literals (so switch/
+ * equality consumers keep exhaustiveness + autocomplete); the open `(string & {})`
+ * arm admits any author-declared entity type's `sectionKind` at runtime without
+ * widening the literal ergonomics away.
+ */
+export type AuthorMaterialsSectionKind = BaseAuthorMaterialsSectionKind | (string & {});
+
+/**
+ * Fixed top-level order of the BUILT-IN navigator sections. Author entity
+ * sections are inserted after the built-in entity sections (before citations)
+ * by {@link buildAuthorMaterialsSections}, following the effective type order.
+ */
+export const AUTHOR_MATERIALS_SECTION_ORDER: readonly BaseAuthorMaterialsSectionKind[] = [
   'manuscript',
   'characters',
   'terms',
@@ -34,7 +53,7 @@ export const AUTHOR_MATERIALS_SECTION_ORDER: readonly AuthorMaterialsSectionKind
   'skills'
 ];
 
-const SECTION_LABELS: Record<AuthorMaterialsSectionKind, string> = {
+const SECTION_LABELS: Record<BaseAuthorMaterialsSectionKind, string> = {
   manuscript: 'Manuscript',
   characters: 'Characters',
   terms: 'Terms',
@@ -46,8 +65,13 @@ const SECTION_LABELS: Record<AuthorMaterialsSectionKind, string> = {
   skills: 'Skills'
 };
 
-const ENTITY_KIND_TO_SECTION: Record<NarrativeEntityKind, AuthorMaterialsSectionKind> =
-  entityKindSections() as Record<NarrativeEntityKind, AuthorMaterialsSectionKind>;
+/** True for one of the nine built-in section kinds (has a static English label). */
+function isBaseSectionKind(kind: string): kind is BaseAuthorMaterialsSectionKind {
+  return Object.prototype.hasOwnProperty.call(SECTION_LABELS, kind);
+}
+
+/** The built-in-only effective type list, reused when no author types are supplied. */
+const BUILT_IN_EFFECTIVE: EffectiveEntityType[] = mergeEntityTypes(BASE_ENTITY_TYPES, []);
 
 /** File extensions surfaced under the Knowledge section (spec §4.1 `knowledge/`). */
 const KNOWLEDGE_EXTENSIONS = ['.yaml', '.yml', '.md'];
@@ -119,6 +143,16 @@ export interface AuthorMaterialsInput {
   knowledge: KnowledgeFileEntry[];
   /** Book-local AI skills scanned from `.prompts/skills/<slug>/SKILL.md`. */
   skills: SkillEntry[];
+  /**
+   * The EFFECTIVE entity types (built-in + author-declared) for the open root,
+   * carried through so downstream consumers (dynamic sections, the type
+   * registry) can pick up author types. Undefined falls back to the built-in
+   * set. The base section builder below only uses the fixed built-in sections
+   * this stage; author-type sections are a later consumer concern.
+   */
+  effectiveEntityTypes?: EffectiveEntityType[];
+  /** Validation problems from parsing `entities/types.yaml`, if any. */
+  typeProblems?: EntityTypeProblem[];
 }
 
 export interface AuthorMaterialItem {
@@ -143,6 +177,15 @@ export interface AuthorMaterialsSection {
   expandedByDefault: boolean;
   /** Leaf items; empty for `manuscript`, which is built from live nodes. */
   items: AuthorMaterialItem[];
+  /**
+   * Set on the entity sections (built-in AND author-declared) — the descriptor
+   * whose `sectionKind` names this section. Drives the entities-group nesting in
+   * the tree factory and carries the icon/accent/origin so the factory can
+   * localize built-in labels but render author labels verbatim (the author label
+   * IS the author's language). Absent on manuscript/citations/sources/knowledge/
+   * skills, which keep their static icons and localized labels.
+   */
+  entityType?: EffectiveEntityType;
 }
 
 /** True when the file name ends with a knowledge-surfaced extension. */
@@ -284,39 +327,39 @@ export function countManuscriptFiles(nodes: ManuscriptNode[]): number {
  * section are sorted by label (then id) for stable rendering.
  */
 export function buildAuthorMaterialsSections(input: AuthorMaterialsInput): AuthorMaterialsSection[] {
-  return AUTHOR_MATERIALS_SECTION_ORDER.map(kind => {
-    switch (kind) {
-      case 'manuscript':
-        return makeSection('manuscript', countManuscriptFiles(input.manuscript), [], true);
-      case 'characters':
-      case 'terms':
-      case 'artifacts':
-      case 'locations': {
-        const items = entityItems(input.entities, kind);
-        return makeSection(kind, items.length, items, false);
-      }
-      case 'citations': {
-        const items = citationItems(input.citations, input.rootUri, input.citationsUri);
-        return makeSection('citations', items.length, items, false);
-      }
-      case 'sources': {
-        const items = sourceItems(input.sources);
-        return makeSection('sources', countMaterialFiles(items), items, false);
-      }
-      case 'knowledge': {
-        const items = knowledgeItems(input.knowledge);
-        return makeSection('knowledge', countMaterialFiles(items), items, false);
-      }
-      case 'skills': {
-        const items = skillItems(input.skills);
-        return makeSection('skills', items.length, items, false);
-      }
-    }
-  });
+  // The EFFECTIVE type list drives the entity sections: built-in types first,
+  // then valid author types (their order preserved). Undefined/empty falls back
+  // to the built-in set, so a no-workspace snapshot yields exactly the nine base
+  // sections in the fixed navigator order.
+  const effective = input.effectiveEntityTypes && input.effectiveEntityTypes.length > 0
+    ? input.effectiveEntityTypes
+    : BUILT_IN_EFFECTIVE;
+
+  const sections: AuthorMaterialsSection[] = [];
+  sections.push(makeSection('manuscript', countManuscriptFiles(input.manuscript), [], true));
+
+  // One section per effective entity type, in effective order (built-in
+  // characters/terms/artifacts/locations, then author types). They nest under
+  // the entities group in the tree; author sections carry their verbatim label.
+  for (const type of effective) {
+    const items = entityItemsForType(input.entities, type.id);
+    sections.push(makeEntitySection(type, items));
+  }
+
+  const citations = citationItems(input.citations, input.rootUri, input.citationsUri);
+  sections.push(makeSection('citations', citations.length, citations, false));
+  const sources = sourceItems(input.sources);
+  sections.push(makeSection('sources', countMaterialFiles(sources), sources, false));
+  const knowledge = knowledgeItems(input.knowledge);
+  sections.push(makeSection('knowledge', countMaterialFiles(knowledge), knowledge, false));
+  const skills = skillItems(input.skills);
+  sections.push(makeSection('skills', skills.length, skills, false));
+
+  return sections;
 }
 
 function makeSection(
-  kind: AuthorMaterialsSectionKind,
+  kind: BaseAuthorMaterialsSectionKind,
   count: number,
   items: AuthorMaterialItem[],
   expandedByDefault: boolean
@@ -324,9 +367,32 @@ function makeSection(
   return { kind, label: SECTION_LABELS[kind], count, items, expandedByDefault };
 }
 
-function entityItems(entities: NarrativeEntity[], section: AuthorMaterialsSectionKind): AuthorMaterialItem[] {
+/**
+ * Build the section for one effective entity type. The section `kind` is the
+ * descriptor's `sectionKind`; built-in sections keep their plural English label
+ * (`Characters`, localized downstream by the tree), while author sections use
+ * the author-declared `label` VERBATIM — it is the author's own language and is
+ * never sent through the i18n path. The descriptor rides along on `entityType`
+ * so the tree factory nests + icons the section without re-deriving anything.
+ */
+function makeEntitySection(type: EffectiveEntityType, items: AuthorMaterialItem[]): AuthorMaterialsSection {
+  const label = type.origin === 'built-in' && isBaseSectionKind(type.sectionKind)
+    ? SECTION_LABELS[type.sectionKind]
+    : type.label;
+  return {
+    kind: type.sectionKind,
+    label,
+    count: items.length,
+    items,
+    expandedByDefault: false,
+    entityType: type
+  };
+}
+
+/** Items for the entity section of `typeId`, sorted by label (then id). */
+function entityItemsForType(entities: NarrativeEntity[], typeId: string): AuthorMaterialItem[] {
   return entities
-    .filter(entity => ENTITY_KIND_TO_SECTION[entity.kind] === section)
+    .filter(entity => entity.kind === typeId)
     .map(entity => ({
       id: entity.id,
       label: entity.label?.trim() || entity.id,

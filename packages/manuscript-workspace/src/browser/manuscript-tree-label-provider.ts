@@ -4,7 +4,6 @@ import type {
   DidChangeLabelEvent,
   LabelProviderContribution
 } from '@theia/core/lib/browser/label-provider';
-import type { AuthorMaterialsSectionKind } from '../common/author-materials';
 import { BASE_ENTITY_TYPES } from '../common/entity-type-registry';
 import {
   AuthorMaterialFolderTreeNode,
@@ -32,14 +31,14 @@ const ENTITY_MATERIAL_ICONS: Record<string, string> = Object.fromEntries(
  * font) with a per-kind accent color applied through the afe-ico-* classes in
  * style/index.css — so the tree reads at a glance and follows the theme.
  */
-const SECTION_ICONS: Record<AuthorMaterialsSectionKind, string> = {
+const SECTION_ICONS: Record<string, string> = {
   manuscript: 'codicon codicon-book afe-ico-manuscript',
   ...ENTITY_SECTION_ICONS,
   citations: 'codicon codicon-quote afe-ico-citations',
   sources: 'codicon codicon-library afe-ico-sources',
   knowledge: 'codicon codicon-lightbulb afe-ico-knowledge',
   skills: 'codicon codicon-mortar-board afe-ico-skills'
-} as Record<AuthorMaterialsSectionKind, string>;
+};
 
 /**
  * The entities group node: a globe (the story's "world") in a neutral tint so
@@ -47,14 +46,14 @@ const SECTION_ICONS: Record<AuthorMaterialsSectionKind, string> = {
  */
 const ENTITY_GROUP_ICON = 'codicon codicon-globe afe-ico-entities';
 
-const MATERIAL_ICONS: Record<AuthorMaterialsSectionKind, string> = {
+const MATERIAL_ICONS: Record<string, string> = {
   manuscript: 'codicon codicon-file afe-ico-manuscript',
   ...ENTITY_MATERIAL_ICONS,
   citations: 'codicon codicon-bookmark afe-ico-citations',
   sources: 'codicon codicon-file afe-ico-sources',
   knowledge: 'codicon codicon-note afe-ico-knowledge',
   skills: 'codicon codicon-mortar-board afe-ico-skills'
-} as Record<AuthorMaterialsSectionKind, string>;
+};
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.tif', '.tiff', '.bmp'];
 const STRUCTURED_EXTENSIONS = ['.yaml', '.yml', '.json', '.jsonl'];
@@ -84,19 +83,23 @@ export class ManuscriptTreeLabelProvider implements LabelProviderContribution {
       return ENTITY_GROUP_ICON;
     }
     if (AuthorMaterialsSectionTreeNode.is(element)) {
-      return SECTION_ICONS[element.sectionKind];
+      // Author-declared entity sections carry their own icon class; built-in
+      // sections fall back to the static per-kind map.
+      return element.iconClass ?? SECTION_ICONS[element.sectionKind];
     }
     if (AuthorMaterialFolderTreeNode.is(element)) {
       return `codicon codicon-folder afe-ico-${element.sectionKind}`;
     }
     if (AuthorMaterialTreeNode.is(element)) {
-      return this.materialIcon(element);
+      // Explicit per-node icon (author entity items, the types.yaml leaf) wins;
+      // otherwise pick by section kind / file type.
+      return element.iconClass ?? this.materialIcon(element);
     }
     return undefined;
   }
 
   /** Sources/knowledge files pick their icon by file type. */
-  protected materialIcon(element: AuthorMaterialTreeNode): string {
+  protected materialIcon(element: AuthorMaterialTreeNode): string | undefined {
     if (element.sectionKind === 'sources' || element.sectionKind === 'knowledge') {
       const lower = element.name?.toLowerCase() ?? '';
       const accent = `afe-ico-${element.sectionKind}`;
