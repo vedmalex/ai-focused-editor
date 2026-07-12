@@ -1,0 +1,253 @@
+/*
+ * AFE Companion styles. Kind accents mirror the studio's author-navigator palette
+ * (packages/manuscript-workspace/src/browser/style/index.css: .afe-ico-*), mapped
+ * onto Obsidian's theme variables so light/dark both read well. All classes are
+ * prefixed `afe-`.
+ */
+
+.afe-manuscript-panel {
+  padding: 8px 10px;
+  font-size: var(--font-ui-small);
+}
+
+.afe-panel-empty {
+  color: var(--text-muted);
+  padding: 6px 2px;
+  font-style: italic;
+}
+
+/* ---------- book / chapters ---------- */
+
+.afe-book {
+  margin-bottom: 16px;
+}
+
+.afe-book-title {
+  font-weight: 600;
+  font-size: var(--font-ui-medium);
+  margin-bottom: 6px;
+  color: var(--text-normal);
+}
+
+.afe-chapter-list {
+  list-style: none;
+  margin: 0;
+  padding-left: 12px;
+}
+
+.afe-chapter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 4px;
+}
+
+.afe-chapter-part > .afe-chapter-title {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.afe-chapter-clickable {
+  cursor: pointer;
+}
+
+.afe-chapter-clickable:hover {
+  background: var(--background-modifier-hover);
+}
+
+.afe-chapter-title {
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- entities summary ---------- */
+
+.afe-entities {
+  margin-top: 8px;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 6px;
+}
+
+.afe-entities-title {
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.afe-entities-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.afe-entities-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+}
+
+.afe-entities-kind {
+  flex: 1;
+  color: var(--text-normal);
+}
+
+.afe-entities-count {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- kind accent dots ---------- */
+
+.afe-kind-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--afe-kind-color, var(--text-muted));
+  flex: 0 0 auto;
+}
+
+/* Built-in kind accents (studio palette). */
+.afe-kind-char { --afe-kind-color: #b180d7; }
+.afe-kind-character { --afe-kind-color: #b180d7; }
+.afe-kind-term { --afe-kind-color: #89d185; }
+.afe-kind-artifact { --afe-kind-color: #d18616; }
+.afe-kind-location { --afe-kind-color: #e51400; }
+/* Author kinds fall back to the accent variable's default (muted). */
+
+/* ---------- reading-mode semantic tags ---------- */
+
+.afe-semantic-tag {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  border-radius: 3px;
+  padding: 0 3px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--afe-kind-color, var(--text-accent));
+  color: var(--text-normal);
+}
+
+.afe-semantic-tag .afe-kind-dot {
+  align-self: center;
+}
+
+.afe-semantic-tag:hover {
+  background: var(--background-modifier-hover);
+}
+
+.afe-tag-missing {
+  border-bottom-style: dashed;
+  color: var(--text-error);
+  opacity: 0.85;
+}
+
+/* ---------- autocomplete + search suggestions ---------- */
+
+.afe-suggest-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.afe-suggest-label {
+  flex: 1;
+  color: var(--text-normal);
+}
+
+.afe-suggest-meta {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-family: var(--font-monospace);
+}
+
+/* ---------- YAML card view ---------- */
+
+.afe-card-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.afe-card-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.afe-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.afe-card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--background-modifier-border);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.afe-card-badge-unknown {
+  color: var(--text-error);
+}
+
+.afe-card-label {
+  font-weight: 600;
+  font-size: var(--font-ui-large);
+  color: var(--text-normal);
+}
+
+.afe-card-fields {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+}
+
+.afe-card-fields dt {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.afe-card-fields dd {
+  margin: 0;
+  color: var(--text-normal);
+}
+
+.afe-card-textarea {
+  flex: 1;
+  width: 100%;
+  border: none;
+  resize: none;
+  padding: 12px 16px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: var(--font-text-size);
+  line-height: 1.5;
+}
+
+.afe-card-textarea:focus {
+  outline: none;
+}
+
+/* ---------- create-entity modal ---------- */
+
+.afe-modal-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}

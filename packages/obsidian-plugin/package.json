@@ -1,0 +1,25 @@
+{
+  "name": "@ai-focused-editor/obsidian-plugin",
+  "version": "0.1.0",
+  "description": "AFE Companion — Obsidian field-notebook plugin for AI Focused Editor books.",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "dist/main.js",
+  "dependencies": {
+    "@ai-focused-editor/manuscript-workspace": "workspace:*",
+    "@ai-focused-editor/semantic-markdown": "workspace:*",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.25.10",
+    "obsidian": "^1.7.2",
+    "typescript": "~5.8.3"
+  },
+  "scripts": {
+    "build": "bun run esbuild.config.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun test src/core"
+  }
+}

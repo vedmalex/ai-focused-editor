@@ -1,0 +1,9 @@
+{
+  "id": "afe-companion",
+  "name": "AFE Companion — AI Focused Editor",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Field notebook for AI Focused Editor books: manuscript panel, semantic-tag autocomplete and navigation, and a YAML entity-card view. Works fully offline.",
+  "author": "AI Focused Editor",
+  "isDesktopOnly": false
+}
