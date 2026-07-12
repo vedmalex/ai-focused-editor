@@ -494,7 +494,7 @@ function entityCardPath(descriptor: EntityTypeDescriptor, id: string): string {
 
 /** Composite `(kind, id)` map key: a single space separates the two tokens. */
 function entityCardKey(kind: string, id: string): string {
-  return `${kind} ${id}`;
+  return `${kind}\u0000${id}`;
 }
 
 /**

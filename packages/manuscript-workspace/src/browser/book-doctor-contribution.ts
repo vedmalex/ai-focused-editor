@@ -410,7 +410,7 @@ export class BookDoctorContribution
    */
   protected foldEntityTags(path: string, text: string, accumulator: Map<string, MutableOccurrence>): void {
     const record = (kind: string | undefined, id: string, label?: string): void => {
-      const key = `${kind ?? ''} ${id}`;
+      const key = `${kind ?? ''}\u0000${id}`;
       let occurrence = accumulator.get(key);
       if (!occurrence) {
         occurrence = { kind, id, count: 0, firstPath: path, labels: {} };
