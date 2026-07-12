@@ -31,6 +31,7 @@ import {
 } from './excalidraw-editor-widget';
 import { ExcalidrawEditorOpenHandler } from './excalidraw-editor-open-handler';
 import { ExcalidrawCanvasOpsContribution } from './excalidraw-canvas-ops-contribution';
+import { RelationsMapContribution } from './relations-map-contribution';
 
 type ExcalidrawExportFormat = 'png' | 'svg';
 
@@ -283,4 +284,9 @@ export default new ContainerModule(bind => {
   bind(CommandContribution).toService(ExcalidrawCanvasOpsContribution);
   bind(MenuContribution).toService(ExcalidrawCanvasOpsContribution);
   bind(TabBarToolbarContribution).toService(ExcalidrawCanvasOpsContribution);
+
+  bind(RelationsMapContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(RelationsMapContribution);
+  bind(MenuContribution).toService(RelationsMapContribution);
+  bind(TabBarToolbarContribution).toService(RelationsMapContribution);
 });

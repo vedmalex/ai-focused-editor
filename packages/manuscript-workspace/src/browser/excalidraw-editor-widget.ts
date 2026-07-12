@@ -1,6 +1,6 @@
 import URI from '@theia/core/lib/common/uri';
 import { Emitter, Event, MessageService } from '@theia/core/lib/common';
-import { Navigatable } from '@theia/core/lib/browser';
+import { Navigatable, open, OpenerService } from '@theia/core/lib/browser';
 import { Saveable, SaveOptions } from '@theia/core/lib/browser/saveable';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { ThemeService } from '@theia/core/lib/browser/theming';
@@ -8,6 +8,7 @@ import { nls } from '@theia/core/lib/common/nls';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
+import { NarrativeEntityService, parseEntityLink } from '../common';
 
 /**
  * Minimal shape of the parts of the `@excalidraw/excalidraw` module and its
@@ -68,7 +69,10 @@ interface ExcalidrawModule {
    * binding metadata. The canvas-conveniences commands build their new elements
    * through this so they never hand-fill `versionNonce`/`seed`.
    */
-  convertToExcalidrawElements(skeleton: readonly Record<string, unknown>[]): unknown[];
+  convertToExcalidrawElements(
+    skeleton: readonly Record<string, unknown>[],
+    opts?: { regenerateIds?: boolean }
+  ): unknown[];
 }
 
 /** Subset of {@link ExcalidrawModule} the canvas-conveniences commands consume. */
@@ -129,6 +133,16 @@ function loadExcalidraw(): Promise<ExcalidrawModule> {
 }
 
 /**
+ * Public accessor for the lazily-loaded Excalidraw module's `convertToExcalidrawElements`
+ * helper, reusing the same cached module promise the widget uses (no second
+ * dynamic import if a diagram is already open). Lets a contribution build real
+ * Excalidraw elements — e.g. the relations-map generator — without an open widget.
+ */
+export function loadExcalidrawCanvasModule(): Promise<ExcalidrawCanvasModule> {
+  return loadExcalidraw();
+}
+
+/**
  * A ReactWidget editor for `.excalidraw` diagram files. De-risking spike:
  * proves the `@excalidraw/excalidraw` React component bundles under the Theia
  * esbuild pipeline and renders inside a Theia widget, editing and saving the
@@ -150,6 +164,12 @@ export class ExcalidrawEditorWidget extends ReactWidget implements Navigatable, 
 
   @inject(MessageService)
   protected readonly messageService!: MessageService;
+
+  @inject(NarrativeEntityService)
+  protected readonly narrativeEntities!: NarrativeEntityService;
+
+  @inject(OpenerService)
+  protected readonly openerService!: OpenerService;
 
   protected uri!: URI;
   protected loading = true;
@@ -277,6 +297,43 @@ export class ExcalidrawEditorWidget extends ReactWidget implements Navigatable, 
     }
   }
 
+  /**
+   * Intercept clicks on an element's `link`. When the link is one of our
+   * `afe-entity://kind/id` entity links, take over navigation (preventDefault)
+   * and open the entity's card through the {@link OpenerService} — mirroring the
+   * semantic-link contribution's resolution so the entity form editor wins. Any
+   * other link (external URL, a plain note link) keeps Excalidraw's default
+   * behavior. Works in EVERY `.excalidraw`, not just the generated relations map.
+   */
+  protected handleLinkOpen(element: { link?: string | null }, event: CustomEvent): void {
+    const parsed = parseEntityLink(element.link ?? undefined);
+    if (!parsed) {
+      return;
+    }
+    event.preventDefault();
+    void this.openEntity(parsed.kind, parsed.id);
+  }
+
+  protected async openEntity(kind: string, id: string): Promise<void> {
+    let uri: string | undefined;
+    try {
+      const snapshot = await this.narrativeEntities.getSnapshot();
+      uri = snapshot.entities.find(entity => entity.kind === kind && entity.id === id)?.uri;
+    } catch {
+      // Fall through to the "not found" warning below.
+    }
+    if (!uri) {
+      await this.messageService.warn(nls.localize(
+        'ai-focused-editor/excalidraw/entity-link-missing',
+        'This entity is no longer in the book: {0}:{1}',
+        kind,
+        id
+      ));
+      return;
+    }
+    await open(this.openerService, new URI(uri));
+  }
+
   async save(_options?: SaveOptions): Promise<void> {
     if (!this.api || !this.component) {
       return;
@@ -365,7 +422,9 @@ export class ExcalidrawEditorWidget extends ReactWidget implements Navigatable, 
         excalidrawAPI: (api: ExcalidrawImperativeApi) => {
           this.api = api;
         },
-        onChange: (elements: readonly unknown[]) => this.handleSceneChange(elements)
+        onChange: (elements: readonly unknown[]) => this.handleSceneChange(elements),
+        onLinkOpen: (element: { link?: string | null }, event: CustomEvent) =>
+          this.handleLinkOpen(element, event)
       })
     );
   }
