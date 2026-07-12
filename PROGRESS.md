@@ -282,6 +282,10 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 40 — Formulas in exported books (shipped)
+
+- Общий сегментатор `splitMathSegments` в `semantic-markdown` (превью переведено на него с дифф-доказательством 12/12 — экран и экспорт не могут разойтись); HTML/PDF — KaTeX HTML через сентинельный проход (прецедент сносок), CSS со встроенными woff2 (~359КБ, только если в книге есть формулы); EPUB — MathML (без шрифтов, EPUB3; компромисс по читалкам задокументирован). Доказательство реальной сборкой sample-book. 872 tests. Идея «формулы как сутры» доведена от превью до готовой книги.
+
 ## Wave 39 — Author-defined entity types (C stages 2–4, shipped)
 
 - **`entities/types.yaml`**: книга объявляет свои типы сущностей (id/label/папка/тег/поля с дефолтами); валидация с кодами, коллизии с базовыми отклоняются; node-скан ходит по всем эффективным папкам, снапшоты несут список типов + проблемы; фронтенд-сервис с событием изменения.
