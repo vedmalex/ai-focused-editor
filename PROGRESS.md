@@ -282,6 +282,10 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 33 — Book skills UI (shipped)
+
+- Theia's @theia/ai-core already discovers `<book>/.prompts/skills/<slug>/SKILL.md` (verified live: `getSkills()` → `[style-guide]`, and `{{skill:…}}` resolves in chat). This wave adds the authoring UI so skills are as first-class as other artifacts: a **Skills** section in the manuscript tree (own curated scan of `.prompts/skills`, label from frontmatter name, opens `SKILL.md`; verified live «Skills (1)» → style-guide) and a **New Skill…** command (name + optional description → seeded `SKILL.md` with a `{{skill:slug}}` starter). 696 tests.
+
 ## Wave 32 — Excalidraw canvas conveniences (shipped)
 
 - Selection-manipulation commands inspired by the obsidian excalidraw plugin's ea-scripts: **Split Text into Lines** (owner-requested), Merge Text Elements, Connect with Arrow, Box Selected, Text to Sticky Note. Each reads the active editor's selection via the imperative API, transforms it with pure helpers (`common/excalidraw-canvas-ops.ts`, 22 tests), builds elements with `convertToExcalidrawElements`, and pushes `updateScene`.
