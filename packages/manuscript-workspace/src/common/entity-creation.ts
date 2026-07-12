@@ -8,40 +8,39 @@
  */
 
 import { stringify } from 'yaml';
+import {
+  ENTITY_KIND_IDS,
+  entityKindDirectories,
+  entityKindLabels,
+  entityKindTags,
+  type NarrativeEntityKindFromRegistry
+} from './entity-type-registry';
 
-/** Entity kinds creatable from an editor selection. */
-export type CreatableEntityKind = 'character' | 'term' | 'artifact' | 'location';
+/**
+ * Entity kinds creatable from an editor selection — the built-in registry kinds
+ * ({@link BASE_ENTITY_TYPES}). Kept as a distinct name/type so existing
+ * consumers stay byte-compatible.
+ */
+export type CreatableEntityKind = NarrativeEntityKindFromRegistry;
 
 /** All creatable entity kinds, in a stable display/iteration order. */
-export const CREATABLE_ENTITY_KINDS: readonly CreatableEntityKind[] = ['character', 'term', 'artifact', 'location'];
+export const CREATABLE_ENTITY_KINDS: readonly CreatableEntityKind[] = ENTITY_KIND_IDS;
 
 /** Directory under `entities/` each kind's YAML files live in. */
-export const ENTITY_KIND_DIRECTORY: Record<CreatableEntityKind, string> = {
-  character: 'characters',
-  term: 'terms',
-  artifact: 'artifacts',
-  location: 'locations'
-};
+export const ENTITY_KIND_DIRECTORY: Record<CreatableEntityKind, string> =
+  entityKindDirectories() as Record<CreatableEntityKind, string>;
 
 /**
  * Semantic tag kind used inside `[[kind:id|label]]` markdown tags for each
  * entity kind. Characters use the `char` shorthand (spec §3.4, mirrored from
  * `tagKindToEntityKind` in `link-navigation.ts`); every other kind is verbatim.
  */
-export const ENTITY_KIND_TAG: Record<CreatableEntityKind, string> = {
-  character: 'char',
-  term: 'term',
-  artifact: 'artifact',
-  location: 'location'
-};
+export const ENTITY_KIND_TAG: Record<CreatableEntityKind, string> =
+  entityKindTags() as Record<CreatableEntityKind, string>;
 
 /** Human-readable label for each entity kind, for UI prompts/menus. */
-export const ENTITY_KIND_LABEL: Record<CreatableEntityKind, string> = {
-  character: 'Character',
-  term: 'Term',
-  artifact: 'Artifact',
-  location: 'Location'
-};
+export const ENTITY_KIND_LABEL: Record<CreatableEntityKind, string> =
+  entityKindLabels() as Record<CreatableEntityKind, string>;
 
 /**
  * Deterministic base-36 hash of `text`, used as a fallback suffix when a slug

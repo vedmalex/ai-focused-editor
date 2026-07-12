@@ -3,7 +3,7 @@ import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import * as monaco from '@theia/monaco-editor-core';
 import type { NarrativeEntity } from '../common';
-import { NarrativeEntityService } from '../common';
+import { ENTITY_TAG_KINDS, entityKindTags, NarrativeEntityService } from '../common';
 
 const TAG_PREFIX_PATTERN = /\[\[([a-z]*)(?::([^\s|\]]*))?$/i;
 const ENTITY_CACHE_TTL_MS = 5000;
@@ -80,7 +80,7 @@ export class SemanticMarkdownCompletionProvider implements FrontendApplicationCo
     }
 
     // Bare-kind scaffolds so the syntax is discoverable even without entities.
-    for (const kind of ['char', 'term', 'artifact', 'location']) {
+    for (const kind of ENTITY_TAG_KINDS) {
       if (kindPrefix && !kind.startsWith(kindPrefix.toLowerCase())) {
         continue;
       }
@@ -104,7 +104,7 @@ export class SemanticMarkdownCompletionProvider implements FrontendApplicationCo
    * kind verbatim so their tags complete directly (spec §4.3/§5.2).
    */
   protected toTagKind(kind: NarrativeEntity['kind']): string {
-    return kind === 'character' ? 'char' : kind;
+    return entityKindTags()[kind] ?? kind;
   }
 
   protected toCompletionItemKind(kind: NarrativeEntity['kind']): monaco.languages.CompletionItemKind {

@@ -42,8 +42,10 @@ import {
   suggestEntityName,
   uniqueRelativePath
 } from '../common/entity-creation';
+import type { NarrativeEntityTagKindFromRegistry } from '../common/entity-type-registry';
 
-type SemanticQuickActionKind = 'char' | 'term' | 'artifact' | 'location';
+/** Semantic tag kinds the wrap quick-actions operate on (registry tag kinds). */
+type SemanticQuickActionKind = NarrativeEntityTagKindFromRegistry;
 
 export namespace SemanticMarkdownActionCommands {
   // en labels stay inline as the source of truth; ru comes from

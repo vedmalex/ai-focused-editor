@@ -7,7 +7,7 @@ import type { EditorDecoration } from '@theia/editor/lib/browser/decorations/edi
 import type { EditorWidget } from '@theia/editor/lib/browser/editor-widget';
 import type { TextEditor } from '@theia/editor/lib/browser/editor';
 import type { NarrativeEntity } from '../common';
-import { NarrativeEntityService } from '../common';
+import { entityTypeByTagKind, NarrativeEntityService, tagKindToEntityKind } from '../common';
 
 const DECORATION_CLASS_PREFIX = 'afe-semantic-tag';
 const DECORATION_UPDATE_DELAY_MS = 150;
@@ -114,7 +114,7 @@ export class SemanticMarkdownDecorationService implements FrontendApplicationCon
    * not only the literal tag text (spec §4.3/FR-006).
    */
   protected getHoverMessage(kind: string, id: string, label: string, entities: Map<string, NarrativeEntity>): string {
-    const entityKind = kind === 'char' ? 'character' : kind;
+    const entityKind = tagKindToEntityKind(kind);
     const entity = entities.get(`${entityKind}:${id}`);
     const header = `${this.getTagLabel(kind)}: ${entity?.label ?? label} (${id})`;
     if (!entity) {
@@ -172,17 +172,6 @@ export class SemanticMarkdownDecorationService implements FrontendApplicationCon
   }
 
   protected getTagLabel(kind: string): string {
-    switch (kind) {
-      case 'char':
-        return 'Character';
-      case 'term':
-        return 'Term';
-      case 'artifact':
-        return 'Artifact';
-      case 'location':
-        return 'Location';
-      default:
-        return 'Semantic tag';
-    }
+    return entityTypeByTagKind(kind)?.label ?? 'Semantic tag';
   }
 }

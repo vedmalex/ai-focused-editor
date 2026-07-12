@@ -7,6 +7,7 @@
 
 import type { SemanticRange, SemanticTag } from '@ai-focused-editor/semantic-markdown';
 import type { NarrativeEntityKind } from './narrative-entity-protocol';
+import { tagKindToEntityKind as registryTagKindToEntityKind } from './entity-type-registry';
 
 /**
  * Unicode-aware heading slug, mirroring `slugifyBase` from
@@ -27,7 +28,7 @@ export function slugifyBase(title: string): string {
  * `char` shorthand inside tags (spec §3.4); every other kind is used verbatim.
  */
 export function tagKindToEntityKind(kind: string): NarrativeEntityKind {
-  return kind === 'char' ? 'character' : (kind as NarrativeEntityKind);
+  return registryTagKindToEntityKind(kind) as NarrativeEntityKind;
 }
 
 /**

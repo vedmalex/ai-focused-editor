@@ -5,6 +5,7 @@ import type {
   LabelProviderContribution
 } from '@theia/core/lib/browser/label-provider';
 import type { AuthorMaterialsSectionKind } from '../common/author-materials';
+import { BASE_ENTITY_TYPES } from '../common/entity-type-registry';
 import {
   AuthorMaterialFolderTreeNode,
   AuthorMaterialsSectionGroupTreeNode,
@@ -14,21 +15,31 @@ import {
 } from './manuscript-tree';
 
 /**
+ * Icons for the four narrative-entity sections, derived from the single-source
+ * registry so the codicon + `afe-ico-*` accent stay in one place. Section
+ * headers use each type's `sectionIcon`; tree items use its `icon`. Both classes
+ * are byte-identical to the previous inline literals.
+ */
+const ENTITY_SECTION_ICONS: Record<string, string> = Object.fromEntries(
+  BASE_ENTITY_TYPES.map(type => [type.sectionKind, `${type.sectionIcon} ${type.accentClass}`])
+);
+const ENTITY_MATERIAL_ICONS: Record<string, string> = Object.fromEntries(
+  BASE_ENTITY_TYPES.map(type => [type.sectionKind, `${type.icon} ${type.accentClass}`])
+);
+
+/**
  * Icon theme for the author navigator: codicons (shipped with the Theia/Monaco
  * font) with a per-kind accent color applied through the afe-ico-* classes in
  * style/index.css — so the tree reads at a glance and follows the theme.
  */
 const SECTION_ICONS: Record<AuthorMaterialsSectionKind, string> = {
   manuscript: 'codicon codicon-book afe-ico-manuscript',
-  characters: 'codicon codicon-account afe-ico-characters',
-  terms: 'codicon codicon-symbol-key afe-ico-terms',
-  artifacts: 'codicon codicon-package afe-ico-artifacts',
-  locations: 'codicon codicon-location afe-ico-locations',
+  ...ENTITY_SECTION_ICONS,
   citations: 'codicon codicon-quote afe-ico-citations',
   sources: 'codicon codicon-library afe-ico-sources',
   knowledge: 'codicon codicon-lightbulb afe-ico-knowledge',
   skills: 'codicon codicon-mortar-board afe-ico-skills'
-};
+} as Record<AuthorMaterialsSectionKind, string>;
 
 /**
  * The entities group node: a globe (the story's "world") in a neutral tint so
@@ -38,15 +49,12 @@ const ENTITY_GROUP_ICON = 'codicon codicon-globe afe-ico-entities';
 
 const MATERIAL_ICONS: Record<AuthorMaterialsSectionKind, string> = {
   manuscript: 'codicon codicon-file afe-ico-manuscript',
-  characters: 'codicon codicon-person afe-ico-characters',
-  terms: 'codicon codicon-symbol-string afe-ico-terms',
-  artifacts: 'codicon codicon-symbol-misc afe-ico-artifacts',
-  locations: 'codicon codicon-milestone afe-ico-locations',
+  ...ENTITY_MATERIAL_ICONS,
   citations: 'codicon codicon-bookmark afe-ico-citations',
   sources: 'codicon codicon-file afe-ico-sources',
   knowledge: 'codicon codicon-note afe-ico-knowledge',
   skills: 'codicon codicon-mortar-board afe-ico-skills'
-};
+} as Record<AuthorMaterialsSectionKind, string>;
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.tif', '.tiff', '.bmp'];
 const STRUCTURED_EXTENSIONS = ['.yaml', '.yml', '.json', '.jsonl'];

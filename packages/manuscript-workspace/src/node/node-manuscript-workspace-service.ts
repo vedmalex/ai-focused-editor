@@ -5,6 +5,7 @@ import { inject, injectable } from '@theia/core/shared/inversify';
 import { validateSemanticMarkdown } from '@ai-focused-editor/semantic-markdown';
 import { isMap, isSeq, parse, parseDocument, YAMLMap, YAMLSeq } from 'yaml';
 import {
+  BASE_ENTITY_TYPES,
   DomainYamlSchemaKind,
   ManuscriptMoveTarget,
   ManuscriptMutationResult,
@@ -385,10 +386,12 @@ export class NodeManuscriptWorkspaceService implements ManuscriptWorkspaceBacken
     }
 
     await this.checkExpectedDirectories(rootPath, diagnostics);
-    await this.validateEntityDirectory(join(rootPath, 'entities/characters'), 'character', diagnostics);
-    await this.validateEntityDirectory(join(rootPath, 'entities/terms'), 'term', diagnostics);
-    await this.validateEntityDirectory(join(rootPath, 'entities/artifacts'), 'artifact', diagnostics);
-    await this.validateEntityDirectory(join(rootPath, 'entities/locations'), 'location', diagnostics);
+    // Enumerated from the single-source entity-type registry; each descriptor's
+    // id doubles as its DomainYamlSchemaKind. Byte-identical to the previous
+    // four explicit calls.
+    for (const type of BASE_ENTITY_TYPES) {
+      await this.validateEntityDirectory(join(rootPath, `entities/${type.directory}`), type.id, diagnostics);
+    }
     await this.validateMarkdownNodes(content, diagnostics);
     // Supplementary materials are texts too (owner intake 2026-07-10):
     // lint sources/ and knowledge/ Markdown with the same semantic checks.

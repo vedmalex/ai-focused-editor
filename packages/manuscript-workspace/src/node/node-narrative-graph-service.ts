@@ -5,6 +5,7 @@ import { injectable } from '@theia/core/shared/inversify';
 import { parseSemanticMarkdown } from '@ai-focused-editor/semantic-markdown';
 import { parse } from 'yaml';
 import {
+  BASE_ENTITY_TYPES,
   NARRATIVE_GRAPH_NODE_CAP,
   NarrativeEntityAppearance,
   NarrativeGraphBackendService,
@@ -23,12 +24,13 @@ interface EntityLabelConfig {
   labelField: string;
 }
 
-const ENTITY_LABEL_DIRECTORIES: EntityLabelConfig[] = [
-  { kind: 'character', directory: 'entities/characters', labelField: 'name' },
-  { kind: 'term', directory: 'entities/terms', labelField: 'term' },
-  { kind: 'artifact', directory: 'entities/artifacts', labelField: 'name' },
-  { kind: 'location', directory: 'entities/locations', labelField: 'name' }
-];
+// Derived from the single-source entity-type registry (kind id, `entities/<dir>`
+// scan path, YAML label key). Byte-identical to the previous inline table.
+const ENTITY_LABEL_DIRECTORIES: EntityLabelConfig[] = BASE_ENTITY_TYPES.map(type => ({
+  kind: type.id,
+  directory: `entities/${type.directory}`,
+  labelField: type.fields.find(field => field.role === 'label')?.name ?? 'name'
+}));
 
 /** Semantic-tag kinds collapse onto the four canonical entity kinds. */
 const TAG_KIND_TO_ENTITY_KIND: Record<string, string> = {

@@ -1,10 +1,17 @@
 import type { WorkspaceDiagnostic } from './manuscript-workspace-protocol';
+import type { NarrativeEntityKindFromRegistry } from './entity-type-registry';
 
 export const NarrativeEntityService = Symbol('NarrativeEntityService');
 export const NarrativeEntityBackendService = Symbol('NarrativeEntityBackendService');
 export const NarrativeEntityBackendServicePath = '/services/ai-focused-editor/narrative-entity';
 
-export type NarrativeEntityKind = 'character' | 'term' | 'artifact' | 'location';
+/**
+ * The narrative entity kind union, derived from the single-source-of-truth
+ * {@link BASE_ENTITY_TYPES} registry. Stays the same four literals
+ * (`character | term | artifact | location`) — the registry's `as const` keeps
+ * them from widening to `string`.
+ */
+export type NarrativeEntityKind = NarrativeEntityKindFromRegistry;
 
 export interface NarrativeEntity {
   kind: NarrativeEntityKind;

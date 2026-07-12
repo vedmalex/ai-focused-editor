@@ -8,6 +8,7 @@ import { parse } from 'yaml';
 import {
   AI_MODE_APPLY_KINDS,
   AI_MODE_CONTEXTS,
+  BASE_ENTITY_TYPES,
   AiMode,
   AiModeApply,
   AiModeContext,
@@ -36,28 +37,14 @@ interface EntityDirectoryConfig {
   labelField: 'name' | 'term';
 }
 
-const ENTITY_DIRECTORIES: EntityDirectoryConfig[] = [
-  {
-    kind: 'character',
-    directory: 'entities/characters',
-    labelField: 'name'
-  },
-  {
-    kind: 'term',
-    directory: 'entities/terms',
-    labelField: 'term'
-  },
-  {
-    kind: 'artifact',
-    directory: 'entities/artifacts',
-    labelField: 'name'
-  },
-  {
-    kind: 'location',
-    directory: 'entities/locations',
-    labelField: 'name'
-  }
-];
+// Derived from the single-source entity-type registry: kind id, the
+// `entities/<dir>` scan path, and the YAML label key (`name`, or `term` for
+// terms). Byte-identical to the previous inline table.
+const ENTITY_DIRECTORIES: EntityDirectoryConfig[] = BASE_ENTITY_TYPES.map(type => ({
+  kind: type.id,
+  directory: `entities/${type.directory}`,
+  labelField: type.fields.find(field => field.role === 'label')?.name === 'term' ? 'term' : 'name'
+}));
 
 interface CitationDocument {
   citations?: unknown;

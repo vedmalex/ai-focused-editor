@@ -19,6 +19,7 @@ import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { Document, isSeq, parseDocument, YAMLSeq } from 'yaml';
 import type { AuthorMaterialsSectionKind } from '../common/author-materials';
+import { entityKindSections } from '../common/entity-type-registry';
 import {
   buildKnowledgeNoteBody,
   KNOWLEDGE_TEMPLATE_KINDS,
@@ -136,12 +137,8 @@ const ENTITY_COMMAND: Record<CreatableEntityKind, Command> = {
 };
 
 /** Navigator section each entity kind's create command belongs to. */
-const ENTITY_SECTION: Record<CreatableEntityKind, AuthorMaterialsSectionKind> = {
-  character: 'characters',
-  term: 'terms',
-  artifact: 'artifacts',
-  location: 'locations'
-};
+const ENTITY_SECTION: Record<CreatableEntityKind, AuthorMaterialsSectionKind> =
+  entityKindSections() as Record<CreatableEntityKind, AuthorMaterialsSectionKind>;
 
 /**
  * Sections nested under the entities group. Their create actions also fire when

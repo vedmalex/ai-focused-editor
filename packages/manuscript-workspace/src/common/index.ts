@@ -9,6 +9,7 @@ export * from './ai-mode-layering';
 export * from './book-build-protocol';
 export * from './browser-auth-protocol';
 export * from './entity-mentions';
+export * from './entity-type-registry';
 export * from './excalidraw-canvas-ops';
 export * from './git-status-protocol';
 export * from './knowledge-templates';

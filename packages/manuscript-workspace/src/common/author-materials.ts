@@ -1,5 +1,6 @@
 import type { ManuscriptNode } from './manuscript-workspace-protocol';
 import type { NarrativeEntity, NarrativeEntityKind } from './narrative-entity-protocol';
+import { entityKindSections } from './entity-type-registry';
 import type { CitationEntry, SourceLibraryItem } from './source-library-protocol';
 
 /**
@@ -45,12 +46,8 @@ const SECTION_LABELS: Record<AuthorMaterialsSectionKind, string> = {
   skills: 'Skills'
 };
 
-const ENTITY_KIND_TO_SECTION: Record<NarrativeEntityKind, AuthorMaterialsSectionKind> = {
-  character: 'characters',
-  term: 'terms',
-  artifact: 'artifacts',
-  location: 'locations'
-};
+const ENTITY_KIND_TO_SECTION: Record<NarrativeEntityKind, AuthorMaterialsSectionKind> =
+  entityKindSections() as Record<NarrativeEntityKind, AuthorMaterialsSectionKind>;
 
 /** File extensions surfaced under the Knowledge section (spec §4.1 `knowledge/`). */
 const KNOWLEDGE_EXTENSIONS = ['.yaml', '.yml', '.md'];
