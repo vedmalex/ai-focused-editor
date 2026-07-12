@@ -58,7 +58,7 @@
     "yargs": "^18.0.0"
   },
   "scripts": {
-    "bundle": "bun run build:ffmpeg-native && bun run rebuild && theia build --app-target electron --mode development && node ../../scripts/copy-excalidraw-assets.mjs electron",
+    "bundle": "bun run build:ffmpeg-native && bun run rebuild && theia build --app-target electron --mode development && node ../../scripts/copy-excalidraw-assets.mjs electron && node ../../scripts/copy-katex-assets.mjs electron",
     "build:ffmpeg-native": "node-gyp rebuild --directory node_modules/@theia/ffmpeg",
     "rebuild": "theia rebuild:electron --cacheRoot ../.. --modules=keytar,native-keymap,drivelist,ssh2,node-pty",
     "start": "theia start --app-target electron ../../examples/sample-book"

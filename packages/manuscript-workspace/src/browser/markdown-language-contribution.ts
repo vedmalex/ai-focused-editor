@@ -122,8 +122,17 @@ const markdownTokenizer: monaco.languages.IMonarchLanguage = {
       // github style code blocks (with backticks but no language)
       [/^\s*```\s*$/, { token: 'string', next: '@codeblock' }],
 
+      // KaTeX block math ($$ on its own line — spans multiple lines)
+      [/^\s*\$\$\s*$/, { token: 'variable.math', next: '@mathblock' }],
+
       // markup within lines
       { include: '@linecontent' }
+    ],
+
+    // KaTeX block math body: everything until a closing $$ line
+    mathblock: [
+      [/^\s*\$\$\s*$/, { token: 'variable.math', next: '@pop' }],
+      [/.*$/, 'variable.math']
     ],
 
     codeblock: [
@@ -151,6 +160,10 @@ const markdownTokenizer: monaco.languages.IMonarchLanguage = {
 
       // strikethrough (GFM)
       [/~~([^\\~]|@escapes)+~~/, 'strikethrough'],
+
+      // KaTeX math: block $$…$$ then inline $…$ (single line)
+      [/\$\$(?:[^$]|\$(?!\$))+?\$\$/, 'variable.math'],
+      [/\$[^$\n]+?\$/, 'variable.math'],
 
       // code block (with backticks)
       [/`([^\\`]|@escapes)+`/, 'variable'],

@@ -47,7 +47,7 @@
     "yargs": "^18.0.0"
   },
   "scripts": {
-    "bundle": "bun run rebuild && theia build --mode development && node ../../scripts/copy-excalidraw-assets.mjs browser",
+    "bundle": "bun run rebuild && theia build --mode development && node ../../scripts/copy-excalidraw-assets.mjs browser && node ../../scripts/copy-katex-assets.mjs browser",
     "rebuild": "theia rebuild:browser --cacheRoot ../..",
     "start": "theia start --hostname 0.0.0.0 ../../examples/sample-book",
     "watch": "bun run rebuild && theia build --watch --mode development"

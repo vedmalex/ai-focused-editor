@@ -60,7 +60,8 @@
       "footnote-open-editor": "Откройте редактор Markdown, прежде чем вставлять сноску.",
       "footnote-reference-not-applied": "Редактор Theia не вставил ссылку на сноску.",
       "footnote-definition-not-applied": "Редактор Theia не вставил определение сноски.",
-      "footnote-inserted": "Сноска [^{0}] вставлена; введите текст после маркера."
+      "footnote-inserted": "Сноска [^{0}] вставлена; введите текст после маркера.",
+      "formula-error": "Ошибка формулы: {0}"
     }
   }
 }

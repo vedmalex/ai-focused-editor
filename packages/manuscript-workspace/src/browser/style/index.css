@@ -696,6 +696,18 @@
   font-style: italic;
 }
 
+/* KaTeX self-hosted stylesheet is injected at runtime (katex-assets/katex.min.css,
+   EXCALIDRAW_ASSET_PATH-style). This only styles the raw-text fallback shown when
+   a formula fails to parse — the message rides along as a `title` tooltip. */
+.afe-katex-error {
+  color: var(--theia-errorForeground, #f85149);
+  background: var(--theia-inputValidation-errorBackground, rgba(248, 81, 73, 0.12));
+  border-radius: 3px;
+  padding: 0 3px;
+  font-family: var(--theia-code-font-family, monospace);
+  cursor: help;
+}
+
 /* ---------- AI debug ---------- */
 
 .afe-ai-debug-section {

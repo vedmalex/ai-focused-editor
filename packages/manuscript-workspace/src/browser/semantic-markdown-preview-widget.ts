@@ -73,6 +73,146 @@ function extensionOf(path: string): string {
   return path.slice(dot + 1).toLowerCase();
 }
 
+// ---------------------------------------------------------------------------
+// KaTeX math rendering ($$…$$ block / $…$ inline) over the rendered preview DOM.
+// ---------------------------------------------------------------------------
+
+/** Minimal shape of the (lazily imported) `katex` module this widget touches. */
+interface KatexModule {
+  renderToString(tex: string, options?: { displayMode?: boolean; throwOnError?: boolean }): string;
+}
+
+/**
+ * Path (relative to the served frontend root) where the apps copy KaTeX's
+ * self-hosted stylesheet + fonts during `bundle` (scripts/copy-katex-assets.mjs).
+ * The stylesheet's `@font-face url(fonts/KaTeX_*.woff2)` references resolve
+ * against `katex-assets/fonts/`, keeping formula fonts OFFLINE (no CDN, CSP-safe)
+ * — the EXCALIDRAW_ASSET_PATH pattern applied to KaTeX.
+ */
+const KATEX_ASSET_PATH = './katex-assets/';
+
+/** Elements whose text must never be treated as math (verbatim / non-prose). */
+const MATH_SKIP_TAGS: ReadonlySet<string> = new Set([
+  'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA'
+]);
+
+/**
+ * Block `$$…$$` (may span lines within one text node) then inline `$…$`
+ * (single line, non-empty). Matched left-to-right; group 1 = block tex, group 2
+ * = inline tex.
+ */
+const MATH_DELIMITER_RE = /\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/g;
+
+let katexModulePromise: Promise<KatexModule> | undefined;
+
+/** Inject KaTeX's self-hosted stylesheet into `doc` once (id-guarded, per document). */
+function ensureKatexStyles(doc: Document): void {
+  if (!doc.getElementById('afe-katex-styles')) {
+    const link = doc.createElement('link');
+    link.id = 'afe-katex-styles';
+    link.rel = 'stylesheet';
+    link.href = `${KATEX_ASSET_PATH}katex.min.css`;
+    doc.head.appendChild(link);
+  }
+}
+
+/**
+ * Ensure the stylesheet is present in `doc` and lazily import the (heavy) KaTeX
+ * bundle on first formula encountered — the JS module is cached across renders
+ * and documents; the stylesheet injection is idempotent per document (so a
+ * preview extracted to a secondary window gets its own `<link>`).
+ */
+function loadKatex(doc: Document): Promise<KatexModule> {
+  ensureKatexStyles(doc);
+  if (!katexModulePromise) {
+    katexModulePromise = import('katex').then(
+      module => ((module as { default?: KatexModule }).default ?? module) as KatexModule
+    );
+  }
+  return katexModulePromise;
+}
+
+/**
+ * Render one TeX fragment into a fresh span. On a KaTeX parse error the span
+ * falls back to the raw `$…$` text with the error message as a `title` tooltip —
+ * a bad formula never breaks the preview. `renderToString` is used (rather than
+ * `render`) so the DOM is only touched on success (no partial output on throw).
+ */
+function renderFormula(tex: string, raw: string, displayMode: boolean, katex: KatexModule, doc: Document): HTMLSpanElement {
+  const span = doc.createElement('span');
+  try {
+    span.innerHTML = katex.renderToString(tex, { displayMode, throwOnError: true });
+  } catch (error) {
+    span.className = 'afe-katex-error';
+    span.textContent = raw;
+    span.title = nls.localize(
+      'ai-focused-editor/editor/formula-error',
+      'Formula error: {0}',
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+  return span;
+}
+
+/** Replace every `$$…$$` / `$…$` run in a single text node with rendered spans. */
+function renderMathInTextNode(textNode: Text, katex: KatexModule, doc: Document): void {
+  const text = textNode.nodeValue ?? '';
+  MATH_DELIMITER_RE.lastIndex = 0;
+  let fragment: DocumentFragment | undefined;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MATH_DELIMITER_RE.exec(text))) {
+    const isBlock = match[1] !== undefined;
+    const tex = isBlock ? match[1] : match[2];
+    if (!fragment) {
+      fragment = doc.createDocumentFragment();
+    }
+    if (match.index > lastIndex) {
+      fragment.appendChild(doc.createTextNode(text.slice(lastIndex, match.index)));
+    }
+    fragment.appendChild(renderFormula(tex, match[0], isBlock, katex, doc));
+    lastIndex = MATH_DELIMITER_RE.lastIndex;
+  }
+  if (fragment) {
+    if (lastIndex < text.length) {
+      fragment.appendChild(doc.createTextNode(text.slice(lastIndex)));
+    }
+    textNode.parentNode?.replaceChild(fragment, textNode);
+  }
+}
+
+/**
+ * Walk `root`'s text nodes and render any math delimiters found, skipping
+ * verbatim tags ({@link MATH_SKIP_TAGS}) and already-rendered `.katex` subtrees.
+ * Bypasses markdown-it/DOMPurify (both already ran on the string) and inserts
+ * trusted KaTeX output directly on the live nodes — the same post-render DOM
+ * patch pattern as {@link SemanticMarkdownPreviewWidget.patchPreviewImages}.
+ */
+function renderMathInElement(root: HTMLElement, katex: KatexModule): void {
+  const doc = root.ownerDocument;
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node: Node): number {
+      const value = node.nodeValue;
+      if (!value || value.indexOf('$') === -1) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      for (let parent = node.parentElement; parent && parent !== root; parent = parent.parentElement) {
+        if (MATH_SKIP_TAGS.has(parent.tagName) || parent.classList.contains('katex')) {
+          return NodeFilter.FILTER_REJECT;
+        }
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  const targets: Text[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    targets.push(node as Text);
+  }
+  for (const textNode of targets) {
+    renderMathInTextNode(textNode, katex, doc);
+  }
+}
+
 @injectable()
 export class SemanticMarkdownPreviewWidget extends ReactWidget implements ExtractableWidget {
   static readonly ID = 'ai-focused-editor.semantic-markdown.preview';
@@ -111,6 +251,9 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
 
   /** Monotonic token so a slow async image resolution never overwrites a newer render. */
   protected imageRenderGeneration = 0;
+
+  /** Monotonic token so a slow async KaTeX load never patches a superseded render. */
+  protected mathRenderGeneration = 0;
 
   @postConstruct()
   protected init(): void {
@@ -304,6 +447,43 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
     }
   };
 
+  /**
+   * `onRender` hook for the preview Markdown component: swap SVG sentinels
+   * (see {@link patchPreviewImages}) and, when the rendered text contains any
+   * `$`, lazily load KaTeX and render `$$…$$` / `$…$` math over the live DOM.
+   * Bound once so the memoized Markdown component's `onRender` prop stays
+   * referentially stable across updates.
+   */
+  protected readonly handlePreviewRender = (element?: HTMLElement): void => {
+    this.patchPreviewImages(element);
+    if (element) {
+      void this.renderMath(element, ++this.mathRenderGeneration);
+    }
+  };
+
+  /**
+   * Lazily load KaTeX (only when a `$` is present) and render math over the
+   * preview DOM. The `generation` guard drops a stale load that resolved after a
+   * newer render replaced the content, and a bundle-load failure leaves the
+   * formulas as raw text rather than breaking the preview.
+   */
+  protected async renderMath(element: HTMLElement, generation: number): Promise<void> {
+    const text = element.textContent;
+    if (!text || text.indexOf('$') === -1) {
+      return;
+    }
+    let katex: KatexModule;
+    try {
+      katex = await loadKatex(element.ownerDocument);
+    } catch {
+      return; // KaTeX bundle failed to load: leave formulas as raw text.
+    }
+    if (generation !== this.mathRenderGeneration) {
+      return; // a newer render superseded us mid-flight.
+    }
+    renderMathInElement(element, katex);
+  }
+
   protected isMarkdownEditor(editor: TextEditor): boolean {
     return editor.uri.path.ext.toLowerCase() === '.md' || editor.document.languageId === 'markdown';
   }
@@ -319,7 +499,7 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
             markdown: this.previewMarkdown,
             markdownRenderer: this.markdownRenderer,
             className: 'afe-semantic-markdown-preview-content',
-            onRender: this.patchPreviewImages
+            onRender: this.handlePreviewRender
           })
         : React.createElement(
             'div',
