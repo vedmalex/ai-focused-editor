@@ -282,6 +282,13 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 37 — Addressability, agent write tools, formulas (shipped)
+
+- **Правило (постоянное): каждый артефакт книги индивидуально адресуем в ai-chat** — переменная с пикером, категория универсального пикера, «Отправить в AI-чат», текстовое представление для бинарных форматов. Закрыты пробелы: `#citation:<id>` (карточка + её выдержки), `#excerpt:<id>`, `#diagram:<path>` (диаграмма приходит модели текстом: подписи узлов с entity-ссылками, связи «A → B», счётчики фигур; чистый суммаризатор, 13 тестов); категории Цитаты/Выдержки/Диаграммы/Книга.
+- **Агент создаёт файлы (блок A)**: write-инструменты `manuscript_create_entity` / `manuscript_write_note` / `manuscript_create_diagram` (структурный spec → детерминированная сетка, узлы с `afe-entity://`, 24 теста; невалидный spec падает до записи; никогда не бросают исключений); промпт-фрагмент diagram-author учит агента формату.
+- **Формулы (идея «сутры»)**: KaTeX в превью через существующий onRender-проход (ленивая загрузка, деградация на битой формуле), self-host css/шрифтов в обеих сборках — живая проверка: 4 формулы отрендерены, 0 CDN; подсветка `$...$` в Monarch; пример в sample-book. Экспорт формул в EPUB/PDF — follow-up.
+- 789 tests; build + smokes green.
+
 ## Wave 36 — Doctor: entity discovery (shipped)
 
 - Доктор восстанавливает базу сущностей по тексту: теги `[[kind:id]]` без карточки → исправление «создать карточку» (имя из самой частой метки тегов, счётчик упоминаний и первый файл в описании); карточки-сироты и неизвестные типы тегов (`[[spell:…]]` — задел под авторские типы) — справочные находки; «голые» `[[id]]` считаются ссылками, но фиксов не порождают. Полнотекстовый однопроходный скан с лимитом 1 МБ/файл. 752 tests.
