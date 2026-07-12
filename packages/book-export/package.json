@@ -10,6 +10,7 @@
     "src"
   ],
   "dependencies": {
+    "katex": "^0.16.11",
     "puppeteer-core": "^24.34.0"
   },
   "devDependencies": {

@@ -17,8 +17,9 @@ diagnoses exactly like the built-in kinds.
 
 ## The Weight of the Bow
 
-The bow is heavy, and so is the choice. The teaching that answers it
-[begins in the next chapter](part-01/chapter-02.md).
+The bow is heavy, and so is the choice. The translator notes the teaching as a
+small equation in the margin — act, but stay free of the fruit: $W(a) \perp F(a)$.
+The teaching that answers it [begins in the next chapter](part-01/chapter-02.md).
 
 For the translator's scratch notes, see the [draft notes](notes-draft.md) — kept out
 of the finished book. Background reading lives at [the project home](https://example.com).

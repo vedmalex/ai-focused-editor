@@ -12,4 +12,11 @@ export interface TelegraphNode {
   tag?: string;
   attrs?: Record<string, string>;
   children?: (string | TelegraphNode)[];
+  /**
+   * Pre-rendered, trusted markup emitted verbatim by the EPUB serializer instead
+   * of `tag`/`children` (bypassing HTML escaping). The math exporter uses it to
+   * inject KaTeX MathML — which is a tree of `<math>` elements the generic
+   * `{tag,children}` serializer would otherwise escape. Must be well-formed XHTML.
+   */
+  raw?: string;
 }

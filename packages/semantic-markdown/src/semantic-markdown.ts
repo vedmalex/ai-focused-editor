@@ -246,6 +246,182 @@ function renderFootnotePreviewSections(text: string): { body: string; notes: str
   return { body, notes: items.length > 0 ? `#### Notes\n\n${items.join('\n')}` : '' };
 }
 
+// ---------------------------------------------------------------------------
+// Math segmentation ($$…$$ block / $…$ inline) — shared by the preview widget
+// and the book exporter so on-screen and exported formulas can never drift.
+// ---------------------------------------------------------------------------
+
+export type MathSegmentType = 'text' | 'inline' | 'block';
+
+export interface MathSegment {
+  type: MathSegmentType;
+  /**
+   * For `text`: the literal text run (delimiters included when a `$`/`$$` did not
+   * close). For `inline`/`block`: the TeX source WITHOUT its `$`/`$$` delimiters —
+   * exactly the capture the preview's `MATH_DELIMITER_RE` fed to KaTeX, so the raw
+   * form is reconstructable as `` `$${value}$$` `` / `` `$${value}$` ``.
+   */
+  value: string;
+}
+
+/** True when `index` is the first character of a line (start-of-string or after `\n`). */
+function isMathLineStart(text: string, index: number): boolean {
+  return index === 0 || text.charCodeAt(index - 1) === 10;
+}
+
+/**
+ * If a fenced code block opens at `index` (line start, up to 3 leading spaces,
+ * then ≥3 backticks or tildes), return the fence run char and length; else null.
+ */
+function matchCodeFenceOpen(text: string, index: number): { char: string; length: number } | undefined {
+  let cursor = index;
+  let spaces = 0;
+  while (cursor < text.length && text[cursor] === ' ' && spaces < 3) {
+    cursor++;
+    spaces++;
+  }
+  const char = text[cursor];
+  if (char !== '`' && char !== '~') {
+    return undefined;
+  }
+  let length = 0;
+  while (cursor + length < text.length && text[cursor + length] === char) {
+    length++;
+  }
+  return length >= 3 ? { char, length } : undefined;
+}
+
+/**
+ * Given a fence opened on the line containing `openIndex`, return the offset just
+ * past the closing fence line (a line of ≥`length` of the same fence char, only
+ * whitespace otherwise), or `text.length` when the fence is never closed.
+ */
+function findCodeFenceClose(text: string, openIndex: number, fence: { char: string; length: number }): number {
+  // Advance to the start of the line AFTER the opening fence line.
+  let lineStart = text.indexOf('\n', openIndex);
+  if (lineStart === -1) {
+    return text.length;
+  }
+  lineStart += 1;
+  while (lineStart <= text.length) {
+    const nextNewline = text.indexOf('\n', lineStart);
+    const lineEnd = nextNewline === -1 ? text.length : nextNewline;
+    const line = text.slice(lineStart, lineEnd);
+    const trimmed = line.replace(/^\s{0,3}/, '');
+    const runMatch = new RegExp(`^\\${fence.char}{${fence.length},}\\s*$`).test(trimmed);
+    if (runMatch) {
+      return nextNewline === -1 ? text.length : lineEnd + 1;
+    }
+    if (nextNewline === -1) {
+      return text.length;
+    }
+    lineStart = nextNewline + 1;
+  }
+  return text.length;
+}
+
+/**
+ * Split `text` into ordered text / inline-math / block-math segments using the
+ * SAME delimiter semantics the preview applies: block `$$…$$` (may span lines),
+ * inline `$…$` (single line, non-empty, no inner `$`), with `$` inside fenced
+ * code / inline code and escaped `\$` treated as literal, and an unclosed
+ * delimiter degrading to text.
+ *
+ * The preview runs this per rendered-DOM text node — where fenced code, inline
+ * code and backslash escapes have already been consumed by markdown-it, so those
+ * guards are unreachable there and the output is byte-identical to the old
+ * `MATH_DELIMITER_RE` scan. The exporter runs it over raw chapter Markdown, where
+ * those same guards keep `$` inside code blocks from being mistaken for math.
+ */
+export function splitMathSegments(text: string): MathSegment[] {
+  const segments: MathSegment[] = [];
+  let textStart = 0;
+  let i = 0;
+  const n = text.length;
+
+  const flushText = (end: number): void => {
+    if (end > textStart) {
+      segments.push({ type: 'text', value: text.slice(textStart, end) });
+    }
+  };
+
+  while (i < n) {
+    const ch = text[i];
+
+    // Fenced code block (line start): the whole region is literal text.
+    if ((ch === '`' || ch === '~') && isMathLineStart(text, i)) {
+      const fence = matchCodeFenceOpen(text, i);
+      if (fence) {
+        i = findCodeFenceClose(text, i, fence);
+        continue;
+      }
+    }
+
+    // Backslash escape: the escaped char (e.g. `\$`) is literal, never a delimiter.
+    if (ch === '\\' && i + 1 < n) {
+      i += 2;
+      continue;
+    }
+
+    // Inline code span: a run of k backticks closed by a run of exactly k backticks.
+    if (ch === '`') {
+      let run = 0;
+      while (i + run < n && text[i + run] === '`') {
+        run++;
+      }
+      const closer = '`'.repeat(run);
+      const closeIndex = text.indexOf(closer, i + run);
+      // Guard against a longer backtick run matching (indexOf finds a substring, so
+      // require the char after the closer is not another backtick — CommonMark needs
+      // an exact-length closing run).
+      if (closeIndex !== -1 && text[closeIndex + run] !== '`') {
+        i = closeIndex + run;
+        continue;
+      }
+      // Unclosed / mismatched: the single backtick is literal, keep scanning after it.
+      i += 1;
+      continue;
+    }
+
+    if (ch === '$') {
+      // Block `$$…$$` (may span newlines), non-empty content.
+      if (text[i + 1] === '$') {
+        const close = text.indexOf('$$', i + 2);
+        if (close !== -1 && close > i + 2) {
+          flushText(i);
+          segments.push({ type: 'block', value: text.slice(i + 2, close) });
+          i = close + 2;
+          textStart = i;
+          continue;
+        }
+        // Not a valid block: the first `$` is literal; the second is re-examined next.
+        i += 1;
+        continue;
+      }
+      // Inline `$…$`: single line, non-empty, no inner `$`.
+      let j = i + 1;
+      while (j < n && text[j] !== '$' && text[j] !== '\n') {
+        j++;
+      }
+      if (j < n && text[j] === '$' && j > i + 1) {
+        flushText(i);
+        segments.push({ type: 'inline', value: text.slice(i + 1, j) });
+        i = j + 1;
+        textStart = i;
+        continue;
+      }
+      // Unclosed / empty inline: literal `$`.
+      i += 1;
+      continue;
+    }
+
+    i += 1;
+  }
+
+  flushText(n);
+  return segments;
+}
+
 export function validateSemanticMarkdown(text: string): SemanticMarkdownDiagnostic[] {
   const lineStarts = computeLineStarts(text);
   const diagnostics: SemanticMarkdownDiagnostic[] = [];

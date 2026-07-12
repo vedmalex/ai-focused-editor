@@ -4,16 +4,20 @@ import { FileUri } from '@theia/core/lib/common/file-uri';
 import { injectable } from '@theia/core/shared/inversify';
 import {
   parseFootnotes,
+  splitMathSegments,
   validateSemanticMarkdown
 } from '@ai-focused-editor/semantic-markdown';
-import type { FootnoteDocument } from '@ai-focused-editor/semantic-markdown';
+import type { FootnoteDocument, MathSegment } from '@ai-focused-editor/semantic-markdown';
 import {
   CHROME_NOT_FOUND_MESSAGE,
   EpubGenerator,
   createSlugger,
   findChromePath,
+  getKatexCss,
   processInlineMarkdown,
   renderHtmlToPdf,
+  renderMathToHtml,
+  renderMathToMathML,
   slugifyBase
 } from '@ai-focused-editor/book-export';
 import type { EpubNavPoint, TelegraphNode } from '@ai-focused-editor/book-export';
@@ -142,6 +146,15 @@ export class NodeBookBuildService implements BookBuildService {
     linkify: true,
     typographer: true
   }).use(markdownItTaskLists);
+
+  // Private-use sentinels bracketing a math-segment index. Math is detected on the
+  // raw Markdown (via the shared `splitMathSegments`), swapped for a sentinel that
+  // survives the Markdown/AST pass untouched, then restored to KaTeX markup -- the
+  // same technique footnote references use (U+E000/U+E001), on disjoint code points
+  // (U+E002/U+E003) so the two never collide.
+  protected readonly MATH_SENTINEL_OPEN = '\uE002';
+  protected readonly MATH_SENTINEL_CLOSE = '\uE003';
+  protected readonly MATH_SENTINEL_RE = /\uE002(\d+)\uE003/g;
 
   async buildMarkdown(request: BookBuildRequest = {}): Promise<BookBuildResult> {
     return this.build(request, 'markdown');
@@ -393,43 +406,119 @@ export class NodeBookBuildService implements BookBuildService {
   }
 
   /**
-   * Pre-process one chapter's Markdown for EPUB footnote rendering.
+   * Pre-process one chapter's Markdown for EPUB footnote + math rendering.
    *
    * The EPUB path converts Markdown into a TelegraphNode AST that only serializes
-   * known tags, so `[^N]` references and `[^N]:` definitions would otherwise pass
-   * through as literal text. We strip the definition lines, swap each reference for
-   * a private-use sentinel (which survives the AST conversion untouched), and hand
-   * back a `transformNodes` post-pass that turns the sentinels into inline `<sup>`
-   * anchor nodes and appends an end-of-chapter "Notes" ordered list with back-links
-   * — the same shape the HTML export emits. Chapters without footnotes are returned
-   * unchanged so their conversion path is untouched.
+   * known tags, so `[^N]` references / `[^N]:` definitions and `$...$` / `$$...$$`
+   * formulas would otherwise pass through as literal text. Both are handled with the
+   * same sentinel technique: math is detected first (via extractMath, which never
+   * touches code blocks) and swapped for a private-use sentinel; footnote definition
+   * lines are stripped and each reference swapped for its own sentinel. The returned
+   * transformNodes post-pass restores math sentinels to KaTeX MathML raw nodes (a
+   * display formula's paragraph is unwrapped to a centered block) and footnote
+   * sentinels to inline <sup> anchors, then appends the "Notes" list. Chapters with
+   * neither are returned unchanged so their conversion path is untouched.
    */
   protected prepareEpubChapterContent(
     markdown: string,
     anchorPrefix: string
   ): { content: string; transformNodes?: (nodes: TelegraphNode[]) => TelegraphNode[] } {
     const footnotes = parseFootnotes(markdown);
-    if (footnotes.definitions.length === 0 && footnotes.references.length === 0) {
+    const hasFootnotes = footnotes.definitions.length > 0 || footnotes.references.length > 0;
+
+    let body = markdown;
+    if (hasFootnotes) {
+      const definitionLines = new Set(footnotes.definitions.map(definition => definition.line));
+      body = markdown
+        .split('\n')
+        .filter((_, index) => !definitionLines.has(index))
+        .join('\n');
+    }
+
+    const { text: mathText, segments: mathSegments } = this.extractMath(body);
+
+    if (!hasFootnotes && mathSegments.length === 0) {
       return { content: markdown };
     }
 
-    const definitionLines = new Set(footnotes.definitions.map(definition => definition.line));
-    const body = markdown
-      .split('\n')
-      .filter((_, index) => !definitionLines.has(index))
-      .join('\n');
-    const withSentinels = body.replace(/\[\^([^\]\s]+)\]/g, (raw, id: string) => {
-      const number = footnotes.numbers.get(id);
-      return number ? `${number}` : raw;
-    });
+    let content = mathText;
+    if (hasFootnotes) {
+      content = content.replace(/\[\^([^\]\s]+)\]/g, (raw, id: string) => {
+        const number = footnotes.numbers.get(id);
+        return number ? `${number}` : raw;
+      });
+    }
 
     const transformNodes = (nodes: TelegraphNode[]): TelegraphNode[] => {
-      const withRefs = nodes.map(node => this.replaceFootnoteSentinelsInNode(node, anchorPrefix));
-      const notes = this.buildEpubFootnoteNotes(footnotes, anchorPrefix);
-      return notes ? [...withRefs, notes] : withRefs;
+      let out = nodes;
+      if (mathSegments.length > 0) {
+        out = out.map(node => this.replaceMathSentinelsInNode(node, mathSegments));
+      }
+      if (hasFootnotes) {
+        out = out.map(node => this.replaceFootnoteSentinelsInNode(node, anchorPrefix));
+        const notes = this.buildEpubFootnoteNotes(footnotes, anchorPrefix);
+        if (notes) {
+          out = [...out, notes];
+        }
+      }
+      return out;
     };
 
-    return { content: withSentinels, transformNodes };
+    return { content, transformNodes };
+  }
+
+  /**
+   * Recursively restore math sentinels in a node's text children to KaTeX MathML
+   * raw nodes. A paragraph whose only content is a single display formula is
+   * replaced by that centered block <div> directly, avoiding an invalid
+   * <p><div>...</div></p> nesting in the EPUB XHTML.
+   */
+  protected replaceMathSentinelsInNode(node: TelegraphNode, segments: MathSegment[]): TelegraphNode {
+    if (node.raw !== undefined || !node.children || node.children.length === 0) {
+      return node;
+    }
+    const children: (string | TelegraphNode)[] = [];
+    for (const child of node.children) {
+      if (typeof child === 'string') {
+        children.push(...this.splitMathSentinels(child, segments));
+      } else {
+        children.push(this.replaceMathSentinelsInNode(child, segments));
+      }
+    }
+    if (node.tag === 'p') {
+      const meaningful = children.filter(child => !(typeof child === 'string' && child.trim() === ''));
+      const only = meaningful[0];
+      if (meaningful.length === 1 && typeof only === 'object'
+        && (only.raw ?? '').startsWith('<div class="afe-math-block"')) {
+        return { raw: only.raw };
+      }
+    }
+    return { ...node, children };
+  }
+
+  /** Split a text run on math sentinels, emitting KaTeX MathML raw nodes (inline/block). */
+  protected splitMathSentinels(text: string, segments: MathSegment[]): (string | TelegraphNode)[] {
+    if (!text.includes(this.MATH_SENTINEL_OPEN)) {
+      return [text];
+    }
+    const parts: (string | TelegraphNode)[] = [];
+    const pattern = new RegExp(this.MATH_SENTINEL_RE.source, 'g');
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(text.slice(lastIndex, match.index));
+      }
+      const segment = segments[Number(match[1])];
+      if (segment) {
+        parts.push({ raw: renderMathToMathML(segment.value, segment.type === 'block') });
+      }
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < text.length) {
+      parts.push(text.slice(lastIndex));
+    }
+    return parts;
   }
 
   /** Recursively swap footnote-reference sentinels in a node's text children for `<sup>` nodes. */
@@ -627,6 +716,10 @@ export class NodeBookBuildService implements BookBuildService {
     slugs: Map<BuildNode, string>,
     texts: Map<string, string>
   ): string {
+    // Only pay the (font-embedded) KaTeX stylesheet cost when the book actually
+    // contains a formula. Headless Chrome renders the PDF from this same HTML string
+    // with no external asset host, so the fonts must be embedded (see getKatexCss).
+    const katexStyle = this.bookHasMath(texts) ? `<style>${getKatexCss()}</style>` : '';
     const bodyParts: string[] = [
       '<!doctype html>',
       `<html lang="${this.escapeHtml(metadata.language || 'en')}">`,
@@ -655,7 +748,9 @@ export class NodeBookBuildService implements BookBuildService {
       'section.afe-footnotes{margin-top:40px;border-top:1px solid #ddd;padding-top:12px;font-size:0.92rem;}',
       'section.afe-footnotes h2{font-size:1.1rem;}',
       'a.afe-footnote-backref{text-decoration:none;margin-left:4px;}',
+      '.katex-display{overflow-x:auto;overflow-y:hidden;}',
       '</style>',
+      katexStyle,
       '</head>',
       '<body>',
       '<main>',
@@ -1110,41 +1205,105 @@ export class NodeBookBuildService implements BookBuildService {
     return markdown.replace(/\[\[[a-z][\w-]*:[^\]|\s]+?\|([^\]]+?)\]\]/gi, '$1');
   }
 
+  /** True when any chapter's Markdown carries an inline/block formula. */
+  protected bookHasMath(texts: Map<string, string>): boolean {
+    for (const text of texts.values()) {
+      if (splitMathSegments(text).some(segment => segment.type !== 'text')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /**
-   * Render one chapter's Markdown to HTML with minimal footnote support.
+   * Detect math on the raw Markdown with the shared {@link splitMathSegments} and
+   * swap each formula for a `MATH_SENTINEL`-bracketed index, returning the rewritten
+   * text plus the ordered segments. `$` inside fenced/inline code is left intact by
+   * the detector, so code blocks are never corrupted. Returns the input untouched
+   * when the chapter has no math.
+   */
+  protected extractMath(markdown: string): { text: string; segments: MathSegment[] } {
+    const parts = splitMathSegments(markdown);
+    if (!parts.some(part => part.type !== 'text')) {
+      return { text: markdown, segments: [] };
+    }
+    const segments: MathSegment[] = [];
+    let text = '';
+    for (const part of parts) {
+      if (part.type === 'text') {
+        text += part.value;
+      } else {
+        text += `${this.MATH_SENTINEL_OPEN}${segments.length}${this.MATH_SENTINEL_CLOSE}`;
+        segments.push(part);
+      }
+    }
+    return { text, segments };
+  }
+
+  /** Restore math sentinels in already-rendered HTML to KaTeX HTML (inline/display). */
+  protected restoreMathHtml(rendered: string, segments: MathSegment[]): string {
+    if (segments.length === 0) {
+      return rendered;
+    }
+    return rendered.replace(this.MATH_SENTINEL_RE, (whole, index: string) => {
+      const segment = segments[Number(index)];
+      return segment ? renderMathToHtml(segment.value, segment.type === 'block') : whole;
+    });
+  }
+
+  /**
+   * Render one chapter's Markdown to HTML with footnote + math support.
    *
-   * `markdown-it` runs with `html:false`, so `<sup>` cannot be emitted from the
-   * Markdown source directly. Instead each `[^id]` reference is swapped for a
-   * private-use sentinel (which survives the Markdown pass unescaped), rendered,
-   * then replaced with a real superscript link; footnote definition lines are
-   * pulled out of the body and re-emitted as an end-of-chapter "Notes" list.
-   * Anchors are prefixed with the chapter slug so ids stay unique across the book.
+   * `markdown-it` runs with `html:false`, so neither `<sup>` footnote markers nor
+   * KaTeX markup can come from the Markdown source directly. Both use the same
+   * sentinel technique: math is detected first (via {@link extractMath}, which never
+   * touches code blocks) and each `[^id]` reference is swapped for a private-use
+   * sentinel; the body is rendered once, then the sentinels are restored to a real
+   * superscript link / KaTeX HTML. Footnote definition lines are pulled out of the
+   * body and re-emitted as an end-of-chapter "Notes" list. Anchors are prefixed with
+   * the chapter slug so ids stay unique across the book.
    */
   protected renderChapterHtml(markdown: string, anchorPrefix: string): string {
     const footnotes = parseFootnotes(markdown);
-    if (footnotes.definitions.length === 0 && footnotes.references.length === 0) {
-      return this.markdownRenderer.render(markdown);
+    const hasFootnotes = footnotes.definitions.length > 0 || footnotes.references.length > 0;
+
+    let body = markdown;
+    if (hasFootnotes) {
+      const definitionLines = new Set(footnotes.definitions.map(definition => definition.line));
+      body = markdown
+        .split('\n')
+        .filter((_, index) => !definitionLines.has(index))
+        .join('\n');
     }
 
-    const definitionLines = new Set(footnotes.definitions.map(definition => definition.line));
-    const body = markdown
-      .split('\n')
-      .filter((_, index) => !definitionLines.has(index))
-      .join('\n');
+    const { text: mathText, segments: mathSegments } = this.extractMath(body);
 
-    const withSentinels = body.replace(/\[\^([^\]\s]+)\]/g, (raw, id: string) => {
-      const number = footnotes.numbers.get(id);
-      return number ? `\uE000${number}\uE001` : raw;
-    });
+    let source = mathText;
+    if (hasFootnotes) {
+      source = source.replace(/\[\^([^\]\s]+)\]/g, (raw, id: string) => {
+        const number = footnotes.numbers.get(id);
+        return number ? `\uE000${number}\uE001` : raw;
+      });
+    }
 
-    const rendered = this.markdownRenderer.render(withSentinels).replace(
-      /\uE000(\d+)\uE001/g,
-      (_match, number: string) =>
-        `<sup class="afe-footnote-ref" id="${anchorPrefix}-fnref-${number}">`
-        + `<a href="#${anchorPrefix}-fn-${number}">[${number}]</a></sup>`
-    );
+    let rendered = this.markdownRenderer.render(source);
 
-    return rendered + this.renderFootnotesHtml(footnotes, anchorPrefix);
+    if (hasFootnotes) {
+      rendered = rendered.replace(
+        /\uE000(\d+)\uE001/g,
+        (_match, number: string) =>
+          `<sup class="afe-footnote-ref" id="${anchorPrefix}-fnref-${number}">`
+          + `<a href="#${anchorPrefix}-fn-${number}">[${number}]</a></sup>`
+      );
+    }
+
+    rendered = this.restoreMathHtml(rendered, mathSegments);
+
+    if (hasFootnotes) {
+      rendered += this.renderFootnotesHtml(footnotes, anchorPrefix);
+    }
+
+    return rendered;
   }
 
   protected renderFootnotesHtml(footnotes: FootnoteDocument, anchorPrefix: string): string {

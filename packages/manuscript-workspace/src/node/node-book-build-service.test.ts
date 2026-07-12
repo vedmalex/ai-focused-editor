@@ -686,3 +686,87 @@ describe('PDF export', () => {
     expect(result.contentLength).toBe((await fs.stat(result.outputPath)).size);
   }, 60000);
 });
+
+describe('math rendering (HTML export)', () => {
+  test('renders inline/block formulas as KaTeX HTML and embeds the font-inlined stylesheet', async () => {
+    const rootPath = await createWorkspace('math-html', {
+      'metadata.yaml': ['title: Math Book', 'language: en', ''].join('\n'),
+      'manifest.yaml': ['version: 1', 'content:', '  - path: content/chapter-01.md', '    title: Chapter One', ''].join('\n'),
+      'content/chapter-01.md': [
+        '# Chapter One',
+        '',
+        'The relation $E=mc^2$ is inline. In code `$x$` stays literal.',
+        '',
+        '```',
+        'let a = $y$;',
+        '```',
+        '',
+        '$$',
+        '\\int_0^1 x^2 \\, dx',
+        '$$',
+        ''
+      ].join('\n')
+    });
+
+    const result = await service.buildHtml({ rootUri: rootPath });
+    const html = await fs.readFile(result.outputPath, 'utf8');
+
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+    // Inline + block formulas become KaTeX markup.
+    expect(html).toContain('class="katex"');
+    expect(html).toContain('katex-display');
+    // The font-embedded KaTeX stylesheet is injected (only because the book has math).
+    expect(html).toContain('data:font/woff2;base64,');
+    // The raw `$…$` delimiters must not leak as literal text around a rendered formula.
+    expect(html).not.toContain('$E=mc^2$');
+    // `$` inside inline code / a fenced block is left untouched (not turned into math).
+    expect(html).toContain('$x$');
+    expect(html).toContain('let a = $y$;');
+  });
+
+  test('omits the KaTeX stylesheet when the book has no math', async () => {
+    const rootPath = await createWorkspace('math-none', {
+      'metadata.yaml': ['title: Plain Book', 'language: en', ''].join('\n'),
+      'manifest.yaml': ['version: 1', 'content:', '  - path: content/chapter-01.md', '    title: Chapter One', ''].join('\n'),
+      'content/chapter-01.md': '# Chapter One\n\nJust prose, no formulas.\n'
+    });
+
+    const result = await service.buildHtml({ rootUri: rootPath });
+    const html = await fs.readFile(result.outputPath, 'utf8');
+
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+    expect(html).not.toContain('data:font/woff2;base64,');
+    expect(html).not.toContain('class="katex"');
+  });
+});
+
+describe('math rendering (EPUB export)', () => {
+  test('renders formulas as MathML in the chapter xhtml (no font payload)', async () => {
+    const rootPath = await createWorkspace('math-epub', {
+      'metadata.yaml': ['title: Math Book', 'language: en', 'author: Test', ''].join('\n'),
+      'manifest.yaml': ['version: 1', 'content:', '  - path: content/chapter-01.md', '    title: Chapter One', ''].join('\n'),
+      'content/chapter-01.md': [
+        '# Chapter One',
+        '',
+        'Inline $E=mc^2$ in prose.',
+        '',
+        '$$',
+        '\\int_0^1 x^2 \\, dx',
+        '$$',
+        ''
+      ].join('\n')
+    });
+
+    const result = await service.buildEpub({ rootUri: rootPath });
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+
+    const xhtml = unzipEntry(result.outputPath, 'OEBPS/chapter-1.html');
+    // Standards-based MathML reaches the xhtml, unescaped.
+    expect(xhtml).toContain('<math');
+    expect(xhtml).not.toContain('&lt;math');
+    // Display math is a centered block; the `$$` delimiters do not leak.
+    expect(xhtml).toContain('<div class="afe-math-block"');
+    expect(xhtml).not.toContain('$$');
+    expect(xhtml).not.toContain('$E=mc^2$');
+  });
+});

@@ -1,6 +1,7 @@
 import {
   parseSemanticMarkdown,
   renderSemanticMarkdownPreview,
+  splitMathSegments,
   SemanticTag
 } from '@ai-focused-editor/semantic-markdown';
 import { Disposable, DisposableCollection } from '@theia/core/lib/common';
@@ -96,13 +97,6 @@ const MATH_SKIP_TAGS: ReadonlySet<string> = new Set([
   'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA'
 ]);
 
-/**
- * Block `$$…$$` (may span lines within one text node) then inline `$…$`
- * (single line, non-empty). Matched left-to-right; group 1 = block tex, group 2
- * = inline tex.
- */
-const MATH_DELIMITER_RE = /\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/g;
-
 let katexModulePromise: Promise<KatexModule> | undefined;
 
 /** Inject KaTeX's self-hosted stylesheet into `doc` once (id-guarded, per document). */
@@ -154,31 +148,29 @@ function renderFormula(tex: string, raw: string, displayMode: boolean, katex: Ka
   return span;
 }
 
-/** Replace every `$$…$$` / `$…$` run in a single text node with rendered spans. */
+/**
+ * Replace every `$$…$$` / `$…$` run in a single text node with rendered spans,
+ * using the shared {@link splitMathSegments} so the preview and the book exporter
+ * detect math identically. Only touches the DOM when a formula is present (a text
+ * node with no math segments is left as-is), preserving the prior no-match no-op.
+ */
 function renderMathInTextNode(textNode: Text, katex: KatexModule, doc: Document): void {
   const text = textNode.nodeValue ?? '';
-  MATH_DELIMITER_RE.lastIndex = 0;
-  let fragment: DocumentFragment | undefined;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = MATH_DELIMITER_RE.exec(text))) {
-    const isBlock = match[1] !== undefined;
-    const tex = isBlock ? match[1] : match[2];
-    if (!fragment) {
-      fragment = doc.createDocumentFragment();
-    }
-    if (match.index > lastIndex) {
-      fragment.appendChild(doc.createTextNode(text.slice(lastIndex, match.index)));
-    }
-    fragment.appendChild(renderFormula(tex, match[0], isBlock, katex, doc));
-    lastIndex = MATH_DELIMITER_RE.lastIndex;
+  const segments = splitMathSegments(text);
+  if (!segments.some(segment => segment.type !== 'text')) {
+    return;
   }
-  if (fragment) {
-    if (lastIndex < text.length) {
-      fragment.appendChild(doc.createTextNode(text.slice(lastIndex)));
+  const fragment = doc.createDocumentFragment();
+  for (const segment of segments) {
+    if (segment.type === 'text') {
+      fragment.appendChild(doc.createTextNode(segment.value));
+      continue;
     }
-    textNode.parentNode?.replaceChild(fragment, textNode);
+    const isBlock = segment.type === 'block';
+    const raw = isBlock ? `$$${segment.value}$$` : `$${segment.value}$`;
+    fragment.appendChild(renderFormula(segment.value, raw, isBlock, katex, doc));
   }
+  textNode.parentNode?.replaceChild(fragment, textNode);
 }
 
 /**

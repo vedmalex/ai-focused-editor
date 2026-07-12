@@ -13,6 +13,7 @@ export type { HeadingInfo } from './AnchorGenerator';
 export { convertMarkdownToTelegraphNodes, processInlineMarkdown } from './markdownConverter';
 export type { TelegraphNode } from './telegraph-node';
 export { slugifyBase, createSlugger } from './slug';
+export { renderMathToHtml, renderMathToMathML, getKatexCss } from './mathRendering';
 export {
   findChromePath,
   renderHtmlToPdf,

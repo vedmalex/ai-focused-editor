@@ -6,8 +6,10 @@ import {
   parseSemanticMarkdown,
   renderSemanticMarkdownPreview,
   renderTaskListGlyphs,
+  splitMathSegments,
   validateSemanticMarkdown
 } from './semantic-markdown';
+import type { MathSegment } from './semantic-markdown';
 
 test('parses semantic tags with ranges', () => {
   const document = parseSemanticMarkdown('A [[char:krishna|Krishna]] meets [[term:dharma|dharma]].');
@@ -126,4 +128,78 @@ test('renders footnote references as superscripts with an end Notes list', () =>
 test('keeps footnote Notes list working alongside semantic tags', () => {
   expect(renderSemanticMarkdownPreview('Meet [[char:krishna|Krishna]].[^1]\n\n[^1]: On the field.'))
     .toBe('Meet **Krishna** _(char:krishna)_.¹\n\n#### Notes\n\n1. On the field.');
+});
+
+// ---------------------------------------------------------------------------
+// splitMathSegments — the detector shared by the preview widget and the exporter.
+// ---------------------------------------------------------------------------
+
+/** Compact helper: render segments as `type:value` for readable expectations. */
+function shape(segments: MathSegment[]): string[] {
+  return segments.map(segment => `${segment.type}:${segment.value}`);
+}
+
+test('splitMathSegments: plain text yields a single text segment', () => {
+  expect(splitMathSegments('no math here')).toEqual([{ type: 'text', value: 'no math here' }]);
+});
+
+test('splitMathSegments: inline $...$ splits around the formula (delimiters stripped)', () => {
+  expect(shape(splitMathSegments('energy $E=mc^2$ done')))
+    .toEqual(['text:energy ', 'inline:E=mc^2', 'text: done']);
+});
+
+test('splitMathSegments: block $$...$$ may span newlines', () => {
+  expect(shape(splitMathSegments('a\n\n$$\nx = y\n$$\n\nb')))
+    .toEqual(['text:a\n\n', 'block:\nx = y\n', 'text:\n\nb']);
+});
+
+test('splitMathSegments: inline does not match across a newline (unclosed -> text)', () => {
+  expect(splitMathSegments('$a\nb$')).toEqual([{ type: 'text', value: '$a\nb$' }]);
+});
+
+test('splitMathSegments: an unclosed inline delimiter degrades to text', () => {
+  expect(splitMathSegments('cost is $5 today')).toEqual([{ type: 'text', value: 'cost is $5 today' }]);
+});
+
+test('splitMathSegments: an empty inline $$ is not math', () => {
+  // Two adjacent `$$` with nothing between: no non-empty block, no inline -> all text.
+  expect(splitMathSegments('a $$ b')).toEqual([{ type: 'text', value: 'a $$ b' }]);
+});
+
+test('splitMathSegments: escaped \\$ is literal, never a delimiter', () => {
+  expect(splitMathSegments('price \\$5 and \\$10 flat'))
+    .toEqual([{ type: 'text', value: 'price \\$5 and \\$10 flat' }]);
+});
+
+test('splitMathSegments: $ inside a fenced code block stays literal', () => {
+  const input = 'before\n\n```\nlet a = $x$;\n```\n\nafter $y$ end';
+  expect(shape(splitMathSegments(input)))
+    .toEqual(['text:before\n\n```\nlet a = $x$;\n```\n\nafter ', 'inline:y', 'text: end']);
+});
+
+test('splitMathSegments: $ inside inline code stays literal', () => {
+  expect(shape(splitMathSegments('use `$x$` then $y$')))
+    .toEqual(['text:use `$x$` then ', 'inline:y']);
+});
+
+test('splitMathSegments: consecutive inline formulas', () => {
+  expect(shape(splitMathSegments('$a$$b$'))).toEqual(['inline:a', 'inline:b']);
+});
+
+test('splitMathSegments: block is preferred over inline for $$', () => {
+  expect(shape(splitMathSegments('$$x$$'))).toEqual(['block:x']);
+});
+
+test('splitMathSegments: reconstructing raw delimiters round-trips the source', () => {
+  const source = 'a $i$ b\n$$blk$$ c';
+  const rebuilt = splitMathSegments(source)
+    .map(s => s.type === 'block' ? `$$${s.value}$$` : s.type === 'inline' ? `$${s.value}$` : s.value)
+    .join('');
+  expect(rebuilt).toBe(source);
+});
+
+test('splitMathSegments: a lone backtick does not swallow following math', () => {
+  // Mirrors a preview text node that holds a literal backtick (no closing run):
+  // the backtick is literal and the later $...$ still parses.
+  expect(shape(splitMathSegments('a ` then $z$'))).toEqual(['text:a ` then ', 'inline:z']);
 });

@@ -682,6 +682,11 @@ export class EpubGenerator {
 			return this.escapeHtml(node);
 		}
 
+		// Trusted pre-rendered markup (e.g. KaTeX MathML) is emitted verbatim.
+		if (node.raw !== undefined) {
+			return node.raw;
+		}
+
 		const tag = node.tag || "p";
 		const attrs = node.attrs || {};
 		const children = node.children || [];
