@@ -37,7 +37,9 @@ import {
   assembleBookDoctorReport,
   type BookDoctorFinding,
   type BookDoctorFix,
-  type BookDoctorReport
+  type BookDoctorReport,
+  type EntityCardRef,
+  type EntityTagOccurrence
 } from '../common/book-doctor';
 import {
   appendEntriesToManifest,
@@ -45,6 +47,9 @@ import {
   isExcludedDiscoveryDir,
   type DiscoveredManuscriptFile
 } from '../common/manifest-reconstruction';
+import { parseSemanticMarkdown } from '@ai-focused-editor/semantic-markdown';
+import { parseBareEntityTags } from '../common/link-navigation';
+import { BASE_ENTITY_TYPES } from '../common/entity-type-registry';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import { AFE_MANUSCRIPT_SECTION_CONTEXT_KEY } from './manuscript-tree';
@@ -82,6 +87,15 @@ type DoctorPickOutcome =
   | { kind: 'apply'; fixes: BookDoctorFix[] }
   | { kind: 'report' }
   | { kind: 'cancel' };
+
+/** Mutable accumulator entry while folding entity tags across files. */
+interface MutableOccurrence {
+  kind?: string;
+  id: string;
+  count: number;
+  firstPath: string;
+  labels: Record<string, number>;
+}
 
 /**
  * "Book Doctor" — inspects the open manuscript workspace, reports what is
@@ -214,8 +228,11 @@ export class BookDoctorContribution
 
     // Discover every manuscript candidate across the workspace (not only
     // content/), so an old folder with chapters at the root or in arbitrary
-    // folders is fully picked up.
-    const manuscriptCandidates = await this.collectManuscriptCandidates(root);
+    // folders is fully picked up. The same full-text pass folds the entity tag
+    // occurrences the entity checks need.
+    const { candidates: manuscriptCandidates, occurrences: entityTagOccurrences } =
+      await this.collectManuscriptData(root);
+    const existingEntityCards = await this.collectExistingEntityCards(root);
     const contentHasMarkdown = manuscriptCandidates.some(candidate =>
       normalizeManifestPath(candidate.path).startsWith('content/')
     );
@@ -259,7 +276,9 @@ export class BookDoctorContribution
       folderName,
       metadata,
       citationsContent,
-      excerptsContent
+      excerptsContent,
+      entityTagOccurrences,
+      existingEntityCards
     });
   }
 
@@ -280,40 +299,133 @@ export class BookDoctorContribution
   }
 
   /**
-   * Recursively collect workspace-relative `.md` candidates, pruning the excluded
-   * and hidden directories (build/, knowledge/, sources/, entities/, ai/, .git/,
-   * …). Each candidate carries the first ATX heading extracted from the file's
-   * leading bytes (~2 KB) so a restored chapter's real title becomes its manifest
-   * title. Sorted by path for a stable report.
+   * Per-file cap for the manuscript full-text scan: files above this size are
+   * truncated before parsing so a pathological input never stalls the doctor.
    */
-  protected async collectManuscriptCandidates(root: URI): Promise<DiscoveredManuscriptFile[]> {
-    const results: DiscoveredManuscriptFile[] = [];
-    await this.walkCandidates(root, root, results);
-    results.sort((a, b) => a.path.localeCompare(b.path));
-    return results;
+  protected static readonly MAX_MANUSCRIPT_SCAN_BYTES = 1_000_000;
+
+  /**
+   * Single full-text pass over every manuscript `.md` candidate (pruning the
+   * excluded/hidden directories: build/, knowledge/, sources/, entities/, ai/,
+   * .git/, …). Reads the FULL text (size-capped) of each file exactly once and
+   * from it derives BOTH the candidate's first ATX heading (from the leading
+   * ~2 KB, so a restored chapter's real title becomes its manifest title) AND the
+   * folded entity tag occurrences the entity checks consume. Files are read in
+   * sorted-path order so `firstPath` (first file a reference appears in) is
+   * deterministic.
+   */
+  protected async collectManuscriptData(
+    root: URI
+  ): Promise<{ candidates: DiscoveredManuscriptFile[]; occurrences: EntityTagOccurrence[] }> {
+    const files: URI[] = [];
+    await this.walkMarkdownFiles(root, files);
+    const entries = files
+      .map(resource => ({ resource, path: root.relative(resource)?.toString() ?? '' }))
+      .filter(entry => entry.path)
+      .sort((a, b) => a.path.localeCompare(b.path));
+
+    const candidates: DiscoveredManuscriptFile[] = [];
+    const accumulator = new Map<string, MutableOccurrence>();
+    for (const entry of entries) {
+      const text = await this.readCappedText(entry.resource);
+      candidates.push({ path: entry.path, firstHeading: extractFirstHeading(text.slice(0, 2048)) });
+      if (text) {
+        this.foldEntityTags(entry.path, text, accumulator);
+      }
+    }
+
+    const occurrences = [...accumulator.values()]
+      .map(entry => ({
+        kind: entry.kind,
+        id: entry.id,
+        count: entry.count,
+        firstPath: entry.firstPath,
+        labels: Object.keys(entry.labels).length > 0 ? entry.labels : undefined
+      }))
+      .sort((a, b) => (a.kind ?? '').localeCompare(b.kind ?? '') || a.id.localeCompare(b.id));
+    return { candidates, occurrences };
   }
 
-  protected async walkCandidates(root: URI, dir: URI, out: DiscoveredManuscriptFile[]): Promise<void> {
+  protected async walkMarkdownFiles(dir: URI, out: URI[]): Promise<void> {
     const stat = await this.fileService.resolve(dir).catch(() => undefined);
     for (const child of stat?.children ?? []) {
       if (child.isDirectory) {
         if (isExcludedDiscoveryDir(child.resource.path.base)) {
           continue;
         }
-        await this.walkCandidates(root, child.resource, out);
-      } else if (child.isFile) {
-        const relative = root.relative(child.resource)?.toString();
-        if (relative && relative.toLowerCase().endsWith('.md')) {
-          out.push({ path: relative, firstHeading: await this.readFirstHeading(child.resource) });
-        }
+        await this.walkMarkdownFiles(child.resource, out);
+      } else if (child.isFile && child.resource.path.base.toLowerCase().endsWith('.md')) {
+        out.push(child.resource);
       }
     }
   }
 
-  /** Read the file's leading bytes and extract the first ATX heading, if any. */
-  protected async readFirstHeading(uri: URI): Promise<string | undefined> {
+  /** Read a file's full text, truncated to the per-file scan cap; `''` when unreadable. */
+  protected async readCappedText(uri: URI): Promise<string> {
     const text = await this.readTextIfExists(uri);
-    return text === undefined ? undefined : extractFirstHeading(text.slice(0, 2048));
+    if (text === undefined) {
+      return '';
+    }
+    const cap = BookDoctorContribution.MAX_MANUSCRIPT_SCAN_BYTES;
+    return text.length > cap ? text.slice(0, cap) : text;
+  }
+
+  /**
+   * Fold one file's entity tags into the accumulator keyed by `(kind, id)`.
+   * Labeled `[[kind:id|label]]` tags (parseSemanticMarkdown) and bare/unlabeled
+   * `[[id]]` / `[[kind:id]]` tags (parseBareEntityTags) are complementary — the
+   * two parsers never match the same token — so their counts sum without
+   * double-counting. `firstPath` is set on first sight (files arrive in sorted
+   * order); labels are harvested only from the labeled tags.
+   */
+  protected foldEntityTags(path: string, text: string, accumulator: Map<string, MutableOccurrence>): void {
+    const record = (kind: string | undefined, id: string, label?: string): void => {
+      const key = `${kind ?? ''} ${id}`;
+      let occurrence = accumulator.get(key);
+      if (!occurrence) {
+        occurrence = { kind, id, count: 0, firstPath: path, labels: {} };
+        accumulator.set(key, occurrence);
+      }
+      occurrence.count += 1;
+      const trimmed = label?.trim();
+      if (trimmed) {
+        occurrence.labels[trimmed] = (occurrence.labels[trimmed] ?? 0) + 1;
+      }
+    };
+    for (const tag of parseSemanticMarkdown(text).tags) {
+      record(tag.kind, tag.id, tag.label);
+    }
+    for (const bare of parseBareEntityTags(text)) {
+      record(bare.kind, bare.id);
+    }
+  }
+
+  /**
+   * List the entity cards already present on disk, one `{kind, id}` per
+   * `entities/<dir>/<id>.yaml` file, scanning each registry type's directory.
+   * `kind` is the registry KIND id (e.g. `character`), not the tag kind. A
+   * missing `entities/` subtree is a no-op.
+   */
+  protected async collectExistingEntityCards(root: URI): Promise<EntityCardRef[]> {
+    const cards: EntityCardRef[] = [];
+    for (const type of BASE_ENTITY_TYPES) {
+      const dir = root.resolve(`entities/${type.directory}`);
+      const stat = await this.fileService.resolve(dir).catch(() => undefined);
+      for (const child of stat?.children ?? []) {
+        if (!child.isFile) {
+          continue;
+        }
+        const base = child.resource.path.base;
+        const lower = base.toLowerCase();
+        if (lower.endsWith('.yaml') || lower.endsWith('.yml')) {
+          const id = base.replace(/\.[^.]+$/, '');
+          if (id) {
+            cards.push({ kind: type.id, id });
+          }
+        }
+      }
+    }
+    return cards;
   }
 
   protected async readManifestRows(uri: URI): Promise<ManifestRow[]> {
@@ -391,6 +503,9 @@ export class BookDoctorContribution
         return nls.localize('ai-focused-editor/doctor/problem-create-file', 'Create file — {0}', ...params);
       case 'create-missing-chapter':
         return nls.localize('ai-focused-editor/doctor/problem-create-missing-chapter', 'Create the missing chapter file referenced by the manifest.', ...params);
+      case 'entity-card-missing':
+        // params: [entity label, card name, mention count, first file]
+        return nls.localize('ai-focused-editor/doctor/problem-entity-card-missing', 'Create the {0} card "{1}" — {2} mention(s), first in {3}.', ...params);
       default:
         return fix.description;
     }
@@ -410,6 +525,12 @@ export class BookDoctorContribution
         return nls.localize('ai-focused-editor/doctor/problem-citations-parse-error-label', 'sources/citations.yaml could not be parsed');
       case 'excerpts-parse-error':
         return nls.localize('ai-focused-editor/doctor/problem-excerpts-parse-error-label', 'sources/excerpts.jsonl has an invalid line');
+      case 'entity-card-orphan':
+        // params: [entity label, card id, card path]
+        return nls.localize('ai-focused-editor/doctor/problem-entity-card-orphan-label', 'Unreferenced {0} card: {1}', ...(finding.params ?? []));
+      case 'entity-tag-unknown-kind':
+        // params: [kind, tag count, id count]
+        return nls.localize('ai-focused-editor/doctor/problem-entity-tag-unknown-kind-label', 'Unknown entity type: {0}', ...(finding.params ?? []));
       default:
         return finding.label;
     }
@@ -430,6 +551,10 @@ export class BookDoctorContribution
         return nls.localize('ai-focused-editor/doctor/problem-citations-parse-error-detail', 'YAML parse error in sources/citations.yaml: {0}', ...params);
       case 'excerpts-parse-error':
         return nls.localize('ai-focused-editor/doctor/problem-excerpts-parse-error-detail', 'Line {0} of sources/excerpts.jsonl is not valid JSON: {1}', ...params);
+      case 'entity-card-orphan':
+        return nls.localize('ai-focused-editor/doctor/problem-entity-card-orphan-detail', 'The {0} card {2} is never referenced by any tag in the manuscript. It may be intentional groundwork — the doctor never deletes it.', ...params);
+      case 'entity-tag-unknown-kind':
+        return nls.localize('ai-focused-editor/doctor/problem-entity-tag-unknown-kind-detail', '{1} tag(s) use the unknown entity type "{0}" across {2} id(s). Define this type to turn its tags into entity cards.', ...params);
       default:
         return finding.detail;
     }

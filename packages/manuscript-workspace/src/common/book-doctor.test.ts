@@ -6,12 +6,19 @@ import {
   assembleBookDoctorReport,
   citationsParseFinding,
   deriveChapterTitle,
+  entityCardMissingFixes,
+  entityCardOrphanFindings,
+  entityUnknownKindFindings,
   excerptsParseFinding,
+  humanizeEntityId,
   manifestAppendFix,
   manifestChapterFixes,
   manifestRecreateFix,
   metadataFindings,
-  scaffoldFixes
+  preferredEntityLabel,
+  scaffoldFixes,
+  type EntityCardRef,
+  type EntityTagOccurrence
 } from './book-doctor';
 
 /** Build an `exists` predicate from a fixed set of present paths. */
@@ -222,6 +229,140 @@ describe('deriveChapterTitle', () => {
   });
 });
 
+describe('humanizeEntityId', () => {
+  test('splits separators and capitalizes each word', () => {
+    expect(humanizeEntityId('john-smith')).toBe('John Smith');
+    expect(humanizeEntityId('the_one.ring')).toBe('The One Ring');
+  });
+
+  test('falls back to the raw id when it has no word characters', () => {
+    expect(humanizeEntityId('---')).toBe('---');
+  });
+});
+
+describe('preferredEntityLabel', () => {
+  test('picks the most frequent label', () => {
+    expect(preferredEntityLabel({ Gandalf: 3, 'Gandalf the Grey': 1 })).toBe('Gandalf');
+  });
+
+  test('is undefined when no labels were harvested', () => {
+    expect(preferredEntityLabel(undefined)).toBeUndefined();
+    expect(preferredEntityLabel({})).toBeUndefined();
+  });
+});
+
+describe('entityCardMissingFixes', () => {
+  test('creates one seeded card per registry-kind tag whose card is absent', () => {
+    const occurrences: EntityTagOccurrence[] = [
+      { kind: 'char', id: 'gandalf', count: 3, firstPath: 'content/ch1.md', labels: { Gandalf: 2, 'Gandalf the Grey': 1 } }
+    ];
+    const fixes = entityCardMissingFixes(occurrences, []);
+    expect(fixes).toHaveLength(1);
+    const fix = fixes[0];
+    expect(fix.path).toBe('entities/characters/gandalf.yaml');
+    expect(fix.kind).toBe('file');
+    expect(fix.code).toBe('entity-card-missing');
+    // Name prefers the most frequent label.
+    expect(fix.seed).toContain('name: Gandalf\n');
+    expect(fix.seed).toContain('id: gandalf');
+    // params: [entity label, name, count, first file].
+    expect(fix.params).toEqual(['Character', 'Gandalf', 3, 'content/ch1.md']);
+    // Description carries the mention count + first file.
+    expect(fix.description).toContain('3 mention(s)');
+    expect(fix.description).toContain('content/ch1.md');
+  });
+
+  test('names the card from the humanized id when no label was harvested', () => {
+    const fixes = entityCardMissingFixes(
+      [{ kind: 'term', id: 'astral-plane', count: 1, firstPath: 'content/ch2.md' }],
+      []
+    );
+    expect(fixes[0].seed).toContain('name: Astral Plane\n');
+    expect(fixes[0].path).toBe('entities/terms/astral-plane.yaml');
+  });
+
+  test('skips a tag whose card already exists on disk', () => {
+    const existing: EntityCardRef[] = [{ kind: 'character', id: 'gandalf' }];
+    const fixes = entityCardMissingFixes(
+      [{ kind: 'char', id: 'gandalf', count: 2, firstPath: 'content/ch1.md' }],
+      existing
+    );
+    expect(fixes).toEqual([]);
+  });
+
+  test('never creates a card from a bare kindless [[id]] tag — a card needs a kind', () => {
+    // A bare occurrence (no kind) is a reference for orphan purposes only; it
+    // can never materialize a card because the target directory is unknown.
+    const fixes = entityCardMissingFixes(
+      [{ kind: undefined, id: 'gandalf', count: 5, firstPath: 'content/ch1.md' }],
+      []
+    );
+    expect(fixes).toEqual([]);
+  });
+
+  test('never creates a card from a well-formed but non-registry kind', () => {
+    const fixes = entityCardMissingFixes(
+      [{ kind: 'spell', id: 'fireball', count: 4, firstPath: 'content/ch1.md' }],
+      []
+    );
+    expect(fixes).toEqual([]);
+  });
+});
+
+describe('entityCardOrphanFindings', () => {
+  const cards: EntityCardRef[] = [{ kind: 'character', id: 'boromir' }];
+
+  test('reports a card that no tag references', () => {
+    const findings = entityCardOrphanFindings([], cards);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].kind).toBe('entity');
+    expect(findings[0].code).toBe('entity-card-orphan');
+    // params: [entity label, id, path].
+    expect(findings[0].params).toEqual(['Character', 'boromir', 'entities/characters/boromir.yaml']);
+  });
+
+  test('is silent when a matching-kind tag references the card', () => {
+    const occ: EntityTagOccurrence[] = [{ kind: 'char', id: 'boromir', count: 1, firstPath: 'content/a.md' }];
+    expect(entityCardOrphanFindings(occ, cards)).toEqual([]);
+  });
+
+  test('is silent when a bare kindless [[id]] tag references the card (matches any kind)', () => {
+    const occ: EntityTagOccurrence[] = [{ kind: undefined, id: 'boromir', count: 1, firstPath: 'content/a.md' }];
+    expect(entityCardOrphanFindings(occ, cards)).toEqual([]);
+  });
+
+  test('still reports the card when only a WRONG-kind tag shares the id', () => {
+    // [[term:boromir]] resolves to the `term` kind, not `character` — so the
+    // character card boromir stays orphaned.
+    const occ: EntityTagOccurrence[] = [{ kind: 'term', id: 'boromir', count: 1, firstPath: 'content/a.md' }];
+    expect(entityCardOrphanFindings(occ, cards)).toHaveLength(1);
+  });
+});
+
+describe('entityUnknownKindFindings', () => {
+  test('groups well-formed non-registry kinds with tag + id counts', () => {
+    const occ: EntityTagOccurrence[] = [
+      { kind: 'spell', id: 'fireball', count: 3, firstPath: 'content/a.md' },
+      { kind: 'spell', id: 'icebolt', count: 2, firstPath: 'content/a.md' },
+      { kind: 'char', id: 'gandalf', count: 9, firstPath: 'content/a.md' }
+    ];
+    const findings = entityUnknownKindFindings(occ);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe('entity-tag-unknown-kind');
+    // params: [kind, total tag count, distinct id count].
+    expect(findings[0].params).toEqual(['spell', 5, 2]);
+  });
+
+  test('ignores registry kinds, malformed kinds, and bare kindless tags', () => {
+    const occ: EntityTagOccurrence[] = [
+      { kind: 'char', id: 'gandalf', count: 1, firstPath: 'a.md' },
+      { kind: '1bad', id: 'x', count: 1, firstPath: 'a.md' },
+      { kind: undefined, id: 'y', count: 1, firstPath: 'a.md' }
+    ];
+    expect(entityUnknownKindFindings(occ)).toEqual([]);
+  });
+});
+
 describe('assembleBookDoctorReport', () => {
   test('composes fixes + findings and de-dups by path', () => {
     // content/ empty (no markdown); manifest references chapter-01.md which is
@@ -313,5 +454,32 @@ describe('assembleBookDoctorReport', () => {
     // No content => nothing to reconstruct, no chapter fixes, no findings.
     expect(report.findings).toEqual([]);
     expect(report.fixes).toEqual([]);
+  });
+
+  test('wires entity occurrences into card fixes + orphan/unknown-kind findings', () => {
+    const report = assembleBookDoctorReport({
+      scaffoldEntries: bookScaffoldEntries(),
+      exists: existsIn(ALL_SCAFFOLD_PATHS),
+      contentHasMarkdown: true,
+      manifestExists: true,
+      manifestRows: flattenManifestRows(parse('version: 1\ncontent:\n  - path: content/chapter-01.md\n')),
+      manuscriptCandidates: [{ path: 'content/chapter-01.md' }],
+      metadata: { title: 'Book', author: 'Author' },
+      entityTagOccurrences: [
+        // Missing character card → a create fix.
+        { kind: 'char', id: 'frodo', count: 2, firstPath: 'content/chapter-01.md', labels: { Frodo: 2 } },
+        // Unknown kind → an informational finding, never a fix.
+        { kind: 'spell', id: 'fireball', count: 1, firstPath: 'content/chapter-01.md' }
+      ],
+      // An on-disk card nothing references → orphan finding.
+      existingEntityCards: [{ kind: 'location', id: 'shire' }]
+    });
+
+    const cardFix = report.fixes.find(fix => fix.path === 'entities/characters/frodo.yaml');
+    expect(cardFix?.code).toBe('entity-card-missing');
+    expect(report.findings.some(finding => finding.code === 'entity-card-orphan')).toBe(true);
+    expect(report.findings.some(finding => finding.code === 'entity-tag-unknown-kind')).toBe(true);
+    // The unknown kind never becomes a fix.
+    expect(report.fixes.some(fix => fix.path.includes('fireball'))).toBe(false);
   });
 });

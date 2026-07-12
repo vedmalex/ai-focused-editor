@@ -30,6 +30,16 @@ import {
   type DiscoveredManuscriptFile,
   type ReconstructedEntry
 } from './manifest-reconstruction';
+import {
+  entityTypeById,
+  entityTypeByTagKind,
+  tagKindToEntityKind
+} from './entity-type-registry';
+import {
+  buildEntityYaml,
+  entityRelativePath,
+  type CreatableEntityKind
+} from './entity-creation';
 
 /**
  * Manifest reconstruction metadata attached to the special `manifest.yaml` fix.
@@ -83,7 +93,7 @@ export interface BookDoctorFix {
 /** A report-only observation the doctor surfaces but never auto-changes. */
 export interface BookDoctorFinding {
   /** Category, for grouping/telemetry. */
-  kind: 'metadata' | 'parse-error';
+  kind: 'metadata' | 'parse-error' | 'entity';
   /** Short label (path or one-line summary). */
   label: string;
   /** Longer explanation, shown in the QuickPick detail row. */
@@ -113,6 +123,39 @@ export interface BookDoctorReport {
 export interface BookDoctorMetadata {
   title: string;
   author: string;
+}
+
+/**
+ * One unique entity reference harvested from the manuscript, folded across every
+ * file by the browser (so the pure module stays parser-agnostic). The key is the
+ * `(kind, id)` pair: a labeled `[[kind:id|label]]` tag and an unlabeled
+ * `[[kind:id]]` tag with the same kind+id fold into ONE occurrence.
+ *
+ * `kind` is the tag kind AS WRITTEN (e.g. `char`, `term`, `spell`) — it is
+ * `undefined` for a bare `[[id]]` tag that names no kind. `firstPath` is the
+ * workspace-relative path of the first (lexicographically-smallest) file the
+ * reference appears in. `labels` maps each harvested label to its frequency
+ * (labeled tags only; absent when no occurrence carried a label).
+ */
+export interface EntityTagOccurrence {
+  /** Tag kind as written (`char`, `term`, …); undefined for a bare `[[id]]`. */
+  kind?: string;
+  /** Referenced entity id. */
+  id: string;
+  /** Total mentions across every manuscript file. */
+  count: number;
+  /** Workspace-relative path of the first file the reference appears in. */
+  firstPath: string;
+  /** Harvested label → frequency (labeled tags only); absent when none carried a label. */
+  labels?: Record<string, number>;
+}
+
+/** A card that already exists on disk under `entities/<dir>/<id>.yaml`. */
+export interface EntityCardRef {
+  /** Entity KIND id (the registry descriptor id, e.g. `character`) — NOT the tag kind. */
+  kind: string;
+  /** Card id (the YAML filename stem). */
+  id: string;
 }
 
 /** Fully-resolved inputs for {@link assembleBookDoctorReport}. */
@@ -145,6 +188,14 @@ export interface BookDoctorInput {
   citationsContent?: string;
   /** Raw `sources/excerpts.jsonl` text, present only when the file exists. */
   excerptsContent?: string;
+  /**
+   * Unique entity references harvested from the manuscript (pre-parsed by the
+   * browser). Drives the `entity-card-missing` fixes and the orphan/unknown-kind
+   * findings. Empty/absent when no manuscript text was scanned.
+   */
+  entityTagOccurrences?: EntityTagOccurrence[];
+  /** Entity cards already present on disk (scanned per registry directory). */
+  existingEntityCards?: EntityCardRef[];
 }
 
 function errorMessage(error: unknown): string {
@@ -400,6 +451,164 @@ export function excerptsParseFinding(content: string): BookDoctorFinding | undef
   return undefined;
 }
 
+/* ----------------------------------------------------------------------- */
+/* Entity checks (STAGE — restore/diagnose the entity base from the text)    */
+/* ----------------------------------------------------------------------- */
+
+/** Composite `(kind, id)` map key. ` ` cannot occur in a kind or id. */
+function entityCardKey(kind: string, id: string): string {
+  return `${kind} ${id}`;
+}
+
+/**
+ * Humanize an entity id into a display name: split on `-`/`_`/`.`/`:`/space,
+ * drop empties, capitalize each word (e.g. `john-smith` → `John Smith`). Falls
+ * back to the raw id when it has no word characters.
+ */
+export function humanizeEntityId(id: string): string {
+  const words = id.split(/[-_.:\s]+/).filter(Boolean);
+  if (words.length === 0) {
+    return id;
+  }
+  return words.map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
+
+/**
+ * The most frequent harvested label for an occurrence (ties broken by first
+ * insertion), or `undefined` when no label was harvested. The browser records
+ * labels only from labeled `[[kind:id|label]]` tags.
+ */
+export function preferredEntityLabel(labels?: Record<string, number>): string | undefined {
+  if (!labels) {
+    return undefined;
+  }
+  let best: string | undefined;
+  let bestCount = -1;
+  for (const [label, count] of Object.entries(labels)) {
+    if (count > bestCount) {
+      bestCount = count;
+      best = label;
+    }
+  }
+  return best;
+}
+
+/** Card display name: the preferred label when present, else the humanized id. */
+function entityCardName(occurrence: EntityTagOccurrence): string {
+  const label = preferredEntityLabel(occurrence.labels)?.trim();
+  return label || humanizeEntityId(occurrence.id);
+}
+
+/**
+ * Entity check A — `entity-card-missing` (FIXABLE): every occurrence whose tag
+ * kind resolves to a REGISTRY entity type but whose `entities/<dir>/<id>.yaml`
+ * card is absent becomes one create fix per unique `(kind, id)`. Bare `[[id]]`
+ * occurrences (no kind) can never create a card — a card needs a kind — and are
+ * skipped here; unknown (non-registry) kinds are skipped too (see check C). The
+ * seed name prefers the most frequent label across occurrences, else the
+ * humanized id. The description carries the mention count and first file.
+ */
+export function entityCardMissingFixes(
+  occurrences: EntityTagOccurrence[],
+  existingCards: EntityCardRef[]
+): BookDoctorFix[] {
+  const existing = new Set(existingCards.map(card => entityCardKey(card.kind, card.id)));
+  const fixes: BookDoctorFix[] = [];
+  for (const occurrence of occurrences) {
+    if (!occurrence.kind) {
+      // A bare `[[id]]` names no kind — a card cannot be materialized from it.
+      continue;
+    }
+    const descriptor = entityTypeByTagKind(occurrence.kind);
+    if (!descriptor) {
+      // Well-formed but non-registry kind — reported by entityUnknownKindFindings.
+      continue;
+    }
+    const entityKind = descriptor.id;
+    if (existing.has(entityCardKey(entityKind, occurrence.id))) {
+      continue;
+    }
+    const name = entityCardName(occurrence);
+    fixes.push({
+      path: entityRelativePath(entityKind as CreatableEntityKind, occurrence.id),
+      kind: 'file',
+      seed: buildEntityYaml({ id: occurrence.id, name }),
+      code: 'entity-card-missing',
+      params: [descriptor.label, name, occurrence.count, occurrence.firstPath],
+      description: `Create the ${descriptor.label} card "${name}" — ${occurrence.count} mention(s), first in ${occurrence.firstPath}.`
+    });
+  }
+  return fixes;
+}
+
+/**
+ * Entity check B — `entity-card-orphan` (INFORMATIONAL): a card on disk that no
+ * tag references. A card is referenced when some occurrence shares its id AND
+ * either names no kind (a bare `[[id]]` matches any kind) or names a tag kind
+ * that resolves to the card's entity kind. Report-only — cards may be
+ * intentional groundwork, so the doctor never deletes them.
+ */
+export function entityCardOrphanFindings(
+  occurrences: EntityTagOccurrence[],
+  existingCards: EntityCardRef[]
+): BookDoctorFinding[] {
+  const findings: BookDoctorFinding[] = [];
+  for (const card of existingCards) {
+    const referenced = occurrences.some(
+      occurrence =>
+        occurrence.id === card.id &&
+        (occurrence.kind === undefined || tagKindToEntityKind(occurrence.kind) === card.kind)
+    );
+    if (referenced) {
+      continue;
+    }
+    const descriptor = entityTypeById(card.kind);
+    const label = descriptor?.label ?? card.kind;
+    const path = descriptor
+      ? entityRelativePath(card.kind as CreatableEntityKind, card.id)
+      : `entities/${card.kind}/${card.id}.yaml`;
+    findings.push({
+      kind: 'entity',
+      code: 'entity-card-orphan',
+      params: [label, card.id, path],
+      label: `Unreferenced ${label} card: ${card.id}`,
+      detail: `The ${label} card ${path} is never referenced by any tag in the manuscript. It may be intentional groundwork — the doctor never deletes it.`
+    });
+  }
+  return findings;
+}
+
+/**
+ * Entity check C — `entity-tag-unknown-kind` (INFORMATIONAL): tags whose kind is
+ * well-formed (`[a-z][\w-]*`) but not in the registry (e.g. `[[spell:fireball]]`).
+ * Grouped by kind with the total tag count and the distinct id count. Phrased so
+ * it reads as a prompt to define the type (stage-4 author-defined types tie-in).
+ */
+export function entityUnknownKindFindings(occurrences: EntityTagOccurrence[]): BookDoctorFinding[] {
+  const wellFormed = /^[a-z][\w-]*$/;
+  const byKind = new Map<string, { count: number; ids: Set<string> }>();
+  for (const occurrence of occurrences) {
+    if (!occurrence.kind || entityTypeByTagKind(occurrence.kind) || !wellFormed.test(occurrence.kind)) {
+      continue;
+    }
+    const entry = byKind.get(occurrence.kind) ?? { count: 0, ids: new Set<string>() };
+    entry.count += occurrence.count;
+    entry.ids.add(occurrence.id);
+    byKind.set(occurrence.kind, entry);
+  }
+  const findings: BookDoctorFinding[] = [];
+  for (const [kind, entry] of byKind) {
+    findings.push({
+      kind: 'entity',
+      code: 'entity-tag-unknown-kind',
+      params: [kind, entry.count, entry.ids.size],
+      label: `Unknown entity type: ${kind}`,
+      detail: `${entry.count} tag(s) use the unknown entity type "${kind}" across ${entry.ids.size} id(s). Define this type to turn its tags into entity cards.`
+    });
+  }
+  return findings;
+}
+
 /**
  * Compose the full {@link BookDoctorReport} from resolved inputs. Fixes are
  * de-duplicated by path, preserving the parents-before-children order the
@@ -415,7 +624,8 @@ export function excerptsParseFinding(content: string): BookDoctorFinding | undef
  *  - a missing `metadata.yaml` is re-seeded with the workspace folder name when
  *    the doctor is restoring an old book (content present + folder name known).
  *
- * Findings are appended in check order: metadata, then the sources parse checks.
+ * Findings are appended in check order: metadata, the sources parse checks, then
+ * the entity findings (orphan cards, unknown tag kinds).
  */
 export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorReport {
   const fixes: BookDoctorFix[] = [];
@@ -459,6 +669,13 @@ export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorRepo
     }
   }
 
+  // Entity base: create a card for every registry-kind tag that has none.
+  const occurrences = input.entityTagOccurrences ?? [];
+  const existingCards = input.existingEntityCards ?? [];
+  for (const fix of entityCardMissingFixes(occurrences, existingCards)) {
+    push(fix);
+  }
+
   const findings: BookDoctorFinding[] = [];
   if (input.metadata) {
     findings.push(...metadataFindings(input.metadata));
@@ -475,6 +692,8 @@ export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorRepo
       findings.push(finding);
     }
   }
+  findings.push(...entityCardOrphanFindings(occurrences, existingCards));
+  findings.push(...entityUnknownKindFindings(occurrences));
 
   return { fixes, findings };
 }

@@ -37,6 +37,11 @@
       "problem-metadata-author-blank-detail": "Автор книги в metadata.yaml отсутствует или пуст. Задайте его в редакторе метаданных книги.",
       "problem-citations-parse-error-detail": "Ошибка разбора YAML в sources/citations.yaml: {0}",
       "problem-excerpts-parse-error-detail": "Строка {0} в sources/excerpts.jsonl не является корректным JSON: {1}",
+      "problem-entity-card-missing": "Создать карточку «{0}» — {1} (упоминаний: {2}, впервые в {3}).",
+      "problem-entity-card-orphan-label": "Карточка {0} без ссылок: {1}",
+      "problem-entity-card-orphan-detail": "Карточка {0} {2} нигде не упоминается тегами в рукописи. Возможно, это задел на будущее — диагностика её не удаляет.",
+      "problem-entity-tag-unknown-kind-label": "Неизвестный тип сущности: {0}",
+      "problem-entity-tag-unknown-kind-detail": "Тегов с неизвестным типом «{0}» — {1} (различных id: {2}). Определите этот тип, чтобы его теги создавали карточки.",
       "report-more-files": "…и ещё {0}"
     }
   }
