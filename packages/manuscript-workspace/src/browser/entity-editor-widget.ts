@@ -14,53 +14,108 @@ import {
 } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
 import { Document, parseDocument } from 'yaml';
-import type { EntityMention, NarrativeEntity, NarrativeEntityKind, WorkspaceDiagnostic } from '../common';
+import type {
+  EffectiveEntityType,
+  EntityFieldDescriptor,
+  EntityMention,
+  NarrativeEntity,
+  WorkspaceDiagnostic
+} from '../common';
 import {
   DomainYamlSchemaKind,
   extractEntityMentions,
   NarrativeEntityService,
   YamlSchemaValidator
 } from '../common';
+import { EntityTypeRegistryService } from './entity-type-registry-service';
 
-interface EntityDraft {
-  id: string;
-  label: string;
-  aliases: string;
-  epithets: string;
-  summary: string;
-  backstory: string;
-  arc: string;
-  speechPatterns: string;
-  notes: string;
-}
+/**
+ * The entity form is now SCHEMA-DRIVEN: it renders one control per
+ * {@link EntityFieldDescriptor} of the file's EFFECTIVE type (built-in OR
+ * author-declared), resolved from the {@link EntityTypeRegistryService} by the
+ * file's `entities/<directory>` segment. The four built-in types were transcribed
+ * into the registry 1:1 in stage 1, so their forms stay pixel-identical; author
+ * types open in the exact same component with their own declared fields.
+ *
+ * The registry descriptor carries only the STRUCTURE of a field (name, control
+ * kind, i18n label key, role). PRESENTATION defaults — the English label the
+ * form supplies inline for `nls.localize`, the placeholder, and the textarea row
+ * count — live here, keyed by the well-known base field names/keys, with graceful
+ * fallbacks (a humanised label, no placeholder, a default row count) for
+ * author-declared fields the form has never seen.
+ */
 
-const EMPTY_DRAFT: EntityDraft = {
-  id: '',
-  label: '',
-  aliases: '',
-  epithets: '',
-  summary: '',
-  backstory: '',
-  arc: '',
-  speechPatterns: '',
-  notes: ''
+/** A form draft: one string per field name (list fields are newline-joined). */
+type EntityDraft = Record<string, string>;
+
+const I18N_PREFIX = 'ai-focused-editor/entities/';
+
+/**
+ * English defaults the form supplies inline to `nls.localize(labelKey, default)`
+ * for the well-known base label keys. Author fields whose `labelKey` is absent
+ * here fall back to a humanised field name.
+ */
+const LABEL_KEY_DEFAULTS: Record<string, string> = {
+  [`${I18N_PREFIX}field-id`]: 'Id',
+  [`${I18N_PREFIX}field-name`]: 'Name',
+  [`${I18N_PREFIX}field-term`]: 'Term',
+  [`${I18N_PREFIX}field-aliases`]: 'Aliases',
+  [`${I18N_PREFIX}field-epithets`]: 'Epithets',
+  [`${I18N_PREFIX}field-summary`]: 'Summary',
+  [`${I18N_PREFIX}field-backstory`]: 'Backstory',
+  [`${I18N_PREFIX}field-arc`]: 'Arc',
+  [`${I18N_PREFIX}field-speech-patterns`]: 'Speech patterns',
+  [`${I18N_PREFIX}field-notes`]: 'Notes'
 };
 
-/** Sub-directory under `entities/` mapped to its entity kind and label key. */
-const ENTITY_KIND_BY_DIRECTORY: Record<string, { kind: NarrativeEntityKind; labelKey: 'name' | 'term'; labelText: string }> = {
-  characters: { kind: 'character', labelKey: 'name', labelText: nls.localize('ai-focused-editor/entities/field-name', 'Name') },
-  artifacts: { kind: 'artifact', labelKey: 'name', labelText: nls.localize('ai-focused-editor/entities/field-name', 'Name') },
-  locations: { kind: 'location', labelKey: 'name', labelText: nls.localize('ai-focused-editor/entities/field-name', 'Name') },
-  terms: { kind: 'term', labelKey: 'term', labelText: nls.localize('ai-focused-editor/entities/field-term', 'Term') }
+/**
+ * Per-field presentation for the well-known base field names: the placeholder
+ * (i18n key + English default) and, for multi-line controls, the row count.
+ * Matches the current renderer exactly so base types stay pixel-identical.
+ */
+const FIELD_PRESENTATION: Record<string, { placeholderKey: string; placeholderDefault: string; rows?: number }> = {
+  id: { placeholderKey: `${I18N_PREFIX}ph-id`, placeholderDefault: 'stable identifier, e.g. krishna' },
+  aliases: { placeholderKey: `${I18N_PREFIX}ph-aliases`, placeholderDefault: 'one alias per line', rows: 3 },
+  epithets: { placeholderKey: `${I18N_PREFIX}ph-epithets`, placeholderDefault: 'one epithet per line', rows: 3 },
+  summary: { placeholderKey: `${I18N_PREFIX}ph-summary`, placeholderDefault: 'short one-line summary', rows: 2 },
+  backstory: { placeholderKey: `${I18N_PREFIX}ph-backstory`, placeholderDefault: 'longer history behind the entity', rows: 4 },
+  arc: { placeholderKey: `${I18N_PREFIX}ph-arc`, placeholderDefault: 'how the entity changes across the manuscript', rows: 2 },
+  speechPatterns: { placeholderKey: `${I18N_PREFIX}ph-speech-patterns`, placeholderDefault: 'one trait per line', rows: 3 },
+  notes: { placeholderKey: `${I18N_PREFIX}ph-notes`, placeholderDefault: 'free-form authoring notes', rows: 3 }
 };
 
-export function entityDescriptorForUri(uri: URI): { kind: NarrativeEntityKind; labelKey: 'name' | 'term'; labelText: string } | undefined {
+/** Default row count for a multi-line control the form has no presentation hint for. */
+const DEFAULT_TEXTAREA_ROWS = 3;
+
+/** Kinds that have a backing AJV schema — validation is skipped for author types. */
+const VALIDATED_KINDS = new Set<DomainYamlSchemaKind>(['character', 'term', 'artifact', 'location']);
+
+/**
+ * The `entities/<directory>` segment of an entity YAML path, or `undefined` when
+ * the URI is not under an `entities/<dir>/...` tree. Kind resolution (built-in vs
+ * author) is then a directory lookup against the effective type registry.
+ */
+export function entityDirectoryForUri(uri: URI): string | undefined {
   const segments = uri.path.toString().split('/').filter(segment => segment.length > 0);
   const entitiesIndex = segments.lastIndexOf('entities');
   if (entitiesIndex < 0 || entitiesIndex + 1 >= segments.length) {
     return undefined;
   }
-  return ENTITY_KIND_BY_DIRECTORY[segments[entitiesIndex + 1]];
+  return segments[entitiesIndex + 1];
+}
+
+/**
+ * Resolve the effective entity type for a URI against a snapshot of the registry's
+ * effective types (built-in + author). Returns `undefined` when the file's
+ * directory matches no known type — the open handler uses this to decide whether
+ * the form editor should claim the file.
+ */
+export function effectiveTypeForUri(uri: URI, types: readonly EffectiveEntityType[]): EffectiveEntityType | undefined {
+  const directory = entityDirectoryForUri(uri);
+  if (!directory) {
+    return undefined;
+  }
+  return types.find(type => type.directory === directory);
 }
 
 function toLines(value: string[] | undefined): string {
@@ -74,10 +129,17 @@ function fromLines(value: string): string[] {
     .filter(line => line.length > 0);
 }
 
+function humanize(name: string): string {
+  return name.length > 0 ? name.charAt(0).toUpperCase() + name.slice(1) : name;
+}
+
 /**
  * Form-based editor for narrative entity YAML files (FR-025). The file on disk
  * stays pure YAML: the widget parses through the `yaml` Document API so comments
- * and untouched keys survive a round-trip, and only edited keys are rewritten.
+ * and untouched keys survive a round-trip, and only edited (schema-owned) keys are
+ * rewritten. Fields absent from the schema (author extras, artifact `ownership`,
+ * …) are never touched on save and are surfaced read-only so writers know they
+ * are preserved.
  */
 @injectable()
 export class EntityEditorWidget extends ReactWidget implements Navigatable {
@@ -95,6 +157,9 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
   @inject(OpenerService)
   protected readonly openerService!: OpenerService;
 
+  @inject(EntityTypeRegistryService)
+  protected readonly typeRegistry!: EntityTypeRegistryService;
+
   protected readonly validator = new YamlSchemaValidator();
 
   /** Cached entity lookup for resolving `[[...]]` mentions (5s TTL). */
@@ -102,29 +167,62 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
   protected mentionIndexExpiresAt = 0;
 
   protected uri!: URI;
-  protected kind: NarrativeEntityKind = 'character';
-  protected labelKey: 'name' | 'term' = 'name';
-  protected labelText = 'Name';
+  /** The resolved effective type id (e.g. `character`, or an author id). */
+  protected kind = 'character';
+  /** The field schema currently rendered (from the effective descriptor). */
+  protected fields: EntityFieldDescriptor[] = [];
   protected document: Document | undefined;
-  protected draft: EntityDraft = { ...EMPTY_DRAFT };
+  /** Last parsed YAML value, kept so a live schema change can re-map the draft. */
+  protected parsedValue: Record<string, unknown> = {};
+  protected draft: EntityDraft = {};
+  /** Top-level YAML keys not owned by the schema — preserved on save, shown read-only. */
+  protected unknownKeys: string[] = [];
   protected loading = false;
   protected dirty = false;
   protected parseError: string | undefined;
 
   configure(uri: URI): void {
     this.uri = uri;
-    const descriptor = entityDescriptorForUri(uri) ?? ENTITY_KIND_BY_DIRECTORY.characters;
-    this.kind = descriptor.kind;
-    this.labelKey = descriptor.labelKey;
-    this.labelText = descriptor.labelText;
+    this.applyDescriptor();
     this.id = `${EntityEditorWidget.FACTORY_ID}:${uri.toString()}`;
     this.title.label = uri.path.base;
     this.title.caption = nls.localize('ai-focused-editor/entities/editor-caption', 'Entity form: {0}', uri.path.fsPath());
     this.title.iconClass = 'fa fa-id-badge';
     this.title.closable = true;
     this.addClass('afe-entity-editor-widget');
+    // Re-resolve the schema when the author edits entities/types.yaml so a file
+    // that only just gained a type — or a type whose fields changed — re-renders.
+    this.toDispose.push(this.typeRegistry.onDidChange(() => this.onRegistryChanged()));
     void this.load();
     void this.loadMentionIndex();
+  }
+
+  /** Resolve the effective descriptor for this file, defaulting to the character type. */
+  protected resolveDescriptor(): EffectiveEntityType {
+    const types = this.typeRegistry.getEffectiveTypes();
+    return effectiveTypeForUri(this.uri, types)
+      ?? types.find(type => type.id === 'character')
+      ?? types[0];
+  }
+
+  /** Adopt the resolved descriptor's kind + field schema (no draft remap). */
+  protected applyDescriptor(): void {
+    const descriptor = this.resolveDescriptor();
+    this.kind = descriptor.id;
+    this.fields = [...descriptor.fields];
+  }
+
+  protected onRegistryChanged(): void {
+    const previousNames = this.fields.map(field => field.name).join(',');
+    this.applyDescriptor();
+    if (this.fields.map(field => field.name).join(',') === previousNames) {
+      return;
+    }
+    // Schema changed: rebuild the draft, preserving values the writer already
+    // typed for fields that still exist, and re-deriving new fields from disk.
+    this.draft = this.buildDraft(this.parsedValue, this.draft);
+    this.unknownKeys = this.computeUnknownKeys(this.parsedValue);
+    this.update();
   }
 
   /**
@@ -175,10 +273,14 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
         : undefined;
       this.document = document;
       const value = (document.toJS() ?? {}) as Record<string, unknown>;
-      this.draft = this.toDraft(value);
+      this.parsedValue = value;
+      this.draft = this.buildDraft(value);
+      this.unknownKeys = this.computeUnknownKeys(value);
     } catch (error) {
       this.document = undefined;
-      this.draft = { ...EMPTY_DRAFT };
+      this.parsedValue = {};
+      this.draft = this.buildDraft({});
+      this.unknownKeys = [];
       this.parseError = error instanceof Error ? error.message : String(error);
     } finally {
       this.loading = false;
@@ -187,25 +289,36 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
     }
   }
 
-  protected toDraft(value: Record<string, unknown>): EntityDraft {
+  /**
+   * Build a draft for the current schema from a parsed YAML value. When `preserve`
+   * is given, values the writer already typed for still-present fields are kept
+   * (used on a live schema change so unsaved edits are not clobbered).
+   */
+  protected buildDraft(value: Record<string, unknown>, preserve?: EntityDraft): EntityDraft {
     const asString = (input: unknown): string => (typeof input === 'string' ? input : '');
     const asArray = (input: unknown): string[] => Array.isArray(input)
       ? input.filter((item): item is string => typeof item === 'string')
       : [];
-    return {
-      id: asString(value.id),
-      label: asString(value[this.labelKey]),
-      aliases: toLines(asArray(value.aliases)),
-      epithets: toLines(asArray(value.epithets)),
-      summary: asString(value.summary),
-      backstory: asString(value.backstory),
-      arc: asString(value.arc),
-      speechPatterns: toLines(asArray(value.speechPatterns)),
-      notes: asString(value.notes)
-    };
+    const draft: EntityDraft = {};
+    for (const field of this.fields) {
+      if (preserve && field.name in preserve) {
+        draft[field.name] = preserve[field.name];
+        continue;
+      }
+      draft[field.name] = field.kind === 'list'
+        ? toLines(asArray(value[field.name]))
+        : asString(value[field.name]);
+    }
+    return draft;
   }
 
-  protected updateField(field: keyof EntityDraft, value: string): void {
+  /** Top-level YAML keys present on disk but not owned by the current schema. */
+  protected computeUnknownKeys(value: Record<string, unknown>): string[] {
+    const owned = new Set(this.fields.map(field => field.name));
+    return Object.keys(value).filter(key => !owned.has(key));
+  }
+
+  protected updateField(field: string, value: string): void {
     this.draft = { ...this.draft, [field]: value };
     this.dirty = true;
     this.update();
@@ -213,43 +326,35 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
 
   protected toPlainObject(): Record<string, unknown> {
     const object: Record<string, unknown> = {};
-    const id = this.draft.id.trim();
-    const label = this.draft.label.trim();
-    if (id) {
-      object.id = id;
-    }
-    if (label) {
-      object[this.labelKey] = label;
-    }
-    const aliases = fromLines(this.draft.aliases);
-    if (aliases.length > 0) {
-      object.aliases = aliases;
-    }
-    const epithets = fromLines(this.draft.epithets);
-    if (epithets.length > 0) {
-      object.epithets = epithets;
-    }
-    for (const key of ['summary', 'backstory', 'arc', 'notes'] as const) {
-      const scalar = this.draft[key].trim();
-      if (scalar) {
-        object[key] = scalar;
+    for (const field of this.fields) {
+      const value = this.draft[field.name] ?? '';
+      if (field.kind === 'list') {
+        const items = fromLines(value);
+        if (items.length > 0) {
+          object[field.name] = items;
+        }
+      } else {
+        const scalar = value.trim();
+        if (scalar) {
+          object[field.name] = scalar;
+        }
       }
-    }
-    const speechPatterns = fromLines(this.draft.speechPatterns);
-    if (speechPatterns.length > 0) {
-      object.speechPatterns = speechPatterns;
     }
     return object;
   }
 
   protected problems(): WorkspaceDiagnostic[] {
+    if (!VALIDATED_KINDS.has(this.kind as DomainYamlSchemaKind)) {
+      return [];
+    }
     const uri = this.uri?.toString() ?? '';
     return this.validator.validate(this.kind as DomainYamlSchemaKind, uri, this.toPlainObject());
   }
 
   /**
-   * Rewrite only the keys the form owns, preserving comments and any other keys
-   * on the original document. Emptied fields are removed so the YAML stays clean.
+   * Rewrite only the keys the schema owns, preserving comments and any other keys
+   * (author extras, `ownership`, …) on the original document. Emptied fields are
+   * removed so the YAML stays clean — mirrors the original per-key semantics.
    */
   protected serialize(): string {
     const document = this.document && this.document.contents != null
@@ -273,15 +378,14 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
       }
     };
 
-    setScalar('id', this.draft.id);
-    setScalar(this.labelKey, this.draft.label);
-    setSequence('aliases', this.draft.aliases);
-    setSequence('epithets', this.draft.epithets);
-    setScalar('summary', this.draft.summary);
-    setScalar('backstory', this.draft.backstory);
-    setScalar('arc', this.draft.arc);
-    setSequence('speechPatterns', this.draft.speechPatterns);
-    setScalar('notes', this.draft.notes);
+    for (const field of this.fields) {
+      const value = this.draft[field.name] ?? '';
+      if (field.kind === 'list') {
+        setSequence(field.name, value);
+      } else {
+        setScalar(field.name, value);
+      }
+    }
 
     return document.toString();
   }
@@ -331,58 +435,7 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
             void this.save();
           }
         },
-        this.renderInput(
-          nls.localize('ai-focused-editor/entities/field-id', 'Id'),
-          'id',
-          nls.localize('ai-focused-editor/entities/ph-id', 'stable identifier, e.g. krishna')
-        ),
-        this.renderInput(
-          this.labelText,
-          'label',
-          nls.localize('ai-focused-editor/entities/ph-label', 'display {0}', this.labelText.toLowerCase())
-        ),
-        this.renderTextarea(
-          nls.localize('ai-focused-editor/entities/field-aliases', 'Aliases'),
-          'aliases',
-          nls.localize('ai-focused-editor/entities/ph-aliases', 'one alias per line'),
-          3
-        ),
-        this.renderTextarea(
-          nls.localize('ai-focused-editor/entities/field-epithets', 'Epithets'),
-          'epithets',
-          nls.localize('ai-focused-editor/entities/ph-epithets', 'one epithet per line'),
-          3
-        ),
-        this.renderTextarea(
-          nls.localize('ai-focused-editor/entities/field-summary', 'Summary'),
-          'summary',
-          nls.localize('ai-focused-editor/entities/ph-summary', 'short one-line summary'),
-          2
-        ),
-        this.renderTextarea(
-          nls.localize('ai-focused-editor/entities/field-backstory', 'Backstory'),
-          'backstory',
-          nls.localize('ai-focused-editor/entities/ph-backstory', 'longer history behind the entity'),
-          4
-        ),
-        this.renderTextarea(
-          nls.localize('ai-focused-editor/entities/field-arc', 'Arc'),
-          'arc',
-          nls.localize('ai-focused-editor/entities/ph-arc', 'how the entity changes across the manuscript'),
-          2
-        ),
-        this.renderTextarea(
-          nls.localize('ai-focused-editor/entities/field-speech-patterns', 'Speech patterns'),
-          'speechPatterns',
-          nls.localize('ai-focused-editor/entities/ph-speech-patterns', 'one trait per line'),
-          3
-        ),
-        this.renderTextarea(
-          nls.localize('ai-focused-editor/entities/field-notes', 'Notes'),
-          'notes',
-          nls.localize('ai-focused-editor/entities/ph-notes', 'free-form authoring notes'),
-          3
-        ),
+        ...this.fields.map(field => this.renderField(field)),
         React.createElement(
           'div',
           { className: 'afe-entity-editor-actions' },
@@ -404,6 +457,7 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
           )
         )
       ),
+      this.renderUnknownKeys(),
       React.createElement(
         'p',
         { className: 'afe-entity-editor-help' },
@@ -417,6 +471,30 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
 
   protected labelDisplay(): string {
     return this.kind.charAt(0).toUpperCase() + this.kind.slice(1);
+  }
+
+  /** Localised field label — the registry `labelKey` with the form's English default. */
+  protected fieldLabel(field: EntityFieldDescriptor): string {
+    return nls.localize(field.labelKey, LABEL_KEY_DEFAULTS[field.labelKey] ?? humanize(field.name));
+  }
+
+  /** Localised placeholder for a field, or `''` when the form has no hint for it. */
+  protected fieldPlaceholder(field: EntityFieldDescriptor, label: string): string {
+    if (field.role === 'label') {
+      return nls.localize('ai-focused-editor/entities/ph-label', 'display {0}', label.toLowerCase());
+    }
+    const presentation = FIELD_PRESENTATION[field.name];
+    return presentation ? nls.localize(presentation.placeholderKey, presentation.placeholderDefault) : '';
+  }
+
+  protected renderField(field: EntityFieldDescriptor): React.ReactNode {
+    const label = this.fieldLabel(field);
+    const placeholder = this.fieldPlaceholder(field, label);
+    if (field.kind === 'text') {
+      return this.renderInput(label, field.name, placeholder);
+    }
+    const rows = FIELD_PRESENTATION[field.name]?.rows ?? DEFAULT_TEXTAREA_ROWS;
+    return this.renderTextarea(label, field.name, placeholder, rows);
   }
 
   protected renderProblems(problems: WorkspaceDiagnostic[]): React.ReactNode {
@@ -434,31 +512,55 @@ export class EntityEditorWidget extends ReactWidget implements Navigatable {
     );
   }
 
-  protected renderInput(label: string, field: keyof EntityDraft, placeholder: string): React.ReactNode {
+  /**
+   * Surface the top-level YAML keys the schema does not own as read-only chips so
+   * the writer sees they exist and are preserved verbatim on save.
+   */
+  protected renderUnknownKeys(): React.ReactNode {
+    if (this.unknownKeys.length === 0) {
+      return undefined;
+    }
+    return React.createElement(
+      'div',
+      { className: 'afe-entity-editor-unknown' },
+      React.createElement(
+        'span',
+        { className: 'afe-entity-editor-unknown-label' },
+        nls.localize('ai-focused-editor/entities/preserved-fields', 'Preserved as-is:')
+      ),
+      ...this.unknownKeys.map((key, index) => React.createElement(
+        'span',
+        { key: index, className: 'afe-entity-editor-unknown-chip' },
+        key
+      ))
+    );
+  }
+
+  protected renderInput(label: string, field: string, placeholder: string): React.ReactNode {
     return React.createElement(
       'label',
-      { className: 'afe-entity-editor-field' },
+      { key: field, className: 'afe-entity-editor-field' },
       React.createElement('span', undefined, label),
       React.createElement('input', {
-        value: this.draft[field],
+        value: this.draft[field] ?? '',
         placeholder,
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => this.updateField(field, event.currentTarget.value)
       })
     );
   }
 
-  protected renderTextarea(label: string, field: keyof EntityDraft, placeholder: string, rows: number): React.ReactNode {
+  protected renderTextarea(label: string, field: string, placeholder: string, rows: number): React.ReactNode {
     return React.createElement(
       'label',
-      { className: 'afe-entity-editor-field' },
+      { key: field, className: 'afe-entity-editor-field' },
       React.createElement('span', undefined, label),
       React.createElement('textarea', {
-        value: this.draft[field],
+        value: this.draft[field] ?? '',
         placeholder,
         rows,
         onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => this.updateField(field, event.currentTarget.value)
       }),
-      this.renderMentionsRow(this.draft[field])
+      this.renderMentionsRow(this.draft[field] ?? '')
     );
   }
 

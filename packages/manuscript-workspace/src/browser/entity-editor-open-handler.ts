@@ -26,7 +26,8 @@ import {
   AI_FOCUSED_EDITOR_MENU_LABEL,
   AiFocusedEditorMenus
 } from './ai-focused-editor-menu';
-import { EntityEditorWidget, entityDescriptorForUri } from './entity-editor-widget';
+import { EntityEditorWidget, effectiveTypeForUri } from './entity-editor-widget';
+import { EntityTypeRegistryService } from './entity-type-registry-service';
 
 /**
  * Priority returned for entity YAML files. The text editor's `EditorManager`
@@ -35,12 +36,18 @@ import { EntityEditorWidget, entityDescriptorForUri } from './entity-editor-widg
  */
 const ENTITY_EDITOR_PRIORITY = 500;
 
-function isEntityYaml(uri: URI): boolean {
+/**
+ * A YAML file is an entity file when its `entities/<dir>` segment resolves to an
+ * EFFECTIVE entity type — a built-in OR an author-declared one. The registry seed
+ * always carries the four built-ins, so base files match immediately; author
+ * directories match once their `entities/types.yaml` has been parsed.
+ */
+function isEntityYaml(uri: URI, registry: EntityTypeRegistryService): boolean {
   const path = uri.path.toString().toLowerCase();
   if (!path.endsWith('.yaml') && !path.endsWith('.yml')) {
     return false;
   }
-  return entityDescriptorForUri(uri) !== undefined;
+  return effectiveTypeForUri(uri, registry.getEffectiveTypes()) !== undefined;
 }
 
 @injectable()
@@ -48,8 +55,11 @@ export class EntityEditorOpenHandler extends NavigatableWidgetOpenHandler<Entity
   readonly id = EntityEditorWidget.FACTORY_ID;
   readonly label = nls.localize('ai-focused-editor/entities/open-handler-label', 'Entity Form Editor');
 
+  @inject(EntityTypeRegistryService)
+  protected readonly typeRegistry!: EntityTypeRegistryService;
+
   canHandle(uri: URI, _options?: WidgetOpenerOptions): number {
-    return isEntityYaml(uri) ? ENTITY_EDITOR_PRIORITY : 0;
+    return isEntityYaml(uri, this.typeRegistry) ? ENTITY_EDITOR_PRIORITY : 0;
   }
 }
 
@@ -88,13 +98,16 @@ export class EntityEditorCommandContribution implements CommandContribution, Men
   @inject(MessageService)
   protected readonly messageService!: MessageService;
 
+  @inject(EntityTypeRegistryService)
+  protected readonly typeRegistry!: EntityTypeRegistryService;
+
   registerCommands(commands: CommandRegistry): void {
     commands.registerCommand(EntityEditorCommands.OPEN_WITH_FORM_EDITOR, {
       isEnabled: (arg?: unknown) => this.canResolveEntity(arg),
       isVisible: (arg?: unknown) => this.canResolveEntity(arg),
       execute: async (arg?: unknown) => {
         const uri = this.resolveUri(arg);
-        if (!uri || !isEntityYaml(uri)) {
+        if (!uri || !isEntityYaml(uri, this.typeRegistry)) {
           await this.messageService.warn(nls.localize(
             'ai-focused-editor/entities/only-entity-yaml',
             'Open Form Editor is only available for entity YAML files (entities/**/*.yaml).'
@@ -135,7 +148,7 @@ export class EntityEditorCommandContribution implements CommandContribution, Men
 
   protected canResolveEntity(arg?: unknown): boolean {
     const uri = this.resolveUri(arg);
-    return uri !== undefined && isEntityYaml(uri);
+    return uri !== undefined && isEntityYaml(uri, this.typeRegistry);
   }
 
   protected resolveUri(arg?: unknown): URI | undefined {
