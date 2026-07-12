@@ -282,6 +282,14 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 38 — Chat context management (shipped)
+
+- **«Работать с главой…»** (меню + правый клик): автосборка набора — глава + сущности её тегов + цитаты `[@cite:]` + их исходники — мультиселект с предвыбором, докидываемые источники/заметки, всё прикрепляется chips-ами одним движением. Чистые правила сборки в `common/chapter-bundle.ts`.
+- **Компактный обзор**: `aiFocusedEditor.ai.manuscriptOverview: full|compact` — компактный режим сжимает всегда-включённый `{{manuscript}}` до скелета манифеста + счётчиков (full — побайтно прежний).
+- **Именованные наборы** в `ai/context-sets.yaml` (под git, comment-preserving): «Сохранить контекст как набор…» / «Применить набор…».
+- **`#set:<id>`** — набор прикладывается упоминанием: разворачивается в один chip с заголовками по элементам (резолв через variable service, лимит 64K, защита от циклов).
+- 812 tests; build green.
+
 ## Wave 37 — Addressability, agent write tools, formulas (shipped)
 
 - **Правило (постоянное): каждый артефакт книги индивидуально адресуем в ai-chat** — переменная с пикером, категория универсального пикера, «Отправить в AI-чат», текстовое представление для бинарных форматов. Закрыты пробелы: `#citation:<id>` (карточка + её выдержки), `#excerpt:<id>`, `#diagram:<path>` (диаграмма приходит модели текстом: подписи узлов с entity-ссылками, связи «A → B», счётчики фигур; чистый суммаризатор, 13 тестов); категории Цитаты/Выдержки/Диаграммы/Книга.
