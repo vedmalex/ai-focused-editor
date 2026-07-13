@@ -7,19 +7,19 @@ import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import {
   inject,
   injectable,
+  optional,
   postConstruct
 } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
 import {
-  AiMode,
-  WorkspaceDiagnostic
-} from '../common';
-import {
   AiProfilePreferenceService,
   AiProfileStatus
 } from './ai-profile-preference-service';
-import { AiModeRegistry } from '../common';
-import { ManuscriptAiContextAssembler } from './manuscript-ai-context-assembler';
+import {
+  AiDebugContextProvider,
+  AiDebugDiagnosticInfo,
+  AiDebugModeInfo
+} from './ai-debug-context';
 import {
   AiHistoryKind,
   AiHistoryRecord,
@@ -33,8 +33,8 @@ import { AiRequestLogRecord } from '../common/ai-history-log';
 
 interface AiDebugSnapshot {
   profile: AiProfileStatus;
-  modes: AiMode[];
-  modeDiagnostics: WorkspaceDiagnostic[];
+  modes: AiDebugModeInfo[];
+  modeDiagnostics: AiDebugDiagnosticInfo[];
   activeEditorUri?: string;
   selectedTextLength: number;
   selectedTextPreview: string;
@@ -93,11 +93,8 @@ export class AiDebugWidget extends ReactWidget {
   @inject(AiProfilePreferenceService)
   protected readonly aiProfilePreferences!: AiProfilePreferenceService;
 
-  @inject(AiModeRegistry)
-  protected readonly aiModes!: AiModeRegistry;
-
-  @inject(ManuscriptAiContextAssembler)
-  protected readonly contextAssembler!: ManuscriptAiContextAssembler;
+  @inject(AiDebugContextProvider) @optional()
+  protected readonly contextProvider: AiDebugContextProvider | undefined;
 
   @inject(EditorManager)
   protected readonly editorManager!: EditorManager;
@@ -149,21 +146,20 @@ export class AiDebugWidget extends ReactWidget {
   }
 
   async refresh(): Promise<void> {
-    const [profile, modeSnapshot, manuscriptContext] = await Promise.all([
+    const [profile, context] = await Promise.all([
       this.aiProfilePreferences.getStatus(),
-      this.aiModes.refresh(),
-      this.contextAssembler.assemble()
+      this.contextProvider?.collect() ?? Promise.resolve(undefined)
     ]);
     const editor = this.editorManager.currentEditor?.editor ?? this.editorManager.activeEditor?.editor;
     const selectedText = editor?.document.getText(editor.selection).trim() ?? '';
     this.snapshot = {
       profile,
-      modes: modeSnapshot.modes,
-      modeDiagnostics: modeSnapshot.diagnostics,
+      modes: context?.modes ?? [],
+      modeDiagnostics: context?.diagnostics ?? [],
       activeEditorUri: editor?.uri.toString(),
       selectedTextLength: selectedText.length,
       selectedTextPreview: this.truncate(selectedText, MAX_SELECTION_PREVIEW),
-      manuscriptContext
+      manuscriptContext: context?.manuscriptContext ?? ''
     };
     this.update();
   }
@@ -751,7 +747,7 @@ export class AiDebugWidget extends ReactWidget {
     );
   }
 
-  protected renderModes(modes: AiMode[], diagnostics: WorkspaceDiagnostic[]): React.ReactNode {
+  protected renderModes(modes: AiDebugModeInfo[], diagnostics: AiDebugDiagnosticInfo[]): React.ReactNode {
     return React.createElement(
       'section',
       { className: 'afe-ai-debug-section' },

@@ -23,7 +23,10 @@ import type {
 } from '../common';
 import { AiHistoryService } from './ai-history-service';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
-import { AI_FOCUSED_EDITOR_AI_REQUEST_LOG } from './ai-focused-editor-preferences';
+import {
+  AI_CONNECT_REQUEST_LOG,
+  LEGACY_AI_REQUEST_LOG
+} from './ai-connect-preferences';
 
 export type AiRequestLogMode = 'off' | 'metadata' | 'full';
 
@@ -72,7 +75,12 @@ export class AiRequestLogService {
   protected readonly aiProfilePreferences!: AiProfilePreferenceService;
 
   getMode(resourceUri?: string): AiRequestLogMode {
-    const value = this.preferenceService.get<string>(AI_FOCUSED_EDITOR_AI_REQUEST_LOG, 'off', resourceUri);
+    // Soft migration: new key wins when explicitly set, else legacy value.
+    const neu = this.preferenceService.inspect<string>(AI_CONNECT_REQUEST_LOG, resourceUri);
+    const legacy = this.preferenceService.inspect<string>(LEGACY_AI_REQUEST_LOG, resourceUri);
+    const isSet = (i: typeof neu): boolean =>
+      !!i && (i.globalValue !== undefined || i.workspaceValue !== undefined || i.workspaceFolderValue !== undefined);
+    const value = isSet(neu) ? neu?.value : isSet(legacy) ? legacy?.value : 'off';
     return value === 'metadata' || value === 'full' ? value : 'off';
   }
 
@@ -82,7 +90,7 @@ export class AiRequestLogService {
 
   /** Turn logging on (or off) from the viewer's one-click enable hint. */
   async setMode(mode: AiRequestLogMode): Promise<void> {
-    await this.preferenceService.set(AI_FOCUSED_EDITOR_AI_REQUEST_LOG, mode, PreferenceScope.User);
+    await this.preferenceService.set(AI_CONNECT_REQUEST_LOG, mode, PreferenceScope.User);
   }
 
   /**

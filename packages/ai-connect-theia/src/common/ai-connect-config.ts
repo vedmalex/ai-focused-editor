@@ -5,7 +5,7 @@ import {
 import type {
   AiConnectionProfile,
   AiTransportKind
-} from '../common';
+} from './ai-connection-protocol';
 
 const PROVIDER_CATALOG = Object.freeze(listTextProviderCatalog());
 const DEFAULT_TRANSPORT_KIND: AiTransportKind = 'api';

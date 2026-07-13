@@ -282,6 +282,13 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 46 — ai-connect module extracted to a reusable Theia package (shipped)
+
+- **`packages/ai-connect-theia`** (@ai-focused-editor/ai-connect-theia) — connection/alias-слой вынесен из manuscript-workspace в самостоятельное Theia-расширение: конфиг endpoint+alias, резолюция алиасов, failover/ротация, двухступенчатая верификация, Model Config, статус-бар алиаса, журнал запросов, debug-вью, LanguageModel-регистрация (@theia/ai-core), node-сервис стриминга. Любое Theia-приложение подключает его записью зависимости; manuscript-workspace — теперь просто потребитель публичного API (книжный слой AI-режимов остался в редакторе).
+- **Ключи нейтральные `aiConnect.*`** с мягкой миграцией: чистый `resolveWithLegacy` (новый ключ выигрывает, если задан; иначе легаси `aiFocusedEditor.ai.*`; с тестами) — существующие настройки продолжают работать; легаси-схема в редакторе помечена deprecated. Ограничение «API-ключи только user-scope» сохранено.
+- **Развязки**: пакет регистрирует команды/вью, но не меню — размещение в меню Manuscript осталось тонкой контрибуцией редактора; собственная ru LocalizationContribution пакета (ключи строк не менялись, двойной регистрации нет).
+- Заход пережил два падения агентов (лимит сессии, затем отказ структурного отчёта) — состояние оба раза оценивалось по дереву и продолжалось с частичного. Проверка: 1015 тестов / 54 файла, оба typecheck, полная сборка, **10/10 UI-flow** (включая AFE-05-MODEL-CONFIG и AFE-10-LOCALE-RU). Первая волна по новому регламенту ветка→PR.
+
 ## Wave 45 — Obsidian plugin tier 2 + doctor installs the plugin (shipped)
 
 - **Live Preview** (остаток яруса 1 закрыт): CM6-декорации — теги подсвечены акцентами видов прямо при письме, cmd/ctrl+клик открывает карточку (неизвестный id → модалка создания); тег под курсором не декорируется, чтобы не мешать правке.

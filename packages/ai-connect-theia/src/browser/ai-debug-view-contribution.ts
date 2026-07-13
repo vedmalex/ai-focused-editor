@@ -1,16 +1,10 @@
 import {
   Command,
-  CommandRegistry,
-  MenuModelRegistry
+  CommandRegistry
 } from '@theia/core/lib/common';
-import { nls } from '@theia/core/lib/common/nls';
 import { injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { AiDebugWidget } from './ai-debug-widget';
-import {
-  AI_FOCUSED_EDITOR_MENU_LABEL,
-  AiFocusedEditorMenus
-} from './ai-focused-editor-menu';
 
 export namespace AiDebugCommands {
   export const OPEN: Command = Command.toLocalizedCommand(
@@ -38,6 +32,11 @@ export namespace AiDebugCommands {
   );
 }
 
+/**
+ * View + command registration for the AI Debug view. The host application
+ * places these commands into its own menu; the standard Theia "View" toggle
+ * registration is kept via `super`.
+ */
 @injectable()
 export class AiDebugViewContribution extends AbstractViewContribution<AiDebugWidget> {
   constructor() {
@@ -65,20 +64,6 @@ export class AiDebugViewContribution extends AbstractViewContribution<AiDebugWid
         const widget = await this.openView({ activate: false, reveal: true });
         await widget.copySnapshot();
       }
-    });
-  }
-
-  override registerMenus(menus: MenuModelRegistry): void {
-    super.registerMenus(menus);
-    const menuPath = AiFocusedEditorMenus.AI_DEBUG;
-    menus.registerMenuAction(menuPath, {
-      commandId: AiDebugCommands.OPEN.id
-    });
-    menus.registerMenuAction(menuPath, {
-      commandId: AiDebugCommands.REFRESH.id
-    });
-    menus.registerMenuAction(menuPath, {
-      commandId: AiDebugCommands.COPY_SNAPSHOT.id
     });
   }
 }

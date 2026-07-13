@@ -13,6 +13,7 @@
   "main": "lib/common/index.js",
   "typings": "lib/common/index.d.ts",
   "dependencies": {
+    "@ai-focused-editor/ai-connect-theia": "workspace:*",
     "@ai-focused-editor/book-export": "0.1.0",
     "@ai-focused-editor/semantic-markdown": "workspace:*",
     "@excalidraw/excalidraw": "0.18.1",
@@ -95,9 +96,6 @@
     },
     {
       "frontend": "lib/browser/semantic-history-frontend-module"
-    },
-    {
-      "frontend": "lib/browser/ai-rotation-frontend-module"
     },
     {
       "frontend": "lib/browser/live-validation-frontend-module"

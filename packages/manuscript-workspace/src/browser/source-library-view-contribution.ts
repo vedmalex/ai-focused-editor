@@ -44,12 +44,12 @@ import {
   dedupeCitations,
   ExcerptRecord
 } from '../common/source-analysis';
-import { AiProfilePreferenceService } from './ai-profile-preference-service';
-import { AiRequestLogService } from './ai-request-log-service';
+import { AiProfilePreferenceService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
+import { AiRequestLogService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import {
   AiHistoryRecord,
   AiHistoryService
-} from './ai-history-service';
+} from '@ai-focused-editor/ai-connect-theia/lib/browser';
 
 export namespace SourceLibraryCommands {
   // en labels/category stay inline as the source of truth; ru comes from

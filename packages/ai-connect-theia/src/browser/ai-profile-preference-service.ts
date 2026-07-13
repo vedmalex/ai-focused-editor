@@ -13,16 +13,17 @@ import type {
   StoredAiAlias,
   StoredAiEndpoint
 } from '../common';
-import { resolveChainFromConfig, resolveEndpointLeg } from '../common';
+import { resolveChainFromConfig, resolveEndpointLeg, resolveWithLegacy } from '../common';
 import { getAiConnectTransportKind } from '../common/ai-connect-config';
 import { isWithinWindows, parseTimeWindows } from '../common/ai-time-windows';
 import {
-  AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS,
-  AI_FOCUSED_EDITOR_AI_ALIASES,
-  AI_FOCUSED_EDITOR_AI_API_KEYS,
-  AI_FOCUSED_EDITOR_AI_ENDPOINTS,
-  AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT
-} from './ai-focused-editor-preferences';
+  AI_CONNECT_ACTIVE_ALIAS,
+  AI_CONNECT_ALIASES,
+  AI_CONNECT_API_KEYS,
+  AI_CONNECT_ENDPOINTS,
+  AI_CONNECT_PINNED_ENDPOINT,
+  AI_CONNECT_LEGACY_KEY_BY_NEW
+} from './ai-connect-preferences';
 import { buildUnconfiguredAiProfileStatus, type AiProfileStatus } from './ai-profile-status';
 
 export type { AiProfileStatus } from './ai-profile-status';
@@ -133,7 +134,7 @@ export class AiProfilePreferenceService {
     } else {
       delete keys[id];
     }
-    await this.preferenceService.set(AI_FOCUSED_EDITOR_AI_API_KEYS, keys, PreferenceScope.User);
+    await this.preferenceService.set(AI_CONNECT_API_KEYS, keys, PreferenceScope.User);
   }
 
   // ---------------------------------------------------------------------------
@@ -146,7 +147,7 @@ export class AiProfilePreferenceService {
   }
 
   readEndpoints(resourceUri?: string): StoredAiEndpoint[] {
-    const raw = this.preferenceService.get<StoredAiEndpoint[]>(AI_FOCUSED_EDITOR_AI_ENDPOINTS, [], resourceUri);
+    const raw = this.readMigrated<StoredAiEndpoint[]>(AI_CONNECT_ENDPOINTS, [], resourceUri);
     if (!Array.isArray(raw)) {
       return [];
     }
@@ -156,7 +157,7 @@ export class AiProfilePreferenceService {
   }
 
   readAliases(resourceUri?: string): StoredAiAlias[] {
-    const raw = this.preferenceService.get<StoredAiAlias[]>(AI_FOCUSED_EDITOR_AI_ALIASES, [], resourceUri);
+    const raw = this.readMigrated<StoredAiAlias[]>(AI_CONNECT_ALIASES, [], resourceUri);
     if (!Array.isArray(raw)) {
       return [];
     }
@@ -167,7 +168,7 @@ export class AiProfilePreferenceService {
 
   getActiveAliasId(resourceUri?: string): string {
     const aliases = this.readAliases(resourceUri);
-    const configured = this.getPreferenceText(AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS, resourceUri);
+    const configured = this.getPreferenceText(AI_CONNECT_ACTIVE_ALIAS, resourceUri);
     if (configured && aliases.some(alias => alias.id === configured)) {
       return configured;
     }
@@ -175,7 +176,7 @@ export class AiProfilePreferenceService {
   }
 
   getPinnedEndpointId(resourceUri?: string): string {
-    return this.getPreferenceText(AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT, resourceUri);
+    return this.getPreferenceText(AI_CONNECT_PINNED_ENDPOINT, resourceUri);
   }
 
   /** Resolve the active (or given) alias chain into an ordered failover list. */
@@ -254,11 +255,11 @@ export class AiProfilePreferenceService {
   }
 
   async setActiveAlias(id: string): Promise<void> {
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS, id);
+    await this.setWorkspacePreference(AI_CONNECT_ACTIVE_ALIAS, id);
   }
 
   async setPinnedEndpoint(id: string): Promise<void> {
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT, id);
+    await this.setWorkspacePreference(AI_CONNECT_PINNED_ENDPOINT, id);
   }
 
   async upsertEndpoint(endpoint: StoredAiEndpoint): Promise<void> {
@@ -270,29 +271,29 @@ export class AiProfilePreferenceService {
     } else {
       next.push(endpoint);
     }
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_ENDPOINTS, next);
+    await this.setWorkspacePreference(AI_CONNECT_ENDPOINTS, next);
   }
 
   async deleteEndpoint(id: string): Promise<void> {
     const endpoints = this.readEndpoints();
     const next = endpoints.filter(endpoint => endpoint.id !== id);
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_ENDPOINTS, next);
+    await this.setWorkspacePreference(AI_CONNECT_ENDPOINTS, next);
     if (this.getPinnedEndpointId() === id) {
       await this.setPinnedEndpoint('');
     }
     const keys = { ...this.readApiKeys() };
     if (id in keys) {
       delete keys[id];
-      await this.preferenceService.set(AI_FOCUSED_EDITOR_AI_API_KEYS, keys, PreferenceScope.User);
+      await this.preferenceService.set(AI_CONNECT_API_KEYS, keys, PreferenceScope.User);
     }
   }
 
   async moveEndpoint(id: string, delta: -1 | 1): Promise<void> {
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_ENDPOINTS, this.moveInList(this.readEndpoints(), id, delta));
+    await this.setWorkspacePreference(AI_CONNECT_ENDPOINTS, this.moveInList(this.readEndpoints(), id, delta));
   }
 
   async reorderEndpoint(id: string, targetIndex: number): Promise<void> {
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_ENDPOINTS, this.reorderList(this.readEndpoints(), id, targetIndex));
+    await this.setWorkspacePreference(AI_CONNECT_ENDPOINTS, this.reorderList(this.readEndpoints(), id, targetIndex));
   }
 
   async upsertAlias(alias: StoredAiAlias): Promise<void> {
@@ -304,7 +305,7 @@ export class AiProfilePreferenceService {
     } else {
       next.push(alias);
     }
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_ALIASES, next);
+    await this.setWorkspacePreference(AI_CONNECT_ALIASES, next);
     if (next.length === 1) {
       await this.setActiveAlias(alias.id);
     }
@@ -313,18 +314,18 @@ export class AiProfilePreferenceService {
   async deleteAlias(id: string): Promise<void> {
     const aliases = this.readAliases();
     const next = aliases.filter(alias => alias.id !== id);
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_ALIASES, next);
+    await this.setWorkspacePreference(AI_CONNECT_ALIASES, next);
     if (this.getActiveAliasId() === id && next.length > 0) {
       await this.setActiveAlias(next[0].id);
     }
   }
 
   async moveAlias(id: string, delta: -1 | 1): Promise<void> {
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_ALIASES, this.moveInList(this.readAliases(), id, delta));
+    await this.setWorkspacePreference(AI_CONNECT_ALIASES, this.moveInList(this.readAliases(), id, delta));
   }
 
   async reorderAlias(id: string, targetIndex: number): Promise<void> {
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_ALIASES, this.reorderList(this.readAliases(), id, targetIndex));
+    await this.setWorkspacePreference(AI_CONNECT_ALIASES, this.reorderList(this.readAliases(), id, targetIndex));
   }
 
   /** Replace an alias's chain (used by the leg add/remove/reorder controls). */
@@ -336,7 +337,7 @@ export class AiProfilePreferenceService {
     }
     const next = [...aliases];
     next[index] = { ...next[index], chain };
-    await this.setWorkspacePreference(AI_FOCUSED_EDITOR_AI_ALIASES, next);
+    await this.setWorkspacePreference(AI_CONNECT_ALIASES, next);
   }
 
   async addAliasLeg(aliasId: string, leg: AliasChainLeg): Promise<void> {
@@ -398,8 +399,33 @@ export class AiProfilePreferenceService {
   }
 
   protected readApiKeys(): Record<string, string> {
-    const raw = this.preferenceService.get<Record<string, string>>(AI_FOCUSED_EDITOR_AI_API_KEYS, {});
+    const raw = this.readMigrated<Record<string, string>>(AI_CONNECT_API_KEYS, {});
     return typeof raw === 'object' && raw !== null ? raw : {};
+  }
+
+  /**
+   * Read a migrated `aiConnect.*` preference: the new key wins when explicitly
+   * set (any scope), else the legacy `aiFocusedEditor.ai.*` value, else default.
+   * Applied to every stored-connection read so pre-migration user settings keep
+   * working without a one-time rewrite.
+   */
+  protected readMigrated<T>(newKey: string, defaultValue: T, resourceUri?: string): T {
+    const legacyKey = AI_CONNECT_LEGACY_KEY_BY_NEW[newKey];
+    const neu = this.preferenceService.inspect(newKey, resourceUri);
+    const legacy = legacyKey ? this.preferenceService.inspect(legacyKey, resourceUri) : undefined;
+    const isSet = (inspection: typeof neu): boolean =>
+      !!inspection && (
+        inspection.globalValue !== undefined ||
+        inspection.workspaceValue !== undefined ||
+        inspection.workspaceFolderValue !== undefined
+      );
+    return resolveWithLegacy<T>({
+      newValue: neu?.value as T | undefined,
+      newSet: isSet(neu),
+      legacyValue: legacy?.value as T | undefined,
+      legacySet: isSet(legacy),
+      defaultValue
+    });
   }
 
   protected async setWorkspacePreference(preferenceName: string, value: unknown): Promise<void> {
@@ -414,6 +440,6 @@ export class AiProfilePreferenceService {
   }
 
   protected getPreferenceText(preferenceName: string, resourceUri?: string): string {
-    return (this.preferenceService.get<string>(preferenceName, '', resourceUri) ?? '').trim();
+    return (this.readMigrated<string>(preferenceName, '', resourceUri) ?? '').trim();
   }
 }

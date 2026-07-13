@@ -3,8 +3,6 @@ import {
   CommandContribution,
   CommandRegistry,
   CommandService,
-  MenuContribution,
-  MenuModelRegistry,
   MessageService,
   QuickInputService,
   QuickPickItem
@@ -13,7 +11,6 @@ import { ModelConfigCommands } from './model-config-view-contribution';
 import { nls } from '@theia/core/lib/common/nls';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
-import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 
 export namespace AiRotationCommands {
   const CATEGORY_KEY = 'ai-focused-editor/ai-config/category';
@@ -58,10 +55,11 @@ interface EndpointPickItem extends QuickPickItem {
  *   - Switch AI Endpoint...  pins an endpoint to the front of the active chain.
  *
  * Kept in a standalone module (bound via its own theiaExtensions entry) so it
- * never touches the main manuscript-workspace frontend module.
+ * never touches the main frontend module. Menu placement is the host
+ * application's responsibility (see `AiConnectMenuContribution`).
  */
 @injectable()
-export class AiRotationContribution implements CommandContribution, MenuContribution {
+export class AiRotationContribution implements CommandContribution {
   @inject(AiProfilePreferenceService)
   protected readonly aiProfilePreferences!: AiProfilePreferenceService;
 
@@ -80,17 +78,6 @@ export class AiRotationContribution implements CommandContribution, MenuContribu
     });
     commands.registerCommand(AiRotationCommands.SWITCH_ENDPOINT, {
       execute: () => this.switchEndpoint()
-    });
-  }
-
-  registerMenus(menus: MenuModelRegistry): void {
-    menus.registerMenuAction(AiFocusedEditorMenus.MAIN, {
-      commandId: AiRotationCommands.SWITCH_ALIAS.id,
-      order: '1_rotation_a'
-    });
-    menus.registerMenuAction(AiFocusedEditorMenus.MAIN, {
-      commandId: AiRotationCommands.SWITCH_ENDPOINT.id,
-      order: '1_rotation_b'
     });
   }
 

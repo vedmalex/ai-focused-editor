@@ -1,9 +1,6 @@
-export * from './ai-alias-resolution';
-export * from './ai-connection-protocol';
-export * from './ai-connect-config';
-export * from './ai-failover';
-export * from './ai-time-windows';
-export * from './ai-verification';
+// Connection/alias module extracted into the reusable ai-connect Theia
+// extension; re-exported here so existing `../common` imports keep resolving.
+export * from '@ai-focused-editor/ai-connect-theia/lib/common';
 export * from './ai-mode-protocol';
 export * from './ai-mode-layering';
 export * from './book-build-protocol';
@@ -20,7 +17,6 @@ export * from './git-status-protocol';
 export * from './knowledge-templates';
 export * from './book-build-task-protocol';
 export * from './manuscript-workspace-protocol';
-export * from './model-provider-protocol';
 export * from './narrative-entity-protocol';
 export * from './narrative-graph-protocol';
 export * from './obsidian-plugin-protocol';

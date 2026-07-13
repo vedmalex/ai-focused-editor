@@ -9,7 +9,6 @@ import {
   MenuContribution,
   PreferenceContribution
 } from '@theia/core/lib/common';
-import { ResourceResolver } from '@theia/core/lib/common/resource';
 import {
   KeybindingContribution,
   LabelProviderContribution,
@@ -20,18 +19,12 @@ import { ServiceConnectionProvider } from '@theia/core/lib/browser/messaging/ser
 import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
 import { bindViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { createTreeContainer } from '@theia/core/lib/browser/tree';
-import {
-  AIVariableContribution,
-  LanguageModelProvider
-} from '@theia/ai-core';
+import { AIVariableContribution } from '@theia/ai-core';
 import { bindToolProvider } from '@theia/ai-core/lib/common/tool-invocation-registry';
 import { TaskContribution } from '@theia/task/lib/browser/task-contribution';
+import { AiDebugContextProvider } from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import { AiFocusedEditorPreferenceContribution } from './ai-focused-editor-preferences';
-import { AiConnectTheiaLanguageModel } from './ai-connect-theia-language-model';
-import { AiDebugViewContribution } from './ai-debug-view-contribution';
-import { AiDebugWidget } from './ai-debug-widget';
 import {
-  AiConnectionService,
   AiModeRegistry,
   AiModeRegistryBackendService,
   AiModeRegistryBackendServicePath,
@@ -39,8 +32,6 @@ import {
   BookBuildServicePath,
   GitStatusService,
   GitStatusServicePath,
-  LocalAiConnectionService,
-  LocalAiConnectionServicePath,
   ManuscriptWorkspaceBackendService,
   ManuscriptWorkspaceBackendServicePath,
   ManuscriptWorkspaceService,
@@ -51,8 +42,6 @@ import {
   SourceLibraryBackendServicePath,
   SourceLibraryService
 } from '../common';
-import { BrowserAiConnectionService } from './browser-ai-connection-service';
-import { LocalAiStreamClientImpl } from './local-ai-stream-client';
 import { BrowserAiModeRegistry } from './browser-ai-mode-registry';
 import { BrowserManuscriptWorkspaceService } from './browser-manuscript-workspace-service';
 import { BrowserNarrativeEntityService } from './browser-narrative-entity-service';
@@ -64,7 +53,6 @@ import { SemanticLinkContribution } from './semantic-link-contribution';
 import { SemanticEntityHoverContribution } from './semantic-entity-hover-contribution';
 import { EntityCardsViewContribution } from './entity-cards-view-contribution';
 import { EntityCardsWidget } from './entity-cards-widget';
-import { AiProfileStatusBarContribution } from './ai-profile-status-bar-contribution';
 import { GitActionsContribution } from './git-actions-contribution';
 import { ManuscriptAiContextAssembler } from './manuscript-ai-context-assembler';
 import { ManuscriptContextVariableContribution } from './manuscript-context-variable-contribution';
@@ -80,8 +68,6 @@ import {
   ManuscriptWriteNoteTool
 } from './manuscript-tools-contribution';
 import { DiagramAuthorPromptFragmentContribution } from './diagram-author-prompt-fragment-contribution';
-import { AiHistoryService } from './ai-history-service';
-import { AiRequestLogService } from './ai-request-log-service';
 import { MarkdownLanguageContribution } from './markdown-language-contribution';
 import { AiModePromptFragmentContribution } from './ai-mode-prompt-fragment-contribution';
 import { EntityTypeRegistryService } from './entity-type-registry-service';
@@ -90,10 +76,8 @@ import { ManuscriptTreeLabelProvider } from './manuscript-tree-label-provider';
 import { ManuscriptTreeModel } from './manuscript-tree-model';
 import { ManuscriptTreeViewContribution } from './manuscript-tree-view-contribution';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
-import { AiProfilePreferenceService } from './ai-profile-preference-service';
-import { AiVerificationService } from './ai-verification-service';
-import { ModelConfigViewContribution } from './model-config-view-contribution';
-import { ModelConfigWidget } from './model-config-widget';
+import { AiConnectMenuContribution } from './ai-connect-menu-contribution';
+import { ManuscriptAiDebugContextProvider } from './manuscript-ai-debug-context-provider';
 import { SemanticMarkdownActionsContribution } from './semantic-markdown-actions-contribution';
 import { SemanticMarkdownCompletionProvider } from './semantic-markdown-completion-provider';
 import { SemanticMarkdownDecorationService } from './semantic-markdown-decoration-service';
@@ -123,14 +107,6 @@ function createManuscriptTreeContainer(parent: interfaces.Container): Container 
 }
 
 export default new ContainerModule(bind => {
-  bind(LocalAiStreamClientImpl).toSelf().inSingletonScope();
-  bind(LocalAiConnectionService).toDynamicValue(ctx =>
-    ServiceConnectionProvider.createProxy(
-      ctx.container,
-      LocalAiConnectionServicePath,
-      ctx.container.get(LocalAiStreamClientImpl)
-    )
-  ).inSingletonScope();
   bind(BookBuildService).toDynamicValue(ctx =>
     ServiceConnectionProvider.createProxy(ctx.container, BookBuildServicePath)
   ).inSingletonScope();
@@ -149,12 +125,7 @@ export default new ContainerModule(bind => {
   bind(AiModeRegistryBackendService).toDynamicValue(ctx =>
     ServiceConnectionProvider.createProxy(ctx.container, AiModeRegistryBackendServicePath)
   ).inSingletonScope();
-  bind(AiConnectionService).to(BrowserAiConnectionService).inSingletonScope();
   bind(AiModeRegistry).to(BrowserAiModeRegistry).inSingletonScope();
-  bind(AiConnectTheiaLanguageModel).toSelf().inSingletonScope();
-  bind(LanguageModelProvider).toDynamicValue(ctx => async () => [
-    ctx.container.get(AiConnectTheiaLanguageModel)
-  ]).inSingletonScope();
   bind(ManuscriptWorkspaceService).to(BrowserManuscriptWorkspaceService).inSingletonScope();
   bind(NarrativeEntityService).to(BrowserNarrativeEntityService).inSingletonScope();
   bind(SourceLibraryService).to(BrowserSourceLibraryService).inSingletonScope();
@@ -162,6 +133,9 @@ export default new ContainerModule(bind => {
   bind(ManuscriptTreeItemFactory).toSelf().inSingletonScope();
   bind(ManuscriptTreeLabelProvider).toSelf().inSingletonScope();
   bind(ManuscriptAiContextAssembler).toSelf().inSingletonScope();
+  // Populate the ai-connect Debug view's manuscript context/modes section.
+  bind(ManuscriptAiDebugContextProvider).toSelf().inSingletonScope();
+  bind(AiDebugContextProvider).toService(ManuscriptAiDebugContextProvider);
   bind(ManuscriptContextVariableContribution).toSelf().inSingletonScope();
   bind(AIVariableContribution).toService(ManuscriptContextVariableContribution);
   bind(ChatContextActionsContribution).toSelf().inSingletonScope();
@@ -171,15 +145,13 @@ export default new ContainerModule(bind => {
   bind(AIVariableContribution).toService(ChatContextSetsContribution);
   bind(CommandContribution).toService(ChatContextSetsContribution);
   bind(MenuContribution).toService(ChatContextSetsContribution);
-  bind(AiProfilePreferenceService).toSelf().inSingletonScope();
-  bind(AiVerificationService).toSelf().inSingletonScope();
-  bind(AiProfileStatusBarContribution).toSelf().inSingletonScope();
-  bind(FrontendApplicationContribution).toService(AiProfileStatusBarContribution);
   bind(GitActionsContribution).toSelf().inSingletonScope();
   bind(CommandContribution).toService(GitActionsContribution);
   bind(MenuContribution).toService(GitActionsContribution);
-  bind(AiHistoryService).toSelf().inSingletonScope();
-  bind(AiRequestLogService).toSelf().inSingletonScope();
+  // Thin menu placement for the ai-connect package's commands (the package
+  // registers the commands + views; the Manuscript menu placement lives here).
+  bind(AiConnectMenuContribution).toSelf().inSingletonScope();
+  bind(MenuContribution).toService(AiConnectMenuContribution);
   bind(LabelProviderContribution).toService(ManuscriptTreeLabelProvider);
   bind(PreferenceContribution).toConstantValue(AiFocusedEditorPreferenceContribution);
   bindViewContribution(bind, ManuscriptTreeViewContribution);
@@ -189,8 +161,6 @@ export default new ContainerModule(bind => {
   bindViewContribution(bind, SourceLibraryViewContribution);
   bindViewContribution(bind, SemanticMarkdownPreviewContribution);
   bind(TabBarToolbarContribution).toService(SemanticMarkdownPreviewContribution);
-  bindViewContribution(bind, ModelConfigViewContribution);
-  bindViewContribution(bind, AiDebugViewContribution);
   bind(FrontendApplicationContribution).to(MarkdownLanguageContribution).inSingletonScope();
   bind(FrontendApplicationContribution).to(SemanticMarkdownDecorationService).inSingletonScope();
   bind(FrontendApplicationContribution).to(SemanticMarkdownDocumentSymbolProvider).inSingletonScope();
@@ -219,11 +189,6 @@ export default new ContainerModule(bind => {
     id: SemanticMarkdownPreviewWidget.ID,
     createWidget: () => ctx.container.get(SemanticMarkdownPreviewWidget)
   })).inSingletonScope();
-  bind(ModelConfigWidget).toSelf();
-  bind(WidgetFactory).toDynamicValue(ctx => ({
-    id: ModelConfigWidget.ID,
-    createWidget: () => ctx.container.get(ModelConfigWidget)
-  })).inSingletonScope();
   bind(EntityCardsWidget).toSelf();
   bind(WidgetFactory).toDynamicValue(ctx => ({
     id: EntityCardsWidget.ID,
@@ -233,11 +198,6 @@ export default new ContainerModule(bind => {
   bind(WidgetFactory).toDynamicValue(ctx => ({
     id: SourceLibraryWidget.ID,
     createWidget: () => ctx.container.get(SourceLibraryWidget)
-  })).inSingletonScope();
-  bind(AiDebugWidget).toSelf();
-  bind(WidgetFactory).toDynamicValue(ctx => ({
-    id: AiDebugWidget.ID,
-    createWidget: () => ctx.container.get(AiDebugWidget)
   })).inSingletonScope();
   bind(CommandContribution).to(ManuscriptWorkspaceCommandContribution).inSingletonScope();
   bind(MenuContribution).to(ManuscriptWorkspaceMenuContribution).inSingletonScope();

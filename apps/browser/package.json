@@ -3,6 +3,7 @@
   "name": "@ai-focused-editor/browser",
   "version": "0.1.0",
   "dependencies": {
+    "@ai-focused-editor/ai-connect-theia": "workspace:*",
     "@ai-focused-editor/git": "0.1.0",
     "@ai-focused-editor/manuscript-workspace": "workspace:*",
     "@parcel/watcher-darwin-arm64": "2.5.6",

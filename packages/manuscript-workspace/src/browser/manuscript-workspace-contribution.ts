@@ -40,13 +40,13 @@ import {
   WorkspaceDiagnostic
 } from '../common';
 import type { AliasCheckVerdict, AliasLegVerdict, NarrativeEntityService as NarrativeEntityServiceType } from '../common';
-import { AiProfilePreferenceService } from './ai-profile-preference-service';
-import { AiRequestLogService } from './ai-request-log-service';
-import { AiVerificationService } from './ai-verification-service';
+import { AiProfilePreferenceService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
+import { AiRequestLogService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
+import { AiVerificationService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import {
   AiHistoryRecord,
   AiHistoryService
-} from './ai-history-service';
+} from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import { ManuscriptAiContextAssembler } from './manuscript-ai-context-assembler';
 import {
   AI_FOCUSED_EDITOR_MENU_LABEL,

@@ -7,25 +7,13 @@ import { PreferenceService } from '@theia/core/lib/common/preferences';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
 import { nls } from '@theia/core/lib/common/nls';
 import { inject, injectable } from '@theia/core/shared/inversify';
-import {
-  AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS,
-  AI_FOCUSED_EDITOR_AI_ALIASES,
-  AI_FOCUSED_EDITOR_AI_API_KEYS,
-  AI_FOCUSED_EDITOR_AI_ENDPOINTS,
-  AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT
-} from './ai-focused-editor-preferences';
+import { AI_CONNECT_WATCHED_PREFERENCES } from './ai-connect-preferences';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
 import { ModelConfigCommands } from './model-config-view-contribution';
 import { AiRotationCommands } from './ai-rotation-contribution';
 
 const STATUS_BAR_ID = 'ai-focused-editor.ai-profile-status';
-const AI_PROFILE_PREFERENCES = new Set([
-  AI_FOCUSED_EDITOR_AI_API_KEYS,
-  AI_FOCUSED_EDITOR_AI_ENDPOINTS,
-  AI_FOCUSED_EDITOR_AI_ALIASES,
-  AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS,
-  AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT
-]);
+const AI_PROFILE_PREFERENCES = AI_CONNECT_WATCHED_PREFERENCES;
 
 @injectable()
 export class AiProfileStatusBarContribution implements FrontendApplicationContribution {

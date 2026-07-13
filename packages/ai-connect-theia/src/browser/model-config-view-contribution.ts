@@ -1,16 +1,10 @@
 import {
   Command,
-  CommandRegistry,
-  MenuModelRegistry
+  CommandRegistry
 } from '@theia/core/lib/common';
-import { nls } from '@theia/core/lib/common/nls';
 import { injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { ModelConfigWidget } from './model-config-widget';
-import {
-  AI_FOCUSED_EDITOR_MENU_LABEL,
-  AiFocusedEditorMenus
-} from './ai-focused-editor-menu';
 
 export namespace ModelConfigCommands {
   export const OPEN: Command = Command.toLocalizedCommand(
@@ -30,6 +24,12 @@ export namespace ModelConfigCommands {
   );
 }
 
+/**
+ * View + command registration for the AI Model Config view. This package owns
+ * the commands and the widget; the host application places the commands into
+ * its own menu (see the manuscript-workspace `AiConnectMenuContribution`). The
+ * standard Theia "View" toggle registration is kept via `super`.
+ */
 @injectable()
 export class ModelConfigViewContribution extends AbstractViewContribution<ModelConfigWidget> {
   constructor() {
@@ -51,17 +51,6 @@ export class ModelConfigViewContribution extends AbstractViewContribution<ModelC
         const widget = await this.openView({ activate: false, reveal: true });
         await widget.refresh();
       }
-    });
-  }
-
-  override registerMenus(menus: MenuModelRegistry): void {
-    super.registerMenus(menus);
-    const menuPath = AiFocusedEditorMenus.MAIN;
-    menus.registerMenuAction(menuPath, {
-      commandId: ModelConfigCommands.OPEN.id
-    });
-    menus.registerMenuAction(menuPath, {
-      commandId: ModelConfigCommands.REFRESH.id
     });
   }
 }

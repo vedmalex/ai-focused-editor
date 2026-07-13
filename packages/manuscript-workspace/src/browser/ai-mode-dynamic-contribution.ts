@@ -34,10 +34,10 @@ import {
   resolveAiModeApply,
   wordAtOffset
 } from '../common';
-import { AiProfilePreferenceService } from './ai-profile-preference-service';
-import { AiRequestLogService } from './ai-request-log-service';
-import { AiHistoryService } from './ai-history-service';
-import { AiConnectTheiaLanguageModel } from './ai-connect-theia-language-model';
+import { AiProfilePreferenceService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
+import { AiRequestLogService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
+import { AiHistoryService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
+import { AiConnectTheiaLanguageModel } from '@ai-focused-editor/ai-connect-theia/lib/browser';
 
 const AI_MODES_CATEGORY = nls.localize('ai-focused-editor/ai-modes/modes-category', 'AI Modes');
 const MODE_RUN_COMMAND_PREFIX = 'ai-focused-editor.mode.run.';

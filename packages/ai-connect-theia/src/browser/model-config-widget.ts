@@ -36,20 +36,10 @@ import {
   AiProfilePreferenceService,
   AiProfileStatus
 } from './ai-profile-preference-service';
-import {
-  AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS,
-  AI_FOCUSED_EDITOR_AI_ALIASES,
-  AI_FOCUSED_EDITOR_AI_API_KEYS,
-  AI_FOCUSED_EDITOR_AI_ENDPOINTS,
-  AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT
-} from './ai-focused-editor-preferences';
-const AI_PROFILE_PREFERENCE_KEYS = [
-  AI_FOCUSED_EDITOR_AI_API_KEYS,
-  AI_FOCUSED_EDITOR_AI_ENDPOINTS,
-  AI_FOCUSED_EDITOR_AI_ALIASES,
-  AI_FOCUSED_EDITOR_AI_ACTIVE_ALIAS,
-  AI_FOCUSED_EDITOR_AI_PINNED_ENDPOINT
-];
+import { AI_CONNECT_WATCHED_PREFERENCES } from './ai-connect-preferences';
+// Watch both the new aiConnect.* keys and their legacy equivalents so an
+// external edit of either refreshes the view.
+const AI_PROFILE_PREFERENCE_KEYS = [...AI_CONNECT_WATCHED_PREFERENCES];
 
 const CUSTOM_PROVIDER_OPTION = '__custom__';
 const GENERIC_TRANSPORT_KINDS = ['api', 'proxy', 'acp', 'cli', 'server'];
