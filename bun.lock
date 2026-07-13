@@ -121,11 +121,11 @@
       "name": "@ai-focused-editor/ai-connect-theia",
       "version": "0.1.0",
       "dependencies": {
-        "@theia/ai-core": "1.73.1",
-        "@theia/core": "1.73.1",
-        "@theia/editor": "1.73.1",
-        "@theia/filesystem": "1.73.1",
-        "@theia/workspace": "1.73.1",
+        "@theia/ai-core": "^1.73.0",
+        "@theia/core": "^1.73.0",
+        "@theia/editor": "^1.73.0",
+        "@theia/filesystem": "^1.73.0",
+        "@theia/workspace": "^1.73.0",
         "@vedmalex/ai-connect": "0.9.0",
       },
       "devDependencies": {
