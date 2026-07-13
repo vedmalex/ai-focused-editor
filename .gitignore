@@ -15,3 +15,6 @@ output/
 
 # runtime chat logs written by smoke/flow runs against the sample book
 examples/sample-book/ai/chat/
+
+# Obsidian vault state (the doctor installs the companion plugin on demand)
+.obsidian/
