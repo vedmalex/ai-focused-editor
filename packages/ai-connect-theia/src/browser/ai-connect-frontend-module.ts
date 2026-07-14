@@ -25,6 +25,7 @@ import { BrowserAiConnectionService } from './browser-ai-connection-service';
 import { LocalAiStreamClientImpl } from './local-ai-stream-client';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
 import { AiVerificationService } from './ai-verification-service';
+import { AiCapabilityService } from './ai-capability-service';
 import { AiProfileStatusBarContribution } from './ai-profile-status-bar-contribution';
 import { AiHistoryService } from './ai-history-service';
 import { AiRequestLogService } from './ai-request-log-service';
@@ -63,6 +64,7 @@ export default new ContainerModule(bind => {
   bind(FrontendApplicationContribution).toService(AiConnectDefaultModelsContribution);
   bind(AiProfilePreferenceService).toSelf().inSingletonScope();
   bind(AiVerificationService).toSelf().inSingletonScope();
+  bind(AiCapabilityService).toSelf().inSingletonScope();
   bind(AiHistoryService).toSelf().inSingletonScope();
   bind(AiRequestLogService).toSelf().inSingletonScope();
   bind(AiProfileStatusBarContribution).toSelf().inSingletonScope();

@@ -9,13 +9,18 @@ import type {
   AiGenerateRequest,
   AiGenerateResult,
   AiModelDiscoveryResult,
+  AiRouteCapabilities,
   AiStreamEvent,
   AiStreamOptions,
   AiTransportKind,
   LocalAiConnectionService,
   LocalAiStreamWireEvent
 } from '../common';
-import { LocalAiConnectionService as LocalAiConnectionServiceSymbol, toPortableFileInputs } from '../common';
+import {
+  LocalAiConnectionService as LocalAiConnectionServiceSymbol,
+  resolveCandidateCapabilities,
+  toPortableFileInputs
+} from '../common';
 import { LocalAiStreamClientImpl } from './local-ai-stream-client';
 import {
   buildAiConnectConfigInput,
@@ -219,5 +224,30 @@ export class BrowserAiConnectionService implements AiConnectionService {
         ? failedRoutes.map(route => `${route.routeId}: ${route.error?.message ?? 'model discovery failed'}`).join('; ')
         : undefined
     };
+  }
+
+  /**
+   * Read the route capabilities for a profile without sending a request. On the
+   * api path we build the browser client and use its SYNCHRONOUS, no-I/O
+   * `listCandidateModels` projector, then pick the candidate matching the
+   * profile's model (falling back to the OR-merge of every candidate's caps).
+   * Local transports (acp/cli/server) are answered by the backend, which reads
+   * the local route's capabilities over the JSON-RPC boundary.
+   */
+  async getCapabilities(profile: AiConnectionProfile): Promise<AiRouteCapabilities | undefined> {
+    const transportKind = this.getTransportKind(profile);
+    if (transportKind !== 'api') {
+      return this.localAiConnection.getCapabilities(profile);
+    }
+
+    const client = createBrowserClient(defineConfig(buildAiConnectConfigInput(profile)));
+    try {
+      const candidates = client.listCandidateModels({ operation: 'text' });
+      return resolveCandidateCapabilities(candidates, profile.model);
+    } catch {
+      return undefined;
+    } finally {
+      await client.dispose();
+    }
   }
 }

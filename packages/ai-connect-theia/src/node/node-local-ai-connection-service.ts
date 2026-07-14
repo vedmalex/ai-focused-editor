@@ -6,9 +6,12 @@ import {
   AiGenerateRequest,
   AiGenerateResult,
   AiModelDiscoveryResult,
+  AiRouteCapabilities,
+  CONSERVATIVE_LOCAL_CAPABILITIES,
   LocalAiConnectionService,
   LocalAiStreamClient,
   LocalAiStreamWireEvent,
+  resolveCandidateCapabilities,
   toPortableFileInputs
 } from '../common';
 import {
@@ -151,6 +154,27 @@ export class NodeLocalAiConnectionService implements LocalAiConnectionService {
           ? failedRoutes.map(route => `${route.routeId}: ${route.error?.message ?? 'model discovery failed'}`).join('; ')
           : undefined
       };
+    } finally {
+      await client.dispose();
+    }
+  }
+
+  /**
+   * Read the local route's capabilities via the local client's synchronous,
+   * no-I/O `listCandidateModels` projector — no process is spawned. Falls back
+   * to the conservative local default (streaming only) when the route reports no
+   * candidates or the projection throws, so callers always get an honest answer.
+   */
+  async getCapabilities(profile: AiConnectionProfile): Promise<AiRouteCapabilities | undefined> {
+    const client = createLocalClient(
+      defineConfig(buildAiConnectConfigInput(profile)),
+      this.buildLocalClientOptions(profile)
+    );
+    try {
+      const candidates = client.listCandidateModels({ operation: 'text' });
+      return resolveCandidateCapabilities(candidates, profile.model) ?? CONSERVATIVE_LOCAL_CAPABILITIES;
+    } catch {
+      return CONSERVATIVE_LOCAL_CAPABILITIES;
     } finally {
       await client.dispose();
     }

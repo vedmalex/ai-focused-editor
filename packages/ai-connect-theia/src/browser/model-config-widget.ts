@@ -18,6 +18,7 @@ import React from '@theia/core/shared/react';
 import type {
   AiAliasDescriptor,
   AiEndpointDescriptor,
+  AiRouteCapabilities,
   AliasCheckVerdict,
   AliasLegVerdict,
   EndpointCheckVerdict,
@@ -27,6 +28,7 @@ import type {
 } from '../common';
 import { AiConnectionService, parseV1Import } from '../common';
 import { AiVerificationService } from './ai-verification-service';
+import { AiCapabilityService } from './ai-capability-service';
 import {
   AiProviderCatalogEntry,
   getAiProviderCatalog,
@@ -80,6 +82,9 @@ export class ModelConfigWidget extends ReactWidget {
   @inject(AiVerificationService)
   protected readonly verification!: AiVerificationService;
 
+  @inject(AiCapabilityService)
+  protected readonly capabilities!: AiCapabilityService;
+
   @inject(PreferenceService)
   protected readonly preferenceService!: PreferenceService;
 
@@ -94,6 +99,10 @@ export class ModelConfigWidget extends ReactWidget {
 
   protected readonly providerCatalog: AiProviderCatalogEntry[] = getAiProviderCatalog();
   protected status: AiProfileStatus | undefined;
+  // Read-only capabilities of the active alias's resolved route (undefined =
+  // unknown; `capabilitiesResolved` distinguishes "not yet loaded" from "unknown").
+  protected activeCapabilities: AiRouteCapabilities | undefined;
+  protected capabilitiesResolved = false;
   // Endpoints + aliases (two-level connection model).
   protected endpoints: AiEndpointDescriptor[] = [];
   protected aliases: AiAliasDescriptor[] = [];
@@ -133,6 +142,10 @@ export class ModelConfigWidget extends ReactWidget {
     this.status = await this.aiProfilePreferences.getStatus();
     this.endpoints = await this.aiProfilePreferences.listEndpoints();
     this.aliases = await this.aiProfilePreferences.listAliases();
+    // Resolve the active alias's route capabilities for the read-only badges;
+    // the service never throws, returning undefined when unknown.
+    this.activeCapabilities = await this.capabilities.getActiveAliasCapabilities();
+    this.capabilitiesResolved = true;
 
     // Keep an in-progress "new endpoint" draft; only rebuild when a selected
     // endpoint still exists (or vanished from under us).
@@ -159,6 +172,7 @@ export class ModelConfigWidget extends ReactWidget {
       { className: 'afe-model-config' },
       React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-config/connections-heading', 'AI Connections')),
       this.renderTopStatus(status),
+      this.renderCapabilities(),
       this.renderEndpointsSection(),
       this.renderAliasesSection(),
       this.renderImportSection()
@@ -183,6 +197,44 @@ export class ModelConfigWidget extends ReactWidget {
       'div',
       { className: status.configured ? 'afe-model-config-status ok' : 'afe-model-config-status missing' },
       message
+    );
+  }
+
+  /**
+   * Compact read-only capability badges for the active alias's resolved route
+   * (Vision · Tools · Streaming · File upload). Robust: while loading it shows
+   * nothing; when capabilities cannot be resolved it says so rather than throw.
+   */
+  protected renderCapabilities(): React.ReactNode {
+    if (!this.capabilitiesResolved) {
+      return undefined;
+    }
+    const label = nls.localize('ai-focused-editor/ai-config/capabilities-label', 'Capabilities:');
+    const caps = this.activeCapabilities;
+    if (!caps) {
+      return React.createElement(
+        'div',
+        { className: 'afe-model-config-capabilities unknown' },
+        React.createElement('span', { className: 'afe-capabilities-label' }, label),
+        React.createElement('span', { className: 'afe-capabilities-unknown' },
+          nls.localize('ai-focused-editor/ai-config/capabilities-unknown', 'capabilities unknown'))
+      );
+    }
+    const badges: [string, boolean][] = [
+      [nls.localize('ai-focused-editor/ai-config/capability-vision', 'Vision'), caps.supportsImageInput],
+      [nls.localize('ai-focused-editor/ai-config/capability-tools', 'Tools'), caps.supportsToolSchema || caps.supportsClientToolExecution],
+      [nls.localize('ai-focused-editor/ai-config/capability-streaming', 'Streaming'), caps.supportsStreaming],
+      [nls.localize('ai-focused-editor/ai-config/capability-file-upload', 'File upload'), caps.supportsFileUpload]
+    ];
+    return React.createElement(
+      'div',
+      { className: 'afe-model-config-capabilities' },
+      React.createElement('span', { className: 'afe-capabilities-label' }, label),
+      ...badges.map(([name, on]) => React.createElement(
+        'span',
+        { key: name, className: `afe-capability-badge ${on ? 'on' : 'off'}` },
+        `${name} ${on ? '✓' : '✗'}`
+      ))
     );
   }
 

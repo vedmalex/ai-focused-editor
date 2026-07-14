@@ -5,6 +5,7 @@ import type {
   TransportKind,
   UsageInfo
 } from '@vedmalex/ai-connect';
+import type { AiRouteCapabilities } from './route-capabilities';
 
 export const AiConnectionService = Symbol('AiConnectionService');
 export const LocalAiConnectionService = Symbol('LocalAiConnectionService');
@@ -127,6 +128,15 @@ export interface AiConnectionService {
    * stream (acp/cli/server over JSON-RPC) degrade to a single delta+result.
    */
   streamText(profile: AiConnectionProfile, request: AiGenerateRequest, options?: AiStreamOptions): AsyncIterable<AiStreamEvent>;
+  /**
+   * Read the {@link AiRouteCapabilities} of the route the profile resolves to,
+   * WITHOUT sending a generation request (synchronous, no-I/O projection on the
+   * api path; a conservative default on local transports). Foundation for
+   * proactive UI gating — the caller learns whether the model supports vision,
+   * client tools, streaming, or file upload before it builds a request. Resolves
+   * to undefined when unknown (no route resolved / transport cannot report).
+   */
+  getCapabilities(profile: AiConnectionProfile): Promise<AiRouteCapabilities | undefined>;
 }
 
 /** Wire events pushed from the backend to the frontend during a local-transport stream. */
@@ -150,4 +160,6 @@ export interface LocalAiConnectionService {
    */
   startStream(streamId: string, profile: AiConnectionProfile, request: AiGenerateRequest): Promise<void>;
   cancelStream(streamId: string): Promise<void>;
+  /** Backend mirror of {@link AiConnectionService.getCapabilities} for local (acp/cli/server) transports. */
+  getCapabilities(profile: AiConnectionProfile): Promise<AiRouteCapabilities | undefined>;
 }

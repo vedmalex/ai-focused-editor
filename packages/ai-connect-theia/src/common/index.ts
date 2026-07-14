@@ -1,4 +1,5 @@
 export * from './ai-connection-protocol';
+export * from './route-capabilities';
 export * from './attachment-input';
 export * from './ai-connect-config';
 export * from './alias-model-id';

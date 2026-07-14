@@ -32,6 +32,41 @@
   background: var(--theia-inputValidation-warningBackground, rgba(255, 165, 0, 0.15));
 }
 
+.afe-model-config-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-capabilities-label {
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-capabilities-unknown {
+  color: var(--theia-descriptionForeground);
+  font-style: italic;
+}
+
+.afe-capability-badge {
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--theia-input-border, transparent);
+  white-space: nowrap;
+}
+
+.afe-capability-badge.on {
+  background: var(--theia-successBackground, rgba(0, 128, 0, 0.15));
+  color: var(--theia-successForeground, inherit);
+}
+
+.afe-capability-badge.off {
+  background: var(--theia-editorWidget-background, rgba(128, 128, 128, 0.12));
+  color: var(--theia-descriptionForeground);
+}
+
 .afe-model-config-form {
   display: flex;
   flex-direction: column;

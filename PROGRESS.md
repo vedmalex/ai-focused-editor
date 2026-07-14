@@ -282,6 +282,12 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 53 — Флаги возможностей модели (foundation, shipped)
+
+- **Слой возможностей в ai-connect-theia**: `AiCapabilityService.getActiveAliasCapabilities()` читает `client.listCandidateModels()` (синхронно, без I/O) и отдаёт `AiRouteCapabilities` — 9 булевых флагов (supportsImageInput/ClientToolExecution/Streaming/FileUpload/ImageOutput/…). TTL-кэш по профилю, инвалидация на изменение `aiConnect.*`. Node-транспорт — консервативный дефолт. Чистый маппинг `route-capabilities.ts` с тестами.
+- **Model Config** показывает строку возможностей активного алиаса (Vision/Tools/Streaming/File upload). Экспорт сервиса для потребителей (гейтинг «Приложить изображение», авто text-vs-vision — следующие волны).
+- Фундамент под проактивный гейтинг: раньше `unsupported_capability` ловился в середине запроса, теперь возможности известны ДО отправки. Live-проба: gpt-4o → vision ✓, client-tools ✓, streaming ✓, image-output ✗. 1093 теста / 61 файл; 10/10 flows.
+
 ## Wave 52 — Приложить источник (изображение/PDF) в контекст чата (shipped)
 
 - **Книжная половина мультимодального входа**: категория пикера «Приложить как изображение…» для бинарных источников из `sources/` (png/jpg/webp/gif/bmp/svg/pdf) + маршрут «Отправить в AI-чат» из дерева. Переиспользована штатная `ImageContextVariable` Theia (`createArgString`): изображения — path-based (Theia грузит байты при отправке, сессия не пухнет), PDF — inline с явным `application/pdf` (в mime-таблице Theia нет `.pdf`). Чистый `common/attachable-source.ts` (mime-карта + предикат, 11 тестов). Расширяет правило адресуемости артефактов на бинарные источники (реальные байты для vision в дополнение к текстовому `#source`).
