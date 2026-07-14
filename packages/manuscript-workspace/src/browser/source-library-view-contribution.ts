@@ -29,7 +29,8 @@ import {
   SourceLibraryBackendService,
   SourceLibraryService,
   SourceLibrarySnapshot,
-  SourceTextExtraction
+  SourceTextExtraction,
+  normalizeRange
 } from '../common';
 import { slugifyChapter } from '../common/knowledge-generation';
 import {
@@ -545,7 +546,7 @@ export class SourceLibraryViewContribution extends AbstractViewContribution<Sour
       return;
     }
 
-    const selection = editor.selection;
+    const selection = normalizeRange(editor.selection);
     const selectedText = editor.document.getText(selection);
     if (!selectedText.trim()) {
       this.messageService.warn(nls.localize(

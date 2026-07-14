@@ -282,6 +282,12 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 49 — Перевёрнутое выделение: нормализация диапазонов (shipped)
+
+- **Полевой отчёт владельца** («не заменил, просто дописал» + скриншот диффа с дублированной секцией) вскрыл класс багов: Theia кладёт в `selection.start` ЯКОРЬ, а в `end` — курсор (`asSelection` в monaco-to-protocol-converter), так что выделение **снизу вверх** приходит с `start` ПОСЛЕ `end` (`direction: 'rtl'`), и Theia его не нормализует. Наша офсетная склейка `slice(0,start)+improved+slice(end)` при start>end **дублировала выделенный кусок** и вставляла улучшение между копиями; а `getText` на таком диапазоне даёт пусто — это же объясняет и предыдущий отчёт «Select text…» при живом выделении.
+- **Фикс системный**: чистый `common/text-range.ts` (`normalizeRange`, тесты) применён во ВСЕХ потребителях `editor.selection` — улучшить выделенное, кореференции, AI-режимы, создание сущности из выделения, выдержки библиотеки источников. Плюс подсказка «выделение в предпросмотре» для промаха выделения не в редакторе.
+- Live-проба: детерминированное rtl-выделение (monaco ISelection, якорь ниже курсора) → improve → Apply → маркер один, дублей нет, direction подтверждён. 1058 тестов / 57 файлов.
+
 ## Wave 48 — Показ AI-результата: честный diff + «Применить» (shipped)
 
 - **Полевой отчёт владельца** («применил улучшить выделенное, но не понял где посмотреть результат») вскрыл настоящий баг: в `@theia/ai-chat` 1.73 change set сессии — это **агрегат по change set'ам реальных запросов** (`computeChangeSetElements` ходит только по `requests[]`), поэтому наши элементы с фиктивным `requestId` добавлялись «в никуда» (spy-проба: `addElements` вызван, `afterAddCount: 0`), а diff открывался fire-and-forget и молча не открывался. Вся связка improve/coref/режимов с чатом была мёртвым кодом.

@@ -31,6 +31,7 @@ import {
   AiModeContext,
   AiModeRegistry,
   generateWithFailover,
+  normalizeRange,
   resolveAiModeApply,
   wordAtOffset
 } from '../common';
@@ -604,10 +605,9 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
   }
 
   protected copyRange(range: Range): Range {
-    return {
-      start: { line: range.start.line, character: range.start.character },
-      end: { line: range.end.line, character: range.end.character }
-    };
+    // Normalizes too: an upward (rtl) selection arrives with start AFTER end
+    // (Theia maps start=anchor, end=cursor) — splicing it raw duplicates text.
+    return normalizeRange(range) as Range;
   }
 
   protected async revealChatView(): Promise<void> {

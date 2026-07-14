@@ -30,6 +30,7 @@ import { inject, injectable } from '@theia/core/shared/inversify';
 import {
   AiConnectionService,
   AiModeRegistry,
+  normalizeRange,
   generateWithFailover,
   ManuscriptNode,
   ManuscriptWorkspaceService,
@@ -653,16 +654,9 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
   }
 
   protected copyRange(range: Range): Range {
-    return {
-      start: {
-        line: range.start.line,
-        character: range.start.character
-      },
-      end: {
-        line: range.end.line,
-        character: range.end.character
-      }
-    };
+    // Normalizes too: an upward (rtl) selection arrives with start AFTER end
+    // (Theia maps start=anchor, end=cursor) — splicing it raw duplicates text.
+    return normalizeRange(range) as Range;
   }
 
   protected async copyManuscriptContext(): Promise<void> {

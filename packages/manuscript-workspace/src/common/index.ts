@@ -11,6 +11,7 @@ export * from './diagram-spec';
 export * from './entity-hover';
 export * from './entity-mentions';
 export * from './entity-type-registry';
+export * from './text-range';
 export * from './entity-type-forms';
 export * from './excalidraw-canvas-ops';
 export * from './git-status-protocol';
