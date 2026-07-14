@@ -282,6 +282,13 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 50 — Агенты Theia AI работают с ai-connect из коробки (shipped)
+
+- **Полевой отчёт владельца** (@Code Reviewer в форке: «Couldn't find a ready language model») вскрыл устройство дефолтов Theia AI: агенты резолвят модели через модельные алиасы `default/*` (`LanguageModelAliasRegistry`), которые захардкожены на официальные id (`anthropic/claude-opus-4-8`, `openai/gpt-5.5`, `google/gemini-3.1-pro-preview`) — без их ключей ни один агент не находит ready-модель.
+- **Пакет теперь встаёт в дефолты сам**: `AiConnectDefaultModelsContribution` ставит always-ready модель «активный алиас» первой в каждом `default/*` (чистый `planDefaultAliasUpdates`, 5 тестов: идемпотентность, move-to-front, очистка при выключении, `selectedModelId` не трогается — явный выбор пользователя в AI Configuration всегда приоритетнее). Преференс `aiConnect.provideDefaultModels` (default on).
+- Попутно: **пакет возит свой CSS** (75 правил Model Config/AI Debug переехали из стилей редактора — в чужом приложении виджет рендерился голым HTML; урок: Theia-расширение должно нести стили с собой).
+- Live-доказательства в форке: Model Config отрисован как у нас; `default/universal`/`default/code` → наша модель; чат `@Universal ping` через mock вернул маркер (isError false). 1063 теста / 58 файлов.
+
 ## Wave 49 — Перевёрнутое выделение: нормализация диапазонов (shipped)
 
 - **Полевой отчёт владельца** («не заменил, просто дописал» + скриншот диффа с дублированной секцией) вскрыл класс багов: Theia кладёт в `selection.start` ЯКОРЬ, а в `end` — курсор (`asSelection` в monaco-to-protocol-converter), так что выделение **снизу вверх** приходит с `start` ПОСЛЕ `end` (`direction: 'rtl'`), и Theia его не нормализует. Наша офсетная склейка `slice(0,start)+improved+slice(end)` при start>end **дублировала выделенный кусок** и вставляла улучшение между копиями; а `getText` на таком диапазоне даёт пусто — это же объясняет и предыдущий отчёт «Select text…» при живом выделении.
