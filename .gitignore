@@ -22,3 +22,6 @@ examples/sample-book/ai/context-snapshots/
 
 # runtime chat logs when the repo root itself is opened as a workspace
 /ai/
+
+# local edit backups from a hook
+.claude/.edit-baks/

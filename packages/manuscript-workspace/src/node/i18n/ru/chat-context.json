@@ -16,6 +16,8 @@
       "pick-diagram": "Выберите диаграмму",
       "category-chapters": "Главы",
       "category-sources": "Источники",
+      "category-images": "Приложить как изображение…",
+      "image-attach-failed": "Не удалось приложить «{0}» как изображение.",
       "category-entities": "Сущности",
       "category-notes": "Заметки",
       "category-citations": "Цитаты",

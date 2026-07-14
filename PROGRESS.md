@@ -282,6 +282,12 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 52 — Приложить источник (изображение/PDF) в контекст чата (shipped)
+
+- **Книжная половина мультимодального входа**: категория пикера «Приложить как изображение…» для бинарных источников из `sources/` (png/jpg/webp/gif/bmp/svg/pdf) + маршрут «Отправить в AI-чат» из дерева. Переиспользована штатная `ImageContextVariable` Theia (`createArgString`): изображения — path-based (Theia грузит байты при отправке, сессия не пухнет), PDF — inline с явным `application/pdf` (в mime-таблице Theia нет `.pdf`). Чистый `common/attachable-source.ts` (mime-карта + предикат, 11 тестов). Расширяет правило адресуемости артефактов на бинарные источники (реальные байты для vision в дополнение к текстовому `#source`).
+- **Находка ai-connect и фикс генерика**: 0.10.1 не разрешает `clientTools` вместе с `attachments` («supported only for text requests without attachments») — агент рукописи всегда несёт инструменты, и запрос с картинкой падал. Базовая модель пакета теперь при наличии вложения снимает инструменты (пользователь приложил картинку — важнее её увидеть). Заведена **FT-002** в ai-connect (разрешить tools+attachments там, где провайдер умеет). Обход снимется после реализации.
+- Live-проба насквозь: приложил PNG-источник → `imageContext` в контексте → агент рукописи извлёк в `ImageMessage` → attachment → модель увидела (SAW-IMAGE), без ошибок. 1083 теста / 60 файлов; 10/10 flows.
+
 ## Wave 51 — ai-connect 0.10.1: стриминг tool-loop + мультимодальный вход + пауза (shipped)
 
 - **Обновление до ai-connect 0.10.1** (в нём реализована наша FT-001): `stream({clientTools})` гоняет полный потоковый tool-loop с событиями `tool-call`/`tool-result`. Обход через `generate()` удалён — агенты снова стримятся. Live-проба насквозь: текст раунда 1 → tool-call → инструмент реально исполнился in-process → tool-result → текст раунда 2 → usage; два стриминг-раунда, второй с результатом инструмента.

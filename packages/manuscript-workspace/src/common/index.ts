@@ -3,6 +3,7 @@
 export * from '@ai-focused-editor/ai-connect-theia/lib/common';
 export * from './ai-mode-protocol';
 export * from './ai-mode-layering';
+export * from './attachable-source';
 export * from './book-build-protocol';
 export * from './browser-auth-protocol';
 export * from './chapter-bundle';

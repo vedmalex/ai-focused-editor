@@ -17,10 +17,18 @@ import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { ChatService } from '@theia/ai-chat/lib/common';
+import {
+  IMAGE_CONTEXT_VARIABLE,
+  ImageContextVariable
+} from '@theia/ai-chat/lib/common/image-context-variable';
+import { ILogger } from '@theia/core/lib/common/logger';
 import type { AIVariable } from '@theia/ai-core';
 import { FILE_VARIABLE } from '@theia/ai-core/lib/browser/file-variable-contribution';
 import {
+  attachableSourceKind,
+  attachableSourceMimeType,
   buildChapterBundle,
+  isAttachableSource,
   SourceLibraryService,
   type ChapterBundleItem,
   type ChapterBundleVariable,
@@ -84,7 +92,7 @@ interface ContextTarget {
 }
 
 interface CategoryPick extends QuickPickItem {
-  category: 'chapters' | 'sources' | 'entities' | 'notes' | 'citations' | 'excerpts' | 'diagrams' | 'book';
+  category: 'chapters' | 'sources' | 'images' | 'entities' | 'notes' | 'citations' | 'excerpts' | 'diagrams' | 'book';
 }
 
 interface ArtifactPick extends QuickPickItem {
@@ -148,6 +156,9 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
   @inject(EditorManager)
   protected readonly editorManager!: EditorManager;
 
+  @inject(ILogger)
+  protected readonly logger!: ILogger;
+
   registerCommands(commands: CommandRegistry): void {
     commands.registerCommand(ChatContextCommands.ADD_CONTEXT, {
       execute: () => this.addContextInteractively()
@@ -198,6 +209,8 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
       this.variables.collectBookFiles()
     ]);
 
+    const images = sources.filter(source => isAttachableSource(source.path));
+
     const categories: CategoryPick[] = [
       {
         category: 'chapters',
@@ -208,6 +221,11 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
         category: 'sources',
         label: nls.localize('ai-focused-editor/chat-context/category-sources', 'Sources'),
         description: String(sources.length)
+      },
+      {
+        category: 'images',
+        label: nls.localize('ai-focused-editor/chat-context/category-images', 'Attach as Image...'),
+        description: String(images.length)
       },
       {
         category: 'entities',
@@ -250,7 +268,7 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
     }
 
     const artifacts = this.artifactPicksFor(pickedCategory.category, {
-      chapters, sources, entities, notes, citations, excerpts, diagrams, book
+      chapters, sources, images, entities, notes, citations, excerpts, diagrams, book
     });
     if (artifacts.length === 0) {
       this.messages.info(nls.localize(
@@ -276,6 +294,7 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
     data: {
       chapters: { path: string; title: string }[];
       sources: { path: string; label: string }[];
+      images: { path: string; label: string }[];
       entities: { id: string; label: string }[];
       notes: { path: string; label: string }[];
       citations: { id: string; label: string }[];
@@ -298,6 +317,16 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
           description: source.path,
           variable: SOURCE_CONTEXT_VARIABLE,
           arg: source.path
+        }));
+      case 'images':
+        // Binary sources (image/PDF) attach as the real bytes through Theia's
+        // `imageContext` variable; the raw path is the arg, resolved to a full
+        // image-context argument in `attach`.
+        return data.images.map(image => ({
+          label: image.label,
+          description: image.path,
+          variable: IMAGE_CONTEXT_VARIABLE as AIVariable,
+          arg: image.path
         }));
       case 'entities':
         return data.entities.map(entity => ({
@@ -383,9 +412,15 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
       if (node.sectionKind === 'sources') {
         // Excalidraw diagrams attach as a text summary (`#diagram`), not the
         // raw binary source text (`#source`).
-        return relative.toLowerCase().endsWith(DIAGRAM_EXTENSION)
-          ? { variable: DIAGRAM_CONTEXT_VARIABLE, arg: relative }
-          : { variable: SOURCE_CONTEXT_VARIABLE, arg: relative };
+        if (relative.toLowerCase().endsWith(DIAGRAM_EXTENSION)) {
+          return { variable: DIAGRAM_CONTEXT_VARIABLE, arg: relative };
+        }
+        // Images/PDFs attach as the actual bytes (`imageContext`) so a
+        // vision-capable model sees them, not the text-extraction `#source`.
+        if (isAttachableSource(relative)) {
+          return { variable: IMAGE_CONTEXT_VARIABLE as AIVariable, arg: relative };
+        }
+        return { variable: SOURCE_CONTEXT_VARIABLE, arg: relative };
       }
       if (node.sectionKind === 'knowledge') {
         return { variable: NOTE_CONTEXT_VARIABLE, arg: relative };
@@ -616,14 +651,75 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
 
   /** Attach `{variable, arg}` to the active chat session and reveal the chat. */
   protected async attach(target: ContextTarget, label: string): Promise<void> {
+    // Binary sources (image/PDF) carry a raw workspace-relative path as their
+    // arg; turn it into a full `imageContext` argument (path-based for images,
+    // inline bytes for PDF) before adding it to the session.
+    let arg = target.arg;
+    if (target.variable.id === IMAGE_CONTEXT_VARIABLE.id) {
+      const built = await this.buildImageContextArg(target.arg);
+      if (!built) {
+        this.messages.error(nls.localize(
+          'ai-focused-editor/chat-context/image-attach-failed',
+          'Could not attach "{0}" as an image.',
+          label
+        ));
+        return;
+      }
+      arg = built;
+    }
     const session = this.chatService.getActiveSession() ?? this.chatService.createSession();
-    session.model.context.addVariables({ variable: target.variable, arg: target.arg });
+    session.model.context.addVariables({ variable: target.variable, arg });
     await this.revealChatView();
     this.messages.info(nls.localize(
       'ai-focused-editor/chat-context/attached',
       'Added "{0}" to the chat context.',
       label
     ));
+  }
+
+  /**
+   * Build a Theia `imageContext` argument string for a binary source at the
+   * workspace-relative `path`.
+   *
+   * Images use a path-based reference (`{ wsRelativePath, name }`) — Theia's
+   * image resolver loads and base64-encodes the bytes on demand at send time,
+   * so the session never holds megabytes inline. PDFs are inlined with their
+   * bytes + an explicit `application/pdf` mime, because Theia's extension→mime
+   * table does not know `.pdf` and would otherwise mislabel it as
+   * `application/octet-stream`.
+   */
+  protected async buildImageContextArg(path: string): Promise<string | undefined> {
+    const kind = attachableSourceKind(path);
+    const mimeType = attachableSourceMimeType(path);
+    if (!kind || !mimeType) {
+      return undefined;
+    }
+    const name = this.baseName(path);
+    if (kind === 'image') {
+      return ImageContextVariable.createArgString({ wsRelativePath: path, name });
+    }
+    // PDF (document): read the bytes now and inline them with the correct mime.
+    const rootUri = this.workspaceService.tryGetRoots()[0]?.resource;
+    if (!rootUri) {
+      return undefined;
+    }
+    try {
+      const content = await this.fileService.readFile(rootUri.resolve(path));
+      const data = this.toBase64(content.value.buffer);
+      return ImageContextVariable.createArgString({ name, wsRelativePath: path, data, mimeType });
+    } catch (error) {
+      this.logger.error(`Failed to read binary source for chat attach: ${path}`, error);
+      return undefined;
+    }
+  }
+
+  /** Base64-encode raw bytes without a data-URL prefix. */
+  protected toBase64(buffer: Uint8Array): string {
+    let binary = '';
+    for (let i = 0; i < buffer.length; i++) {
+      binary += String.fromCharCode(buffer[i]);
+    }
+    return btoa(binary);
   }
 
   /**
