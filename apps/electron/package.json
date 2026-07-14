@@ -10,9 +10,14 @@
     "@parcel/watcher-darwin-arm64": "2.5.6",
     "@theia/ai-chat": "1.73.1",
     "@theia/ai-chat-ui": "1.73.1",
+    "@theia/ai-code-completion": "1.73.1",
     "@theia/ai-core": "1.73.1",
+    "@theia/ai-ide": "1.73.1",
     "@theia/ai-mcp": "1.73.1",
+    "@theia/ai-terminal": "1.73.1",
+    "@theia/console": "1.73.1",
     "@theia/core": "1.73.1",
+    "@theia/debug": "1.73.1",
     "@theia/editor": "1.73.1",
     "@theia/editor-preview": "1.73.1",
     "@theia/electron": "1.73.1",
@@ -30,8 +35,10 @@
     "@theia/process": "1.73.1",
     "@theia/scm": "1.73.1",
     "@theia/scm-extra": "1.73.1",
+    "@theia/search-in-workspace": "1.73.1",
     "@theia/task": "1.73.1",
     "@theia/terminal": "1.73.1",
+    "@theia/test": "1.73.1",
     "@theia/userstorage": "1.73.1",
     "@theia/variable-resolver": "1.73.1",
     "@theia/workspace": "1.73.1",
@@ -78,7 +85,9 @@
             "**/build": true,
             "**/.llm-wiki": true
           },
-          "workbench.tree.renderIndentGuides": "onHover"
+          "workbench.tree.renderIndentGuides": "onHover",
+          "ai-features.AiEnable.enableAI": true,
+          "ai-features.codeCompletion.automaticCodeCompletion": false
         }
       }
     }
