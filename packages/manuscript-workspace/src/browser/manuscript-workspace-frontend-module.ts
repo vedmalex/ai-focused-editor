@@ -56,6 +56,7 @@ import { EntityCardsViewContribution } from './entity-cards-view-contribution';
 import { EntityCardsWidget } from './entity-cards-widget';
 import { GitActionsContribution } from './git-actions-contribution';
 import { ManuscriptAiContextAssembler } from './manuscript-ai-context-assembler';
+import { ChangeProposalService } from './change-proposal-service';
 import { ManuscriptContextVariableContribution } from './manuscript-context-variable-contribution';
 import { ChatContextActionsContribution } from './chat-context-actions-contribution';
 import { ChatContextSetsContribution } from './chat-context-sets-contribution';
@@ -134,6 +135,7 @@ export default new ContainerModule(bind => {
   bind(ManuscriptTreeItemFactory).toSelf().inSingletonScope();
   bind(ManuscriptTreeLabelProvider).toSelf().inSingletonScope();
   bind(ManuscriptAiContextAssembler).toSelf().inSingletonScope();
+  bind(ChangeProposalService).toSelf().inSingletonScope();
   // Populate the ai-connect Debug view's manuscript context/modes section.
   bind(ManuscriptAiDebugContextProvider).toSelf().inSingletonScope();
   bind(AiDebugContextProvider).toService(ManuscriptAiDebugContextProvider);

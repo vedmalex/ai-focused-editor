@@ -19,8 +19,8 @@ import { EDITOR_CONTEXT_MENU } from '@theia/editor/lib/browser/editor-menu';
 import type { TextEditor } from '@theia/editor/lib/browser/editor';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
-import { ChangeSetFileElementFactory } from '@theia/ai-chat/lib/browser/change-set-file-element';
 import { ChatAgentService, ChatService } from '@theia/ai-chat/lib/common';
+import { ChangeProposal, ChangeProposalService } from './change-proposal-service';
 import { CustomAgentFactory } from '@theia/ai-chat/lib/browser/custom-agent-factory';
 import { AgentService } from '@theia/ai-core';
 import { inject, injectable } from '@theia/core/shared/inversify';
@@ -89,8 +89,8 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
   @inject(AiHistoryService)
   protected readonly aiHistory!: AiHistoryService;
 
-  @inject(ChangeSetFileElementFactory)
-  protected readonly changeSetFileElementFactory!: ChangeSetFileElementFactory;
+  @inject(ChangeProposalService)
+  protected readonly changeProposals!: ChangeProposalService;
 
   @inject(ChatService)
   protected readonly chatService!: ChatService;
@@ -475,30 +475,20 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
         return;
       }
 
-      const session = this.chatService.getSessions().find(candidate => candidate.isActive)
-        ?? this.chatService.createSession();
-      const requestId = `${commandId}.${Date.now()}`;
-      const changeSetElement = this.changeSetFileElementFactory({
-        uri: editor.uri,
-        chatSessionId: session.id,
-        requestId,
-        type: 'modify',
-        state: 'pending',
-        originalState: originalDocumentText,
-        targetState,
-        data: {
-          command: commandId,
-          requestId
-        }
-      });
-      session.model.changeSet.setTitle(mode.label);
-      session.model.changeSet.addElements(changeSetElement);
-      await this.revealChatView();
-      await changeSetElement.openChange();
-      this.messages.info(nls.localize('ai-focused-editor/ai-modes/result-ready', '"{0}" result is ready for review in the diff and chat Change Set.', mode.label));
+      const proposal: ChangeProposal = {
+        uri: editor.uri.toString(),
+        originalText: originalDocumentText,
+        targetText: targetState,
+        title: mode.label
+      };
+      await this.changeProposals.openDiff(proposal);
+      this.changeProposals.notifyReady(proposal, nls.localize(
+        'ai-focused-editor/ai-modes/result-ready',
+        '"{0}" result is ready — review the diff, then Apply.', mode.label
+      ));
 
       await this.logRun(mode, context, apply, documentUri, {
-        chatSessionId: session.id,
+        action: 'diff-proposal',
         route: result.route,
         warnings: result.warnings,
         usage: result.usage

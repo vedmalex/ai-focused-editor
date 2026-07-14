@@ -87,7 +87,8 @@
           },
           "workbench.tree.renderIndentGuides": "onHover",
           "ai-features.AiEnable.enableAI": true,
-          "ai-features.codeCompletion.automaticCodeCompletion": false
+          "ai-features.codeCompletion.automaticCodeCompletion": false,
+          "security.workspace.trust.enabled": false
         }
       }
     }

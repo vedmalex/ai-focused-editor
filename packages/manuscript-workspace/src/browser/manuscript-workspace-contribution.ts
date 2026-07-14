@@ -24,11 +24,8 @@ import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import { EDITOR_CONTEXT_MENU, EditorContextMenu } from '@theia/editor/lib/browser/editor-menu';
 import type { TextEditor } from '@theia/editor/lib/browser/editor';
 import { ProblemManager } from '@theia/markers/lib/browser/problem/problem-manager';
-import {
-  ChangeSetFileElement,
-  ChangeSetFileElementFactory
-} from '@theia/ai-chat/lib/browser/change-set-file-element';
 import { ChatService } from '@theia/ai-chat/lib/common';
+import { ChangeProposal, ChangeProposalService } from './change-proposal-service';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import {
   AiConnectionService,
@@ -182,8 +179,8 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
   @inject(AiModeRegistry)
   protected readonly aiModes!: AiModeRegistry;
 
-  @inject(ChangeSetFileElementFactory)
-  protected readonly changeSetFileElementFactory!: ChangeSetFileElementFactory;
+  @inject(ChangeProposalService)
+  protected readonly changeProposals!: ChangeProposalService;
 
   @inject(ChatService)
   protected readonly chatService!: ChatService;
@@ -360,32 +357,16 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
         return;
       }
 
-      const session = this.chatService.getSessions().find(candidate => candidate.isActive)
-        ?? this.chatService.createSession();
-      const requestId = `${AiFocusedEditorCommands.SUGGEST_COREFERENCE.id}.${Date.now()}`;
-      const changeSetElement = this.changeSetFileElementFactory({
-        uri: editor.uri,
-        chatSessionId: session.id,
-        requestId,
-        type: 'modify',
-        state: 'pending',
-        originalState: originalText,
-        targetState: updatedText,
-        data: {
-          command: AiFocusedEditorCommands.SUGGEST_COREFERENCE.id,
-          requestId
-        }
-      });
-      session.model.changeSet.setTitle(nls.localize(
-        'ai-focused-editor/workspace/coref-title',
-        'Coreference Tag Suggestions'
-      ));
-      session.model.changeSet.addElements(changeSetElement);
-      await this.revealChatView();
-      await changeSetElement.openChange();
-      this.messages.info(nls.localize(
+      const proposal: ChangeProposal = {
+        uri: editor.uri.toString(),
+        originalText,
+        targetText: updatedText,
+        title: nls.localize('ai-focused-editor/workspace/coref-title', 'Coreference Tag Suggestions')
+      };
+      await this.changeProposals.openDiff(proposal);
+      this.changeProposals.notifyReady(proposal, nls.localize(
         'ai-focused-editor/workspace/coref-ready',
-        'Coreference suggestions are ready for review in the diff and chat Change Set.'
+        'Coreference suggestions are ready — review the diff, then Apply.'
       ));
 
       await this.tryAppendChatEvent({
@@ -393,7 +374,7 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
         command: AiFocusedEditorCommands.SUGGEST_COREFERENCE.id,
         documentUri: editor.uri.toString(),
         data: {
-          chatSessionId: session.id,
+          action: 'diff-proposal',
           entityCount: roster.length,
           route: result.route,
           warnings: result.warnings,
@@ -576,16 +557,8 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
         return;
       }
 
-      const session = this.chatService.getSessions().find(candidate => candidate.isActive)
-        ?? this.chatService.createSession();
-      const changeSetElement = this.createImproveSelectionChangeSetElement(
-        editor,
-        selection,
-        originalDocumentText,
-        improvedText,
-        session.id
-      );
-      if (changeSetElement.targetState === originalDocumentText) {
+      const targetState = this.replaceRangeInText(originalDocumentText, selection, improvedText);
+      if (targetState === originalDocumentText) {
         await this.messages.info(nls.localize(
           'ai-focused-editor/workspace/improve-identical',
           'AI returned text identical to the current selection.'
@@ -593,19 +566,16 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
         return;
       }
 
-      // Surface the proposal through the native Change Set review UI in the chat view
-      // (Accept/Reject controls), plus an immediate diff preview of the edit.
-      session.model.changeSet.setTitle(nls.localize(
-        'ai-focused-editor/workspace/improve-title',
-        'Improve Selected Text'
-      ));
-      session.model.changeSet.addElements(changeSetElement);
-      await this.revealChatView();
-      await changeSetElement.openChange();
-      this.messages.info(nls.localize(
+      const proposal: ChangeProposal = {
+        uri: editor.uri.toString(),
+        originalText: originalDocumentText,
+        targetText: targetState,
+        title: nls.localize('ai-focused-editor/workspace/improve-title', 'Improve Selected Text')
+      };
+      await this.changeProposals.openDiff(proposal);
+      this.changeProposals.notifyReady(proposal, nls.localize(
         'ai-focused-editor/workspace/improve-ready',
-        'AI improvement ready for review in the diff and chat Change Set: {0}',
-        this.previewText(improvedText)
+        'AI improvement is ready — review the diff, then Apply.'
       ));
       await this.tryAppendChatEvent({
         kind: 'ai-improve-selection',
@@ -614,8 +584,7 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
         data: {
           selectedText,
           improvedText,
-          action: 'change-set-review',
-          chatSessionId: session.id,
+          action: 'diff-proposal',
           aiModeId: improveMode?.id ?? 'builtin-improve-selection',
           route: result.route,
           warnings: result.warnings,
@@ -651,30 +620,6 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     } catch {
       // The chat UI is optional; the diff preview still carries the review flow.
     }
-  }
-
-  protected createImproveSelectionChangeSetElement(
-    editor: TextEditor,
-    selection: Range,
-    originalDocumentText: string,
-    improvedText: string,
-    chatSessionId: string
-  ): ChangeSetFileElement {
-    const targetState = this.replaceRangeInText(originalDocumentText, selection, improvedText);
-    const requestId = `${AiFocusedEditorCommands.IMPROVE_SELECTION.id}.${Date.now()}`;
-    return this.changeSetFileElementFactory({
-      uri: editor.uri,
-      chatSessionId,
-      requestId,
-      type: 'modify',
-      state: 'pending',
-      originalState: originalDocumentText,
-      targetState,
-      data: {
-        command: AiFocusedEditorCommands.IMPROVE_SELECTION.id,
-        requestId
-      }
-    });
   }
 
   protected replaceRangeInText(text: string, range: Range, replacement: string): string {
