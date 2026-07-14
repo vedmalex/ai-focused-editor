@@ -221,7 +221,7 @@ export abstract class AiConnectLanguageModelBase implements LanguageModel {
       case 'text':
         return {
           role: this.toAiConnectRole(message.actor),
-          content: (message as TextMessage).text
+          content: (message as TextMessage).text ?? ''
         };
       case 'tool_result':
         return {
