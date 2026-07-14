@@ -16,6 +16,8 @@ import {
 } from '../common';
 import { AiConnectPreferenceContribution } from './ai-connect-preferences';
 import { AiConnectTheiaLanguageModel } from './ai-connect-theia-language-model';
+import { bindAiConnectAliasModel } from './ai-connect-alias-language-model';
+import { AiConnectModelSyncContribution } from './ai-connect-model-sync-contribution';
 import { BrowserAiConnectionService } from './browser-ai-connection-service';
 import { LocalAiStreamClientImpl } from './local-ai-stream-client';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
@@ -48,6 +50,10 @@ export default new ContainerModule(bind => {
   bind(LanguageModelProvider).toDynamicValue(ctx => async () => [
     ctx.container.get(AiConnectTheiaLanguageModel)
   ]).inSingletonScope();
+  // One LanguageModel per alias, kept in sync with the alias list.
+  bindAiConnectAliasModel(bind);
+  bind(AiConnectModelSyncContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(AiConnectModelSyncContribution);
   bind(AiProfilePreferenceService).toSelf().inSingletonScope();
   bind(AiVerificationService).toSelf().inSingletonScope();
   bind(AiHistoryService).toSelf().inSingletonScope();

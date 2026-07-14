@@ -127,6 +127,19 @@ export class AiProfilePreferenceService {
     return this.resolveAliasChainDetailed(undefined, new Date(), resourceUri).chain;
   }
 
+  /**
+   * Failover chain for a SPECIFIC alias, independent of the active alias. Used
+   * by the per-alias LanguageModels so a request pins its own alias regardless
+   * of which alias the user currently has selected as the default.
+   */
+  async getFailoverChainForAlias(aliasId: string, resourceUri?: string): Promise<AiConnectionProfile[]> {
+    await this.preferenceService.ready;
+    if (!this.isAliasMode(resourceUri)) {
+      return [];
+    }
+    return this.resolveAliasChainDetailed(aliasId, new Date(), resourceUri).chain;
+  }
+
   async setApiKey(id: string, apiKey: string): Promise<void> {
     const keys = { ...this.readApiKeys() };
     if (apiKey) {

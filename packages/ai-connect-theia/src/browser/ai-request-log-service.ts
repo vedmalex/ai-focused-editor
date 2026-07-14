@@ -98,14 +98,16 @@ export class AiRequestLogService {
    * off (so callers pay nothing). Skipped legs (disabled / out-of-window
    * endpoints) are known at resolution time and written immediately here.
    */
-  beginRequest(source: string, documentUri?: string): AiRequestLogSession | undefined {
+  beginRequest(source: string, documentUri?: string, aliasOverride?: string): AiRequestLogSession | undefined {
     const mode = this.getMode(documentUri);
     if (mode === 'off') {
       return undefined;
     }
     const full = mode === 'full';
     const requestId = this.newRequestId();
-    const detailed = this.aiProfilePreferences.resolveAliasChainDetailed(undefined, new Date(), documentUri);
+    // A per-alias model pins its own alias so the log records which alias-model
+    // served the request; the default model passes none and uses the active alias.
+    const detailed = this.aiProfilePreferences.resolveAliasChainDetailed(aliasOverride, new Date(), documentUri);
     const aliasId = detailed.aliasId ?? '';
     let legIndex = 0;
     for (const skip of detailed.skipped) {
