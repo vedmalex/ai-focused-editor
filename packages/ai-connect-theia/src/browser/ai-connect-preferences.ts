@@ -19,6 +19,7 @@ export const AI_CONNECT_ALIASES = 'aiConnect.aliases';
 export const AI_CONNECT_ACTIVE_ALIAS = 'aiConnect.activeAlias';
 export const AI_CONNECT_PINNED_ENDPOINT = 'aiConnect.pinnedEndpoint';
 export const AI_CONNECT_REQUEST_LOG = 'aiConnect.requestLog';
+export const AI_CONNECT_PROVIDE_DEFAULT_MODELS = 'aiConnect.provideDefaultModels';
 
 /** Legacy product-specific keys still honoured for soft migration. */
 export const LEGACY_AI_API_KEYS = 'aiFocusedEditor.ai.apiKeys';
@@ -122,6 +123,11 @@ export const aiConnectPreferenceSchema: PreferenceSchema = {
       type: 'string',
       default: '',
       description: nls.localize('ai-focused-editor/ai-config/pref-active-alias-desc', 'Id of the active AI alias (the user default). Its chain becomes the failover chain, skipping endpoints that are disabled or outside their availability window.')
+    },
+    [AI_CONNECT_PROVIDE_DEFAULT_MODELS]: {
+      type: 'boolean',
+      default: true,
+      description: nls.localize('ai-focused-editor/ai-config/pref-provide-default-models-desc', "Serve Theia AI agents out of the box: put the ai-connect active-alias model first in every default/* model alias, so agents work without per-agent mapping. Your explicit picks in AI Configuration always win.")
     },
     [AI_CONNECT_PINNED_ENDPOINT]: {
       type: 'string',

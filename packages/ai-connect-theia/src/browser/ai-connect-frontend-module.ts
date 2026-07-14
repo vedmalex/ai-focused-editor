@@ -19,6 +19,7 @@ import { AiConnectPreferenceContribution } from './ai-connect-preferences';
 import { AiConnectTheiaLanguageModel } from './ai-connect-theia-language-model';
 import { bindAiConnectAliasModel } from './ai-connect-alias-language-model';
 import { AiConnectModelSyncContribution } from './ai-connect-model-sync-contribution';
+import { AiConnectDefaultModelsContribution } from './ai-connect-default-models-contribution';
 import { BrowserAiConnectionService } from './browser-ai-connection-service';
 import { LocalAiStreamClientImpl } from './local-ai-stream-client';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
@@ -55,6 +56,8 @@ export default new ContainerModule(bind => {
   bindAiConnectAliasModel(bind);
   bind(AiConnectModelSyncContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(AiConnectModelSyncContribution);
+  bind(AiConnectDefaultModelsContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(AiConnectDefaultModelsContribution);
   bind(AiProfilePreferenceService).toSelf().inSingletonScope();
   bind(AiVerificationService).toSelf().inSingletonScope();
   bind(AiHistoryService).toSelf().inSingletonScope();
