@@ -97,6 +97,14 @@ export class BrowserAiConnectionService implements AiConnectionService {
         yield { type: 'delta', text: event.text };
         continue;
       }
+      if (event.type === 'tool-call') {
+        yield { type: 'tool-call', toolCall: event.toolCall };
+        continue;
+      }
+      if (event.type === 'tool-result') {
+        yield { type: 'tool-result', toolCallId: event.toolCallId, name: event.name, isError: event.isError };
+        continue;
+      }
       if (event.type === 'result' || event.type === 'paused') {
         yield {
           type: 'result',

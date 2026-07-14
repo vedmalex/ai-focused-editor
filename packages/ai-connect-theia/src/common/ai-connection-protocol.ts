@@ -86,7 +86,10 @@ export interface AiModelDiscoveryResult {
 
 export type AiStreamEvent =
   | { type: 'delta'; text: string }
-  | { type: 'result'; result: AiGenerateResult };
+  | { type: 'result'; result: AiGenerateResult }
+  /** ai-connect >= 0.10: streaming tool-loop activity (api transport). */
+  | { type: 'tool-call'; toolCall: { id: string; name: string; arguments: unknown } }
+  | { type: 'tool-result'; toolCallId: string; name: string; isError?: boolean };
 
 export interface AiStreamOptions {
   signal?: AbortSignal;

@@ -104,51 +104,11 @@ export abstract class AiConnectLanguageModelBase implements LanguageModel {
 
     const logSession = this.requestLog.beginRequest(request.agentId || 'chat', undefined, this.aliasForLog());
 
-    // The ai-connect client supports clientTools only on generate(), not on
-    // stream(): tool-carrying requests (agents) take the non-streaming path —
-    // the client runs the tool loop in-process and returns the final text.
-    // Plain chat requests keep streaming.
-    if ((generateRequest.clientTools?.length ?? 0) > 0) {
-      return this.generateWithTools(chain, request, generateRequest, logSession);
-    }
-
     return {
       stream: this.streamResponseParts(chain, request, generateRequest, abortController.signal, logSession)
     };
   }
 
-  /**
-   * Non-streaming failover path for tool-carrying (agent) requests: profiles
-   * are tried in chain order; the whole answer arrives at once.
-   */
-  protected async generateWithTools(
-    chain: AiConnectionProfile[],
-    request: UserRequest,
-    generateRequest: AiGenerateRequest,
-    logSession?: AiRequestLogSession
-  ): Promise<LanguageModelResponse> {
-    const failures: string[] = [];
-    for (const [index, profile] of chain.entries()) {
-      const legIndex = (logSession?.attemptedBase ?? 0) + index;
-      const startedAt = Date.now();
-      try {
-        const result = await this.aiConnection.generate(profile, generateRequest);
-        logSession?.record(legIndex, profile, 'ok', Date.now() - startedAt, generateRequest, result);
-        await this.tryAppendChatEvent(request, result, generateRequest);
-        return { text: result.text };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logSession?.record(legIndex, profile, 'error', Date.now() - startedAt, generateRequest, undefined, message);
-        failures.push(`${profile.label ?? profile.id ?? profile.provider}: ${message}`);
-        if (index === chain.length - 1) {
-          throw new Error(failures.length > 1
-            ? `All AI profiles failed. ${failures.join('; ')}`
-            : message);
-        }
-      }
-    }
-    throw new Error(this.emptyChainMessage());
-  }
 
   /**
    * FR-013 failover while streaming: profiles are tried in chain order; a
@@ -174,6 +134,32 @@ export abstract class AiConnectLanguageModelBase implements LanguageModel {
               emitted = true;
               yield { content: event.text };
             }
+            continue;
+          }
+          // ai-connect >= 0.10 streams the client-tool loop: surface activity as
+          // Theia tool-call parts (the tool already RAN in-process — mark emitted
+          // so failover never replays a round with side effects on another leg).
+          if (event.type === 'tool-call') {
+            emitted = true;
+            yield {
+              tool_calls: [{
+                id: event.toolCall.id,
+                function: { name: event.toolCall.name, arguments: JSON.stringify(event.toolCall.arguments ?? {}) },
+                finished: false
+              }]
+            };
+            continue;
+          }
+          if (event.type === 'tool-result') {
+            emitted = true;
+            yield {
+              tool_calls: [{
+                id: event.toolCallId,
+                function: { name: event.name },
+                finished: true,
+                ...(event.isError ? { result: { content: [{ type: 'text', text: 'tool failed' }], isError: true } } : {})
+              }]
+            };
             continue;
           }
 
