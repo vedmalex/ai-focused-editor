@@ -19,3 +19,6 @@ examples/sample-book/ai/context-snapshots/
 
 # Obsidian vault state (the doctor installs the companion plugin on demand)
 .obsidian/
+
+# runtime chat logs when the repo root itself is opened as a workspace
+/ai/
