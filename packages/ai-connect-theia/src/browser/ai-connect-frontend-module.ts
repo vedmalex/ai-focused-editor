@@ -31,6 +31,8 @@ import { AiHistoryService } from './ai-history-service';
 import { AiRequestLogService } from './ai-request-log-service';
 import { ModelConfigViewContribution } from './model-config-view-contribution';
 import { ModelConfigWidget } from './model-config-widget';
+import { AiUsageViewContribution } from './ai-usage-view-contribution';
+import { AiUsageWidget } from './ai-usage-widget';
 import { AiConnectStreamController } from './ai-connect-stream-controller';
 import { AiConnectPauseContribution } from './ai-connect-pause-contribution';
 
@@ -81,5 +83,13 @@ export default new ContainerModule(bind => {
   bind(WidgetFactory).toDynamicValue(ctx => ({
     id: ModelConfigWidget.ID,
     createWidget: () => ctx.container.get(ModelConfigWidget)
+  })).inSingletonScope();
+  // Read-only AI Token Usage report (aggregates the request log). Command
+  // `ai-connect.openUsage`; no menu placement — the host application places it.
+  bindViewContribution(bind, AiUsageViewContribution);
+  bind(AiUsageWidget).toSelf();
+  bind(WidgetFactory).toDynamicValue(ctx => ({
+    id: AiUsageWidget.ID,
+    createWidget: () => ctx.container.get(AiUsageWidget)
   })).inSingletonScope();
 });

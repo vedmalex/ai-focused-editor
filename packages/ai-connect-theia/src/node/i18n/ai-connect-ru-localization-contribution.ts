@@ -7,6 +7,7 @@ import {
 
 import aiConfigRu from './ru/ai-config.json';
 import aiLogRu from './ru/ai-log.json';
+import aiUsageRu from './ru/ai-usage.json';
 
 /**
  * Russian dictionary for the strings owned by the ai-connect package
@@ -22,7 +23,7 @@ const RU: LanguageInfo = {
   languagePack: true
 };
 
-const AREA_BUNDLES: unknown[] = [aiConfigRu, aiLogRu];
+const AREA_BUNDLES: unknown[] = [aiConfigRu, aiLogRu, aiUsageRu];
 
 @injectable()
 export class AiConnectRuLocalizationContribution implements LocalizationContribution {

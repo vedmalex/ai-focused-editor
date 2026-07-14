@@ -8,5 +8,6 @@ export * from './ai-failover';
 export * from './ai-time-windows';
 export * from './ai-verification';
 export * from './ai-history-log';
+export * from './usage-rollup';
 export * from './model-provider-protocol';
 export * from './resolve-with-legacy';

@@ -251,6 +251,9 @@ function toLogUsage(usage: UsageInfo | undefined): AiRequestLogUsage | undefined
   return {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
-    cachedReadTokens: usage.cachedReadTokens
+    totalTokens: usage.totalTokens,
+    reasoningTokens: usage.reasoningTokens,
+    cachedReadTokens: usage.cachedReadTokens,
+    durationMs: usage.durationMs
   };
 }

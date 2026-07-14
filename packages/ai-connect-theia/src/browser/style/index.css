@@ -530,3 +530,93 @@
   flex-direction: column;
   gap: 6px;
 }
+
+/* ---------- AI token usage report ---------- */
+
+.afe-ai-usage {
+  padding: 8px 12px;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.afe-ai-usage-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.afe-ai-usage-actions h3 {
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+.afe-ai-usage-section {
+  margin-bottom: 16px;
+}
+
+.afe-ai-usage-section h4 {
+  margin: 0 0 6px;
+}
+
+.afe-ai-usage-empty {
+  color: var(--theia-descriptionForeground);
+  font-style: italic;
+}
+
+.afe-ai-usage-total-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.afe-ai-usage-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 84px;
+  padding: 8px 10px;
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  border-radius: 4px;
+  background: var(--theia-editor-background);
+}
+
+.afe-ai-usage-card-value {
+  font-size: var(--theia-ui-font-size2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.afe-ai-usage-card-label {
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.afe-ai-usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-ai-usage-table th,
+.afe-ai-usage-table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.2));
+  text-align: left;
+}
+
+.afe-ai-usage-table th {
+  color: var(--theia-descriptionForeground);
+  font-weight: 600;
+}
+
+.afe-ai-usage-table .afe-ai-usage-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--theia-code-font-family, monospace);
+}

@@ -110,7 +110,11 @@ export interface AiRequestLegMessage {
 export interface AiRequestLogUsage {
   inputTokens?: number;
   outputTokens?: number;
+  totalTokens?: number;
+  reasoningTokens?: number;
   cachedReadTokens?: number;
+  /** Provider-reported wall time for the usage-bearing call, in ms. */
+  durationMs?: number;
 }
 
 /** Truncatable text blob stored at `full` logging level. */
@@ -210,7 +214,10 @@ function pruneUsage(usage: AiRequestLogUsage): AiRequestLogUsage | undefined {
   const pruned: AiRequestLogUsage = {};
   if (typeof usage.inputTokens === 'number') { pruned.inputTokens = usage.inputTokens; }
   if (typeof usage.outputTokens === 'number') { pruned.outputTokens = usage.outputTokens; }
+  if (typeof usage.totalTokens === 'number') { pruned.totalTokens = usage.totalTokens; }
+  if (typeof usage.reasoningTokens === 'number') { pruned.reasoningTokens = usage.reasoningTokens; }
   if (typeof usage.cachedReadTokens === 'number') { pruned.cachedReadTokens = usage.cachedReadTokens; }
+  if (typeof usage.durationMs === 'number') { pruned.durationMs = usage.durationMs; }
   return Object.keys(pruned).length > 0 ? pruned : undefined;
 }
 
@@ -293,7 +300,10 @@ function requestLogUsage(value: unknown): AiRequestLogUsage | undefined {
   return pruneUsage({
     inputTokens: typeof source.inputTokens === 'number' ? source.inputTokens : undefined,
     outputTokens: typeof source.outputTokens === 'number' ? source.outputTokens : undefined,
-    cachedReadTokens: typeof source.cachedReadTokens === 'number' ? source.cachedReadTokens : undefined
+    totalTokens: typeof source.totalTokens === 'number' ? source.totalTokens : undefined,
+    reasoningTokens: typeof source.reasoningTokens === 'number' ? source.reasoningTokens : undefined,
+    cachedReadTokens: typeof source.cachedReadTokens === 'number' ? source.cachedReadTokens : undefined,
+    durationMs: typeof source.durationMs === 'number' ? source.durationMs : undefined
   });
 }
 

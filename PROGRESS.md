@@ -282,6 +282,16 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 55 — Панель расхода токенов (shipped)
+
+- **Read-only отчёт в ai-connect-theia**: `AiUsageWidget` читает уже пишущиеся `ai/chat/requests-*.jsonl` (через `AiRequestLogService.listDays/readDay`), агрегирует чистым `usage-rollup.ts` (тесты) — итоги (input/output/total/requests) + разбивка по алиасу и по дню. Команда «Расход токенов ИИ»; пустой лог — подсказка включить `aiConnect.requestLog`. Лог расширен: `totalTokens`/`reasoningTokens`/`durationMs` (аддитивно). Live: панель открывается.
+
+## Wave 54 — Гейтинг vision + авто text-vs-vision PDF (shipped)
+
+- **Гейтинг «Приложить изображение»** по возможностям активного алиаса: `attachBinarySource` спрашивает `AiCapabilityService`; если маршрут точно без vision (`supportsImageInput === false`) — предупреждает и не прикладывает; unknown — пропускает (не блокировать на неизвестном).
+- **Авто text-vs-vision для PDF**: извлечение текста (тот же backend `extractSourceText`, что у `#source`) → чистый `decideSourceAttachRoute({hasVision, extractedTextLength})`: ≥200 значимых символов → текст (дешевле, на любой модели); иначе vision (если маршрут умеет); иначе — предупреждение «скан нужен vision-модели». 6 тестов.
+- **Находка про грануляцию**: `PublicRouteCapabilities` описывает МАРШРУТ/провайдера, не конкретную модель (`text-embedding-3-small` на openai-маршруте рапортует vision=true). Гейт защищает от провайдеров вовсе без vision (локальные text-only эндпоинты — реальный офлайн-сценарий), но не ловит модель-специфичные пробелы внутри vision-провайдера; те ловит сам ai-connect на запросе. Заведена ai-connect FT-003 (per-model caps). 1103 теста / 63 файла; 10/10 flows.
+
 ## Wave 53 — Флаги возможностей модели (foundation, shipped)
 
 - **Слой возможностей в ai-connect-theia**: `AiCapabilityService.getActiveAliasCapabilities()` читает `client.listCandidateModels()` (синхронно, без I/O) и отдаёт `AiRouteCapabilities` — 9 булевых флагов (supportsImageInput/ClientToolExecution/Streaming/FileUpload/ImageOutput/…). TTL-кэш по профилю, инвалидация на изменение `aiConnect.*`. Node-транспорт — консервативный дефолт. Чистый маппинг `route-capabilities.ts` с тестами.
