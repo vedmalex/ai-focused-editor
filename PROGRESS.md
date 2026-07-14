@@ -282,6 +282,11 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 56 — Files-API: крупные файлы и ссылки по id (shipped)
+
+- **Большие файлы уже работают прозрачно**: ai-connect сам заливает oversize-PDF в Files-API провайдера и ссылается по `providerFileId` (при неудаче — фолбэк на inline). Наш attachment-путь (волны 51–52) отправляет документы как вложения, поэтому крупные PDF обрабатываются без нового кода — это и был основной вопрос «передача файлов».
+- **Явная ссылка по id**: `AiConnectAttachment` получил `providerFileId` — маппится в ai-connect `RemoteFileReferenceInput` (переиспользовать уже загруженный файл между ходами без пересылки байтов). `toPortableFileInput` теперь отдаёт string | {providerFileId,…}; providerFileId имеет приоритет над остальными носителями (тест). 1104 теста / 63 файла.
+
 ## Wave 55 — Панель расхода токенов (shipped)
 
 - **Read-only отчёт в ai-connect-theia**: `AiUsageWidget` читает уже пишущиеся `ai/chat/requests-*.jsonl` (через `AiRequestLogService.listDays/readDay`), агрегирует чистым `usage-rollup.ts` (тесты) — итоги (input/output/total/requests) + разбивка по алиасу и по дню. Команда «Расход токенов ИИ»; пустой лог — подсказка включить `aiConnect.requestLog`. Лог расширен: `totalTokens`/`reasoningTokens`/`durationMs` (аддитивно). Live: панель открывается.

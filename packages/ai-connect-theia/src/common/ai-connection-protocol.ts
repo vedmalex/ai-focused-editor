@@ -61,6 +61,13 @@ export interface AiConnectAttachment {
   mimeType?: string;
   name?: string;
   url?: string;
+  /**
+   * A provider Files-API id from a previous upload. ai-connect auto-uploads
+   * oversize documents and references them by id; passing a known id here
+   * re-references an already-uploaded file across turns without re-sending
+   * the bytes (maps to an ai-connect RemoteFileReferenceInput).
+   */
+  providerFileId?: string;
 }
 
 export interface AiGenerateRequest {

@@ -8,6 +8,11 @@ describe('toPortableFileInput', () => {
     expect(toPortableFileInput({ dataUrl })).toBe(dataUrl);
   });
 
+  test('a providerFileId becomes a remote file reference and wins over other carriers', () => {
+    expect(toPortableFileInput({ providerFileId: 'file_abc', mimeType: 'application/pdf', name: 'spec.pdf', dataUrl: 'data:x' }))
+      .toEqual({ providerFileId: 'file_abc', mimeType: 'application/pdf', name: 'spec.pdf' });
+  });
+
   test('assembles base64 + mimeType into a data-URL', () => {
     expect(toPortableFileInput({ base64: 'AAAA', mimeType: 'application/pdf' }))
       .toBe('data:application/pdf;base64,AAAA');

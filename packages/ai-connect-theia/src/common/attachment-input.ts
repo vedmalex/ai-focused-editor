@@ -1,15 +1,29 @@
 import type { ImageContent } from '@theia/ai-core';
 import type { AiConnectAttachment } from './ai-connection-protocol';
 
+/** A reference to a file already uploaded to a provider's Files API. */
+export interface PortableFileReference {
+  providerFileId: string;
+  mimeType?: string;
+  name?: string;
+}
+
+/** Every carrier {@link toPortableFileInput} can emit for ai-connect. */
+export type PortableFileInputLike = string | PortableFileReference;
+
 /**
  * Converts a portable {@link AiConnectAttachment} into an ai-connect
- * `PortableFileInput` — a data-URL / remote-URL STRING (every accepted string
- * form of `PortableFileInput`). Precedence: an explicit `dataUrl` is passed
- * verbatim; else `base64` + `mimeType` are assembled into a `data:` URL; else a
- * remote `url` is passed verbatim. An attachment carrying none of these (or
- * base64 without a mimeType) yields `undefined` so callers can drop it.
+ * `PortableFileInput`. Precedence: a `providerFileId` becomes a remote
+ * file reference (re-references an already-uploaded file without re-sending
+ * bytes); else an explicit `dataUrl` is passed verbatim; else `base64` +
+ * `mimeType` are assembled into a `data:` URL; else a remote `url` is passed
+ * verbatim. An attachment carrying none of these (or base64 without a
+ * mimeType) yields `undefined` so callers can drop it.
  */
-export function toPortableFileInput(att: AiConnectAttachment): string | undefined {
+export function toPortableFileInput(att: AiConnectAttachment): PortableFileInputLike | undefined {
+  if (att.providerFileId) {
+    return { providerFileId: att.providerFileId, mimeType: att.mimeType, name: att.name };
+  }
   if (att.dataUrl) {
     return att.dataUrl;
   }
@@ -27,13 +41,13 @@ export function toPortableFileInput(att: AiConnectAttachment): string | undefine
  * strings, dropping any attachment that carries no usable carrier. Returns
  * `undefined` when there is nothing to send (so the field is omitted).
  */
-export function toPortableFileInputs(attachments: AiConnectAttachment[] | undefined): string[] | undefined {
+export function toPortableFileInputs(attachments: AiConnectAttachment[] | undefined): PortableFileInputLike[] | undefined {
   if (!attachments || attachments.length === 0) {
     return undefined;
   }
   const inputs = attachments
     .map(toPortableFileInput)
-    .filter((input): input is string => input !== undefined);
+    .filter((input): input is PortableFileInputLike => input !== undefined);
   return inputs.length > 0 ? inputs : undefined;
 }
 
