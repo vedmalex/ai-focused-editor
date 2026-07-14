@@ -480,6 +480,16 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     const selectedText = editor.document.getText(selection);
     const selectedTextForPrompt = selectedText.trim();
     if (!selectedTextForPrompt) {
+      // A common writer's miss: the text was selected in the markdown PREVIEW
+      // (or another pane), which is not the Monaco editor the command reads.
+      const domSelection = typeof window !== 'undefined' ? window.getSelection()?.toString().trim() : '';
+      if (domSelection) {
+        await this.messages.warn(nls.localize(
+          'ai-focused-editor/workspace/improve-selection-elsewhere',
+          'The selection is in the preview or another pane — select the text in the chapter editor itself.'
+        ));
+        return;
+      }
       await this.messages.warn(nls.localize(
         'ai-focused-editor/workspace/improve-needs-selection',
         'Select text in the active editor before running Improve Selected.'

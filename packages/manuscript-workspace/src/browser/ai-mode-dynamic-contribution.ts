@@ -384,6 +384,15 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
     }
 
     if (!editor || !targetRange) {
+      // Writer's miss: selecting in the markdown preview does not select in Monaco.
+      const domSelection = typeof window !== 'undefined' ? window.getSelection()?.toString().trim() : '';
+      if (editor && domSelection) {
+        await this.messages.warn(nls.localize(
+          'ai-focused-editor/ai-modes/selection-elsewhere',
+          'The selection is in the preview or another pane — select the text in the chapter editor itself.'
+        ));
+        return;
+      }
       await this.messages.warn(nls.localize('ai-focused-editor/ai-modes/needs-selection', '"{0}" needs an editor selection or word to apply its result.', mode.label));
       return;
     }
