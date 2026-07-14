@@ -129,7 +129,7 @@ The browser registers **≈89 static commands** (`registerCommand` calls; catego
 
 **Tab-bar toolbars** (`TabBarToolbarContribution`s): Manuscript view (New Chapter, Refresh), Semantic Preview (Refresh), editor toolbar (Preview, Writing Mode, Book properties `bookConfig.toolbar.properties`, Build wizard `bookBuild.toolbar.wizard`, Book Doctor `bookDoctor.toolbar`), Excalidraw editor (**Canvas Actions…**), Narrative Map view (**Generate Relations Map…**).
 
-Preferences (`ai-focused-editor-preferences.ts`, scope Folder unless noted). The connection model is **endpoints + aliases only** (legacy `profiles`/`activeProfile` keys removed): **`aiFocusedEditor.ai.endpoints`** (channels), **`.aliases`** (endpoint→model chains), **`.activeAlias`** (user default), **`.pinnedEndpoint`** (id pinned to the chain front), **`.apiKeys`** (User scope, keyed by endpoint id), **`.requestLog`** (`off|metadata|full` AI-request-log mode). Also **`.preview.showTagChips`** (default `true`), **`.welcome.showOnStartup`**, **`.library.path`** (My Books library folder).
+Preferences. The AI-connection keys live under the **neutral `aiConnect.*`** namespace (schema owned by `ai-connect-theia`; the legacy `aiFocusedEditor.ai.*` surface was removed from the editor and one-time-migrated — see `common/ai-settings-migration.ts`): **`aiConnect.endpoints`** (channels), **`.aliases`** (endpoint→model chains), **`.activeAlias`** (user default), **`.pinnedEndpoint`** (id pinned to the chain front), **`.apiKeys`** (User scope, keyed by endpoint id), **`.requestLog`** (`off|metadata|full` AI-request-log mode). `ai-focused-editor-preferences.ts` (scope Folder unless noted) keeps the product prefs **`aiConnect.manuscriptOverview`**, **`aiFocusedEditor.preview.showTagChips`** (default `true`), **`aiFocusedEditor.welcome.showOnStartup`**, **`aiFocusedEditor.library.path`** (My Books library folder).
 
 ---
 
@@ -177,7 +177,7 @@ Bridges the app to [[theia-ai]] and [[language-models]] via `@vedmalex/ai-connec
 
 **Theia AI integration** (`ai-connect-theia-language-model.ts`): registers `AiConnectTheiaLanguageModel` (id `ai-focused-editor.ai-connect`) as a Theia `LanguageModelProvider`. Maps Theia messages/tools ↔ ai-connect; **tools** become ai-connect `clientTools` executed in-process (api only). **Provenance**: every request logged to AI history (`kind: 'theia-ai-language-model-request'`) with `sessionId`/`requestId`/`agentId`/`route`, bounded messages (`MAX_MESSAGE_CHARS = 4000`), tool names, response text (`MAX_RESPONSE_CHARS = 12000`), `warnings`, `usage`.
 
-**AI Request Log** (`ai-request-log-service.ts`, pref `aiFocusedEditor.ai.requestLog` = `off|metadata|full`): an `AiFailoverRecorder` that records per-leg request outcomes (messages redactable by mode) to the AI history JSONL, surfaced in the AI Debug Request Log.
+**AI Request Log** (`ai-request-log-service.ts`, pref `aiConnect.requestLog` = `off|metadata|full`): an `AiFailoverRecorder` that records per-leg request outcomes (messages redactable by mode) to the AI history JSONL, surfaced in the AI Debug Request Log.
 
 **Model discovery**: `discoverModels(profile)` flattens `report.routes[*].availableModels` → `{modelId, name, contextLength}`; drives the Model Config "Discover Models" button.
 
@@ -210,7 +210,7 @@ Bridges the app to [[theia-ai]] and [[language-models]] via `@vedmalex/ai-connec
 
 **Chapter working set** (`chat-context-actions-contribution.ts`, `common/chapter-bundle.ts`): **Work with Chapter…** builds a de-duplicated bundle from a chapter's text + the citation/excerpt index (the chapter first, then its tagged entities, `[@cite:id]` citations, and referenced source files) and offers a multi-select to attach the chosen items as `#chapter`/`#entity`/`#citation`/`#source` chips in one action.
 
-**Compact manuscript overview** (pref `aiFocusedEditor.ai.manuscriptOverview` = `full` | `compact`, default `full`): `full` keeps the historical `#manuscript` overview (every entity + source listed); `compact` (`assembleCompact`) drops the expansions, keeping the manifest skeleton + diagnostics + entity/source/note **counts** to trim the always-on agent context for large books.
+**Compact manuscript overview** (pref `aiConnect.manuscriptOverview` = `full` | `compact`, default `full`): `full` keeps the historical `#manuscript` overview (every entity + source listed); `compact` (`assembleCompact`) drops the expansions, keeping the manifest skeleton + diagnostics + entity/source/note **counts** to trim the always-on agent context for large books.
 
 **Author-defined AI modes (dynamic)** (`common/ai-mode-protocol.ts` + `ai-mode-dynamic-contribution.ts`). An `AiMode` may declare **`context`** (`selection`|`word`|`chapter`|`chat`), **`menu`** (editor context menu), **`apply`** (`replace`|`insert`|`chat`, resolved by `resolveAiModeApply`), **`agent`** (register as chat `@agent`), **`icon`** (codicon), plus `enabled`. Lifecycle:
 - **Dynamic "AI Modes" submenu** in the editor context menu: one context-aware `ai-focused-editor.mode.run.<id>` command per `menu: true` mode.

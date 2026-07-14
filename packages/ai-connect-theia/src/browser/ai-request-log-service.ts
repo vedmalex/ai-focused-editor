@@ -57,7 +57,7 @@ export interface AiRequestLogSession {
 /**
  * Records the per-leg provenance of the AI failover walk (what was sent and
  * received per endpoint/alias) into `ai/chat/requests-<date>.jsonl`, gated by
- * the `aiFocusedEditor.ai.requestLog` preference. Also the read/enable surface
+ * the `aiConnect.requestLog` preference. Also the read/enable surface
  * for the AI Debug view's "Requests" section.
  *
  * All writes are best-effort: AI features must never fail because debug logging

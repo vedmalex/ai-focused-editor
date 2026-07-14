@@ -24,6 +24,7 @@ import { bindToolProvider } from '@theia/ai-core/lib/common/tool-invocation-regi
 import { TaskContribution } from '@theia/task/lib/browser/task-contribution';
 import { AiDebugContextProvider } from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import { AiFocusedEditorPreferenceContribution } from './ai-focused-editor-preferences';
+import { AiSettingsUserMigrationContribution } from './ai-settings-user-migration-contribution';
 import {
   AiModeRegistry,
   AiModeRegistryBackendService,
@@ -154,6 +155,9 @@ export default new ContainerModule(bind => {
   bind(MenuContribution).toService(AiConnectMenuContribution);
   bind(LabelProviderContribution).toService(ManuscriptTreeLabelProvider);
   bind(PreferenceContribution).toConstantValue(AiFocusedEditorPreferenceContribution);
+  // One-time on-start migration of legacy aiFocusedEditor.ai.* USER settings.
+  bind(AiSettingsUserMigrationContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(AiSettingsUserMigrationContribution);
   bindViewContribution(bind, ManuscriptTreeViewContribution);
   bind(FrontendApplicationContribution).toService(ManuscriptTreeViewContribution);
   bind(TabBarToolbarContribution).toService(ManuscriptTreeViewContribution);

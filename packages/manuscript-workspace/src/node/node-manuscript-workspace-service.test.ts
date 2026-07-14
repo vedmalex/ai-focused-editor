@@ -240,3 +240,52 @@ describe('NodeManuscriptWorkspaceService.validateDocumentText', () => {
     expect(await service.validateDocumentText(root, 'ai/config.yaml', 'foo: bar\n')).toEqual([]);
   });
 });
+
+describe('NodeManuscriptWorkspaceService.migrateAiSettings', () => {
+  let root: string;
+  let service: NodeManuscriptWorkspaceService;
+
+  beforeEach(async () => {
+    root = await fs.mkdtemp(join(SCRATCH_BASE.startsWith('/') ? SCRATCH_BASE : tmpdir(), 'afe-set-'));
+    service = createService();
+    await fs.mkdir(join(root, '.theia'), { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  const settingsPath = (): string => join(root, '.theia', 'settings.json');
+
+  test('rewrites legacy keys to aiConnect.* and preserves other keys', async () => {
+    await fs.writeFile(settingsPath(), [
+      '{',
+      '    "editor.fontSize": 15,',
+      '    "aiFocusedEditor.ai.activeAlias": "deep"',
+      '}',
+      ''
+    ].join('\n'));
+    const result = await service.migrateAiSettings(root);
+    expect(result.ok).toBe(true);
+    expect(result.changed).toBe(true);
+    expect(result.movedKeys).toEqual(['aiFocusedEditor.ai.activeAlias']);
+    const parsed = JSON.parse(await fs.readFile(settingsPath(), 'utf8'));
+    expect(parsed['aiConnect.activeAlias']).toBe('deep');
+    expect(parsed['editor.fontSize']).toBe(15);
+    expect('aiFocusedEditor.ai.activeAlias' in parsed).toBe(false);
+  });
+
+  test('is a no-op success when the settings file is absent', async () => {
+    const result = await service.migrateAiSettings(root);
+    expect(result).toEqual({ ok: true, malformed: false, text: '', changed: false, movedKeys: [], droppedKeys: [] });
+  });
+
+  test('reports malformed JSON and does not rewrite it', async () => {
+    const original = '{ "aiFocusedEditor.ai.activeAlias": }';
+    await fs.writeFile(settingsPath(), original);
+    const result = await service.migrateAiSettings(root);
+    expect(result.ok).toBe(false);
+    expect(result.malformed).toBe(true);
+    expect(await fs.readFile(settingsPath(), 'utf8')).toBe(original);
+  });
+});

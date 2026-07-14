@@ -9,7 +9,7 @@ import {
   ManuscriptWorkspaceService,
   WorkspaceDiagnostic
 } from '../common';
-import { AI_FOCUSED_EDITOR_AI_MANUSCRIPT_OVERVIEW } from './ai-focused-editor-preferences';
+import { AI_CONNECT_MANUSCRIPT_OVERVIEW } from './ai-focused-editor-preferences';
 
 const MAX_ENTITY_LINES = 30;
 const MAX_SOURCE_LINES = 20;
@@ -35,9 +35,9 @@ export class ManuscriptAiContextAssembler {
     return this.overviewMode() === 'compact' ? this.assembleCompact() : this.assembleFull();
   }
 
-  /** Resolved `aiFocusedEditor.ai.manuscriptOverview` value (`full` by default). */
+  /** Resolved `aiConnect.manuscriptOverview` value (`full` by default). */
   protected overviewMode(): 'full' | 'compact' {
-    return this.preferenceService.get<string>(AI_FOCUSED_EDITOR_AI_MANUSCRIPT_OVERVIEW, 'full') === 'compact'
+    return this.preferenceService.get<string>(AI_CONNECT_MANUSCRIPT_OVERVIEW, 'full') === 'compact'
       ? 'compact'
       : 'full';
   }
