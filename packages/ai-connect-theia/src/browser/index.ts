@@ -12,6 +12,8 @@ export * from './ai-verification-service';
 export * from './ai-request-log-service';
 export * from './ai-history-service';
 export * from './ai-rotation-contribution';
+export * from './ai-connect-stream-controller';
+export * from './ai-connect-pause-contribution';
 export * from './model-config-widget';
 export * from './model-config-view-contribution';
 export * from './ai-debug-widget';

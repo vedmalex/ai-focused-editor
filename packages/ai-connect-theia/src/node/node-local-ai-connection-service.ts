@@ -8,7 +8,8 @@ import {
   AiModelDiscoveryResult,
   LocalAiConnectionService,
   LocalAiStreamClient,
-  LocalAiStreamWireEvent
+  LocalAiStreamWireEvent,
+  toPortableFileInputs
 } from '../common';
 import {
   buildAiConnectConfigInput,
@@ -43,7 +44,10 @@ export class NodeLocalAiConnectionService implements LocalAiConnectionService {
         messages: request.messages,
         parameters: request.parameters,
         workingDirectory: request.workingDirectory,
-        logContext: request.logContext
+        logContext: request.logContext,
+        // data-URL/base64/url attachments are plain strings, so they cross the
+        // JSON-RPC boundary intact (only function-carrying clientTools cannot).
+        attachments: toPortableFileInputs(request.attachments)
       }, { signal: abortController.signal });
 
       for await (const event of stream) {
@@ -93,7 +97,8 @@ export class NodeLocalAiConnectionService implements LocalAiConnectionService {
         messages: request.messages,
         parameters: request.parameters,
         workingDirectory: request.workingDirectory,
-        logContext: request.logContext
+        logContext: request.logContext,
+        attachments: toPortableFileInputs(request.attachments)
       });
 
       return this.toGenerateResult(result);

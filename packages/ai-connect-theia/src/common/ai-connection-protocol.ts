@@ -47,12 +47,29 @@ export interface AiClientToolDefinition {
   execute: (args: Record<string, unknown>) => string | { content?: string; isError?: boolean } | Promise<string | { content?: string; isError?: boolean }>;
 }
 
+/**
+ * Portable, book-agnostic model INPUT attachment (image/PDF/other file). A
+ * consumer fills EITHER `dataUrl`, OR `base64` + `mimeType`, OR `url`; all
+ * carriers are plain strings so the shape crosses the JSON-RPC boundary to
+ * local transports untouched (unlike a Blob/File). Converted to an ai-connect
+ * `PortableFileInput` via {@link toPortableFileInput}.
+ */
+export interface AiConnectAttachment {
+  dataUrl?: string;
+  base64?: string;
+  mimeType?: string;
+  name?: string;
+  url?: string;
+}
+
 export interface AiGenerateRequest {
   messages: MessageInput[];
   parameters?: GenerateParameters;
   workingDirectory?: string;
   logContext?: Record<string, unknown>;
   clientTools?: AiClientToolDefinition[];
+  /** Model INPUT files (image/PDF/…); see {@link AiConnectAttachment}. */
+  attachments?: AiConnectAttachment[];
 }
 
 export interface AiGenerateResult {
@@ -93,6 +110,12 @@ export type AiStreamEvent =
 
 export interface AiStreamOptions {
   signal?: AbortSignal;
+  /**
+   * Pause signal (ai-connect `GenerateCallOptions.pauseSignal`): firing it stops
+   * reading and yields a terminal `{type:'paused'}` that KEEPS the accumulated
+   * partial answer — unlike `signal` (abort), which discards partials.
+   */
+  pauseSignal?: AbortSignal;
 }
 
 export interface AiConnectionService {

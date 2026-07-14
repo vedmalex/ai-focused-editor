@@ -1,4 +1,5 @@
 import type {
+  ImageMessage,
   LanguageModel,
   LanguageModelMessage,
   LanguageModelResponse,
@@ -18,11 +19,14 @@ import type {
 import { inject, injectable } from '@theia/core/shared/inversify';
 import {
   AiClientToolDefinition,
+  AiConnectAttachment,
   AiConnectionProfile,
   AiConnectionService,
   AiGenerateRequest,
-  AiGenerateResult
+  AiGenerateResult,
+  imageMessageToAttachment
 } from '../common';
+import { AiConnectStreamController } from './ai-connect-stream-controller';
 import { AiHistoryService } from './ai-history-service';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
 import { AiRequestLogService, AiRequestLogSession } from './ai-request-log-service';
@@ -56,6 +60,9 @@ export abstract class AiConnectLanguageModelBase implements LanguageModel {
   @inject(AiRequestLogService)
   protected readonly requestLog!: AiRequestLogService;
 
+  @inject(AiConnectStreamController)
+  protected readonly streamController!: AiConnectStreamController;
+
   /** The failover chain this model routes through (active alias vs a pinned alias). */
   protected abstract resolveFailoverChain(): Promise<AiConnectionProfile[]>;
 
@@ -83,6 +90,7 @@ export abstract class AiConnectLanguageModelBase implements LanguageModel {
       messages: this.toAiConnectMessages(request.messages),
       parameters: request.settings,
       clientTools: this.toClientTools(request.tools),
+      attachments: this.collectAttachments(request.messages),
       logContext: {
         command: 'theia-ai-language-model-request',
         modelId: this.id,
@@ -123,12 +131,17 @@ export abstract class AiConnectLanguageModelBase implements LanguageModel {
     logSession?: AiRequestLogSession
   ): AsyncIterable<LanguageModelStreamResponsePart> {
     const failures: string[] = [];
+    // Register with the pause controller for the whole request so the user
+    // "Pause AI Response" command can stop the newest stream (pauseSignal keeps
+    // the accumulated partial, unlike the abort signal). done() runs in finally.
+    const registration = this.streamController.register();
+    try {
     for (const [index, profile] of chain.entries()) {
       const legIndex = (logSession?.attemptedBase ?? 0) + index;
       const startedAt = Date.now();
       let emitted = false;
       try {
-        for await (const event of this.aiConnection.streamText(profile, generateRequest, { signal })) {
+        for await (const event of this.aiConnection.streamText(profile, generateRequest, { signal, pauseSignal: registration.pauseSignal })) {
           if (event.type === 'delta') {
             if (event.text.length > 0) {
               emitted = true;
@@ -182,6 +195,9 @@ export abstract class AiConnectLanguageModelBase implements LanguageModel {
             : message);
         }
       }
+    }
+    } finally {
+      registration.done();
     }
   }
 
@@ -278,11 +294,28 @@ export abstract class AiConnectLanguageModelBase implements LanguageModel {
       case 'thinking':
         return undefined;
       case 'image':
-        return {
-          role: this.toAiConnectRole(message.actor),
-          content: '[Image content omitted by the AI Focused Editor ai-connect text adapter.]'
-        };
+        // Images are carried out-of-band as request attachments (see
+        // collectAttachments); skip them in the text message list so the same
+        // image is never double-counted as both an attachment and a text stub.
+        return undefined;
     }
+  }
+
+  /**
+   * Extracts model INPUT attachments from the request messages. Today the only
+   * source is Theia {@link ImageMessage}s (Theia's UserRequest carries no file
+   * attachment channel), each mapped to a portable {@link AiConnectAttachment};
+   * the array is threaded end to end so a future file/PDF channel can extend it
+   * without touching the transport code.
+   */
+  protected collectAttachments(messages: LanguageModelMessage[]): AiConnectAttachment[] | undefined {
+    const attachments: AiConnectAttachment[] = [];
+    for (const message of messages) {
+      if (message.type === 'image') {
+        attachments.push(imageMessageToAttachment((message as ImageMessage).image));
+      }
+    }
+    return attachments.length > 0 ? attachments : undefined;
   }
 
   protected toAiConnectRole(actor: LanguageModelMessage['actor']): MessageRole {

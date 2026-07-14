@@ -15,7 +15,7 @@ import type {
   LocalAiConnectionService,
   LocalAiStreamWireEvent
 } from '../common';
-import { LocalAiConnectionService as LocalAiConnectionServiceSymbol } from '../common';
+import { LocalAiConnectionService as LocalAiConnectionServiceSymbol, toPortableFileInputs } from '../common';
 import { LocalAiStreamClientImpl } from './local-ai-stream-client';
 import {
   buildAiConnectConfigInput,
@@ -49,7 +49,8 @@ export class BrowserAiConnectionService implements AiConnectionService {
       parameters: request.parameters,
       workingDirectory: request.workingDirectory,
       logContext: request.logContext,
-      clientTools: request.clientTools
+      clientTools: request.clientTools,
+      attachments: toPortableFileInputs(request.attachments)
     });
 
     return {
@@ -83,14 +84,21 @@ export class BrowserAiConnectionService implements AiConnectionService {
     }
 
     const client = createBrowserClient(defineConfig(buildAiConnectConfigInput(profile)));
+    const callOptions = options?.signal || options?.pauseSignal
+      ? {
+          ...(options.signal ? { signal: options.signal } : {}),
+          ...(options.pauseSignal ? { pauseSignal: options.pauseSignal } : {})
+        }
+      : undefined;
     const stream = client.stream({
       operation: 'text',
       messages: request.messages,
       parameters: request.parameters,
       workingDirectory: request.workingDirectory,
       logContext: request.logContext,
-      clientTools: request.clientTools
-    }, options?.signal ? { signal: options.signal } : undefined);
+      clientTools: request.clientTools,
+      attachments: toPortableFileInputs(request.attachments)
+    }, callOptions);
 
     for await (const event of stream) {
       if (event.type === 'delta') {

@@ -2,11 +2,12 @@ import '../../src/browser/style/index.css';
 import {
   ContainerModule
 } from '@theia/core/shared/inversify';
-import { PreferenceContribution } from '@theia/core/lib/common';
+import { CommandContribution, PreferenceContribution } from '@theia/core/lib/common';
 import {
   FrontendApplicationContribution,
   WidgetFactory
 } from '@theia/core/lib/browser';
+import { KeybindingContribution } from '@theia/core/lib/browser/keybinding';
 import { ServiceConnectionProvider } from '@theia/core/lib/browser/messaging/service-connection-provider';
 import { bindViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { LanguageModelProvider } from '@theia/ai-core';
@@ -29,6 +30,8 @@ import { AiHistoryService } from './ai-history-service';
 import { AiRequestLogService } from './ai-request-log-service';
 import { ModelConfigViewContribution } from './model-config-view-contribution';
 import { ModelConfigWidget } from './model-config-widget';
+import { AiConnectStreamController } from './ai-connect-stream-controller';
+import { AiConnectPauseContribution } from './ai-connect-pause-contribution';
 
 /**
  * Main frontend module of the reusable ai-connect Theia extension: binds the
@@ -64,6 +67,12 @@ export default new ContainerModule(bind => {
   bind(AiRequestLogService).toSelf().inSingletonScope();
   bind(AiProfileStatusBarContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(AiProfileStatusBarContribution);
+  // Streaming pause: the controller tracks active streams; the contribution
+  // exposes the "Pause AI Response" command + keybinding (no menu placement).
+  bind(AiConnectStreamController).toSelf().inSingletonScope();
+  bind(AiConnectPauseContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(AiConnectPauseContribution);
+  bind(KeybindingContribution).toService(AiConnectPauseContribution);
   bind(PreferenceContribution).toConstantValue(AiConnectPreferenceContribution);
   bindViewContribution(bind, ModelConfigViewContribution);
   bind(ModelConfigWidget).toSelf();

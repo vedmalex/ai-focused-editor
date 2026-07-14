@@ -282,6 +282,12 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 51 — ai-connect 0.10.1: стриминг tool-loop + мультимодальный вход + пауза (shipped)
+
+- **Обновление до ai-connect 0.10.1** (в нём реализована наша FT-001): `stream({clientTools})` гоняет полный потоковый tool-loop с событиями `tool-call`/`tool-result`. Обход через `generate()` удалён — агенты снова стримятся. Live-проба насквозь: текст раунда 1 → tool-call → инструмент реально исполнился in-process → tool-result → текст раунда 2 → usage; два стриминг-раунда, второй с результатом инструмента.
+- **Генерик-возможности в пакете** (переиспользуемо любым Theia-app; книжное — отдельно у потребителя): (а) **image/PDF как вход модели** — конвертер Theia `ImageMessage`→ai-connect `attachments` (чистый `attachment-input.ts`: dataUrl/base64+mime/url → PortableFileInput; 9 тестов); раньше картинки выбрасывались заглушкой. Live-проба: `ImageMessage` дошёл до провайдера как `image_url`, модель увидела картинку. (б) **pause** — `AiConnectStreamController` (реестр активных стримов) + команда «Приостановить ответ ИИ» (ctrlcmd+alt+.): останавливает стрим, сохраняя написанное (в отличие от abort); api-транспорт. (в) **tool-activity** — прокинутые tool-части рендерит сам ai-chat-ui, кастомный UI не нужен.
+- Tool-события помечают плечо как «начатое» — failover не переиграет раунд с уже исполненными инструментами. 1072 теста / 59 файлов.
+
 ## Wave 50 — Агенты Theia AI работают с ai-connect из коробки (shipped)
 
 - **Полевой отчёт владельца** (@Code Reviewer в форке: «Couldn't find a ready language model») вскрыл устройство дефолтов Theia AI: агенты резолвят модели через модельные алиасы `default/*` (`LanguageModelAliasRegistry`), которые захардкожены на официальные id (`anthropic/claude-opus-4-8`, `openai/gpt-5.5`, `google/gemini-3.1-pro-preview`) — без их ключей ни один агент не находит ready-модель.
