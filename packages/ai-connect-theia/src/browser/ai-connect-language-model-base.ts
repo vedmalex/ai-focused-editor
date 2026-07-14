@@ -104,9 +104,50 @@ export abstract class AiConnectLanguageModelBase implements LanguageModel {
 
     const logSession = this.requestLog.beginRequest(request.agentId || 'chat', undefined, this.aliasForLog());
 
+    // The ai-connect client supports clientTools only on generate(), not on
+    // stream(): tool-carrying requests (agents) take the non-streaming path —
+    // the client runs the tool loop in-process and returns the final text.
+    // Plain chat requests keep streaming.
+    if ((generateRequest.clientTools?.length ?? 0) > 0) {
+      return this.generateWithTools(chain, request, generateRequest, logSession);
+    }
+
     return {
       stream: this.streamResponseParts(chain, request, generateRequest, abortController.signal, logSession)
     };
+  }
+
+  /**
+   * Non-streaming failover path for tool-carrying (agent) requests: profiles
+   * are tried in chain order; the whole answer arrives at once.
+   */
+  protected async generateWithTools(
+    chain: AiConnectionProfile[],
+    request: UserRequest,
+    generateRequest: AiGenerateRequest,
+    logSession?: AiRequestLogSession
+  ): Promise<LanguageModelResponse> {
+    const failures: string[] = [];
+    for (const [index, profile] of chain.entries()) {
+      const legIndex = (logSession?.attemptedBase ?? 0) + index;
+      const startedAt = Date.now();
+      try {
+        const result = await this.aiConnection.generate(profile, generateRequest);
+        logSession?.record(legIndex, profile, 'ok', Date.now() - startedAt, generateRequest, result);
+        await this.tryAppendChatEvent(request, result, generateRequest);
+        return { text: result.text };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logSession?.record(legIndex, profile, 'error', Date.now() - startedAt, generateRequest, undefined, message);
+        failures.push(`${profile.label ?? profile.id ?? profile.provider}: ${message}`);
+        if (index === chain.length - 1) {
+          throw new Error(failures.length > 1
+            ? `All AI profiles failed. ${failures.join('; ')}`
+            : message);
+        }
+      }
+    }
+    throw new Error(this.emptyChainMessage());
   }
 
   /**
