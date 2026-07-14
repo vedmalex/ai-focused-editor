@@ -28,12 +28,20 @@ import {
   attachableSourceKind,
   attachableSourceMimeType,
   buildChapterBundle,
+  countNonWhitespace,
+  decideSourceAttachRoute,
   isAttachableSource,
+  SourceLibraryBackendService,
   SourceLibraryService,
   type ChapterBundleItem,
   type ChapterBundleVariable,
+  type SourceLibraryBackendService as SourceLibraryBackendServiceType,
   type SourceLibraryService as SourceLibraryServiceType
 } from '../common';
+import {
+  AiCapabilityService,
+  AiProfilePreferenceService
+} from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import {
   AuthorMaterialTreeNode,
   ManuscriptTreeNode
@@ -149,6 +157,15 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
 
   @inject(SourceLibraryService)
   protected readonly sourceLibrary!: SourceLibraryServiceType;
+
+  @inject(SourceLibraryBackendService)
+  protected readonly sourceLibraryBackend!: SourceLibraryBackendServiceType;
+
+  @inject(AiCapabilityService)
+  protected readonly capabilities!: AiCapabilityService;
+
+  @inject(AiProfilePreferenceService)
+  protected readonly aiProfilePreferences!: AiProfilePreferenceService;
 
   @inject(FileService)
   protected readonly fileService!: FileService;
@@ -651,30 +668,147 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
 
   /** Attach `{variable, arg}` to the active chat session and reveal the chat. */
   protected async attach(target: ContextTarget, label: string): Promise<void> {
-    // Binary sources (image/PDF) carry a raw workspace-relative path as their
-    // arg; turn it into a full `imageContext` argument (path-based for images,
-    // inline bytes for PDF) before adding it to the session.
-    let arg = target.arg;
+    // Binary sources (image/PDF) attach as an `imageContext` variable, but only
+    // if the active model can actually read them — capability-gate them and,
+    // for a PDF, decide text-vs-vision before committing the payload.
     if (target.variable.id === IMAGE_CONTEXT_VARIABLE.id) {
-      const built = await this.buildImageContextArg(target.arg);
-      if (!built) {
-        this.messages.error(nls.localize(
-          'ai-focused-editor/chat-context/image-attach-failed',
-          'Could not attach "{0}" as an image.',
-          label
-        ));
-        return;
-      }
-      arg = built;
+      await this.attachBinarySource(target.arg, label);
+      return;
     }
+    await this.addVariable(target.variable, target.arg, label);
+  }
+
+  /**
+   * Attach a `{variable, arg}` (already a resolved context arg) to the active
+   * session, reveal the chat, and confirm. The shared tail of every attach.
+   */
+  protected async addVariable(variable: AIVariable, arg: string, label: string): Promise<void> {
     const session = this.chatService.getActiveSession() ?? this.chatService.createSession();
-    session.model.context.addVariables({ variable: target.variable, arg });
+    session.model.context.addVariables({ variable, arg });
     await this.revealChatView();
     this.messages.info(nls.localize(
       'ai-focused-editor/chat-context/attached',
       'Added "{0}" to the chat context.',
       label
     ));
+  }
+
+  /**
+   * Attach an image/PDF source, gating on the active model's vision capability:
+   *  - IMAGE: needs a vision model. If the model explicitly lacks vision, warn
+   *    and do not attach a payload it cannot read (unknown → proceed).
+   *  - PDF: prefer extracted text when the document yields substantial text
+   *    (cheaper, model-agnostic); otherwise fall back to vision when available,
+   *    else block a scanned PDF that no available model can read.
+   */
+  protected async attachBinarySource(path: string, label: string): Promise<void> {
+    const kind = attachableSourceKind(path);
+    const capabilities = await this.capabilities.getActiveAliasCapabilities();
+    // Explicit `false` blocks; `undefined` (unknown capabilities) never blocks.
+    const visionKnownUnsupported = capabilities?.supportsImageInput === false;
+
+    if (kind === 'image') {
+      if (visionKnownUnsupported) {
+        await this.warnNoVision();
+        return;
+      }
+      await this.attachAsVision(path, label);
+      return;
+    }
+
+    // PDF (document): route by whether text extraction yields meaningful text.
+    const extractedTextLength = await this.extractedTextLength(path);
+    // Unknown capabilities count as "has vision" so an unknown model is never
+    // blocked here (the block branch is reserved for a model we KNOW lacks it).
+    const hasVision = capabilities === undefined || capabilities.supportsImageInput === true;
+    const route = decideSourceAttachRoute({ hasVision, extractedTextLength });
+
+    if (route === 'text') {
+      if (visionKnownUnsupported) {
+        this.messages.info(nls.localize(
+          'ai-focused-editor/chat-context/pdf-text-fallback',
+          'The active model ("{0}") does not support images — attached the extracted text of PDF "{1}" instead.',
+          await this.activeAliasName(),
+          label
+        ));
+      } else {
+        this.messages.info(nls.localize(
+          'ai-focused-editor/chat-context/pdf-attached-as-text',
+          'Attached "{0}" as extracted text (cheaper and works on any model).',
+          label
+        ));
+      }
+      await this.addVariable(SOURCE_CONTEXT_VARIABLE, path, label);
+      return;
+    }
+
+    if (route === 'vision') {
+      await this.attachAsVision(path, label);
+      return;
+    }
+
+    // Blocked: a scanned PDF with no extractable text and no vision model.
+    this.messages.warn(nls.localize(
+      'ai-focused-editor/chat-context/pdf-blocked-scanned',
+      'PDF "{0}" has no extractable text and appears scanned — choose a vision model in Model Config to attach it as an image.',
+      label
+    ));
+  }
+
+  /** Attach a binary source as a Theia `imageContext` (vision) payload. */
+  protected async attachAsVision(path: string, label: string): Promise<void> {
+    const arg = await this.buildImageContextArg(path);
+    if (!arg) {
+      this.messages.error(nls.localize(
+        'ai-focused-editor/chat-context/image-attach-failed',
+        'Could not attach "{0}" as an image.',
+        label
+      ));
+      return;
+    }
+    await this.addVariable(IMAGE_CONTEXT_VARIABLE as AIVariable, arg, label);
+  }
+
+  /**
+   * Non-whitespace length of the text extracted from a source document, or 0
+   * when extraction fails/yields nothing. Reuses the backend `extractSourceText`
+   * path (the same one the `#source` variable resolves PDFs through).
+   */
+  protected async extractedTextLength(path: string): Promise<number> {
+    const rootUri = this.workspaceService.tryGetRoots()[0]?.resource;
+    if (!rootUri) {
+      return 0;
+    }
+    try {
+      const extraction = await this.sourceLibraryBackend.extractSourceText(rootUri.toString(), path);
+      return extraction.ok && extraction.text ? countNonWhitespace(extraction.text) : 0;
+    } catch (error) {
+      this.logger.error(`Failed to extract source text for chat-attach routing: ${path}`, error);
+      return 0;
+    }
+  }
+
+  /** Warn that the active model cannot read images (Task A gating message). */
+  protected async warnNoVision(): Promise<void> {
+    this.messages.warn(nls.localize(
+      'ai-focused-editor/chat-context/no-vision',
+      'The active model ("{0}") does not support images — attach a text source or choose a vision model in Model Config.',
+      await this.activeAliasName()
+    ));
+  }
+
+  /** Friendly name of the active alias for capability warnings (label, else id). */
+  protected async activeAliasName(): Promise<string> {
+    try {
+      const aliases = await this.aiProfilePreferences.listAliases();
+      const active = aliases.find(alias => alias.active);
+      if (active) {
+        return active.label || active.id;
+      }
+    } catch {
+      // Fall through to the raw id.
+    }
+    return this.aiProfilePreferences.getActiveAliasId();
   }
 
   /**

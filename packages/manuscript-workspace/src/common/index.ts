@@ -25,6 +25,7 @@ export * from './obsidian-plugin-protocol';
 export * from './office-preview';
 export * from './relations-map';
 export * from './office-preview-protocol';
+export * from './source-attach-routing';
 export * from './source-library-protocol';
 export * from './word-at-offset';
 export * from './yaml-schema-validator';
