@@ -25,7 +25,7 @@ import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { parse } from 'yaml';
-import { ManuscriptWorkspaceService, ObsidianPluginBackendService } from '../common';
+import { ManuscriptWorkspaceBackendService, ManuscriptWorkspaceService, ObsidianPluginBackendService } from '../common';
 import {
   extractMetadataFields,
   flattenManifestRows,
@@ -147,6 +147,9 @@ export class BookDoctorContribution
 
   @inject(ObsidianPluginBackendService)
   protected readonly obsidianPlugin!: ObsidianPluginBackendService;
+
+  @inject(ManuscriptWorkspaceBackendService)
+  protected readonly workspaceBackend!: ManuscriptWorkspaceBackendService;
 
   registerCommands(registry: CommandRegistry): void {
     registry.registerCommand(BookDoctorCommands.DOCTOR, {
@@ -284,6 +287,10 @@ export class BookDoctorContribution
     // A backend hiccup must never break the doctor, so it degrades to no fix.
     const obsidianPlugin = await this.gatherObsidianPluginInput(rootUri);
 
+    // Raw workspace settings text (JSONC), for the legacy-AI-settings migration.
+    // Absent file -> undefined, so the check is skipped.
+    const workspaceSettings = await this.readTextIfExists(root.resolve('.theia/settings.json'));
+
     return assembleBookDoctorReport({
       scaffoldEntries,
       exists,
@@ -299,7 +306,8 @@ export class BookDoctorContribution
       existingEntityCards,
       effectiveEntityTypes,
       entityTypeProblems,
-      obsidianPlugin
+      obsidianPlugin,
+      workspaceSettings
     });
   }
 
@@ -577,6 +585,9 @@ export class BookDoctorContribution
       case 'update-obsidian-plugin':
         // params: [installed version, bundled version]
         return nls.localize('ai-focused-editor/doctor/problem-update-obsidian-plugin', 'Update the Obsidian companion plugin (installed {0}, bundled {1}).', ...params);
+      case 'migrate-ai-settings':
+        // params: [legacy key count, comma-joined key list]
+        return nls.localize('ai-focused-editor/doctor/problem-migrate-ai-settings', 'Migrate {0} legacy AI setting(s) to aiConnect.* ({1}).', ...params);
       default:
         return fix.description;
     }
@@ -605,6 +616,11 @@ export class BookDoctorContribution
       case 'entity-type-problem':
         // params: [offending id-or-code, parser message]
         return nls.localize('ai-focused-editor/doctor/problem-entity-type-problem-label', 'entities/types.yaml: problem with "{0}"', ...(finding.params ?? []));
+      case 'legacy-ai-settings':
+        // params: [legacy key count, comma-joined key list]
+        return nls.localize('ai-focused-editor/doctor/problem-legacy-ai-settings-label', 'Legacy AI settings in .theia/settings.json', ...(finding.params ?? []));
+      case 'legacy-ai-settings-malformed':
+        return nls.localize('ai-focused-editor/doctor/problem-legacy-ai-settings-malformed-label', '.theia/settings.json could not be parsed');
       default:
         return finding.label;
     }
@@ -632,6 +648,11 @@ export class BookDoctorContribution
       case 'entity-type-problem':
         // {1} is the parser's (English) validation message; {0} is the id-or-code.
         return nls.localize('ai-focused-editor/doctor/problem-entity-type-problem-detail', '{1}', ...params);
+      case 'legacy-ai-settings':
+        // params: [legacy key count, comma-joined key list]
+        return nls.localize('ai-focused-editor/doctor/problem-legacy-ai-settings-detail', '{0} legacy aiFocusedEditor.ai.* key(s) in .theia/settings.json ({1}). These have been renamed to aiConnect.*; apply the fix to migrate them.', ...params);
+      case 'legacy-ai-settings-malformed':
+        return nls.localize('ai-focused-editor/doctor/problem-legacy-ai-settings-malformed-detail', '.theia/settings.json is not valid JSON, so the doctor could not check it for legacy AI settings. Fix the JSON syntax, then re-run the doctor to migrate any aiFocusedEditor.ai.* keys.', ...params);
       default:
         return finding.detail;
     }
@@ -857,6 +878,27 @@ export class BookDoctorContribution
                 'ai-focused-editor/doctor/obsidian-installed',
                 'Plugin installed into .obsidian/plugins/afe-companion — enable it in Obsidian (Community plugins).'
               ));
+          continue;
+        }
+        if (fix.aiSettings) {
+          // Routed through the backend: a surgical, comment-preserving rewrite of
+          // .theia/settings.json (jsonc-parser), never a wholesale FileService write.
+          const result = await this.workspaceBackend.migrateAiSettings(root.toString());
+          if (!result.ok) {
+            skipped += 1;
+            extraMessages.push(nls.localize(
+              'ai-focused-editor/doctor/ai-settings-malformed',
+              'Could not migrate AI settings: .theia/settings.json is not valid JSON. Fix the syntax and re-run.'
+            ));
+            continue;
+          }
+          const migrated = result.movedKeys.length + result.droppedKeys.length;
+          created += 1;
+          extraMessages.push(nls.localize(
+            'ai-focused-editor/doctor/ai-settings-migrated',
+            'Migrated {0} legacy AI setting(s) in .theia/settings.json to aiConnect.*.',
+            migrated
+          ));
           continue;
         }
         if (fix.manifest?.mode === 'append') {

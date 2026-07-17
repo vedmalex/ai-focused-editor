@@ -1,3 +1,5 @@
+import type { AiSettingsMigrationResult } from './ai-settings-migration';
+
 export const ManuscriptWorkspaceService = Symbol('ManuscriptWorkspaceService');
 export const ManuscriptWorkspaceBackendService = Symbol('ManuscriptWorkspaceBackendService');
 export const ManuscriptWorkspaceBackendServicePath = '/services/ai-focused-editor/manuscript-workspace';
@@ -84,4 +86,15 @@ export interface ManuscriptWorkspaceBackendService {
    * Returned diagnostics carry the resolved file uri (rootUri + path).
    */
   validateDocumentText(rootUri: string, path: string, text: string): Promise<WorkspaceDiagnostic[]>;
+  /**
+   * Migrate the legacy `aiFocusedEditor.ai.*` keys in the workspace
+   * `.theia/settings.json` to their neutral `aiConnect.*` twins, preserving the
+   * file's other keys, comments, and formatting (jsonc-parser surgical edits).
+   *
+   * A malformed settings file is reported (`ok: false`, `malformed: true`) and
+   * never rewritten; an absent file is a no-op success. The write only happens
+   * when at least one key actually changes. Backs the Book Doctor
+   * `migrate-ai-settings` fix.
+   */
+  migrateAiSettings(rootUri: string): Promise<AiSettingsMigrationResult>;
 }

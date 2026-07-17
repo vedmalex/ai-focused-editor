@@ -1,11 +1,9 @@
-export * from './ai-alias-resolution';
-export * from './ai-connection-protocol';
-export * from './ai-connect-config';
-export * from './ai-failover';
-export * from './ai-time-windows';
-export * from './ai-verification';
+// Connection/alias module extracted into the reusable ai-connect Theia
+// extension; re-exported here so existing `../common` imports keep resolving.
+export * from '@ai-focused-editor/ai-connect-theia/lib/common';
 export * from './ai-mode-protocol';
 export * from './ai-mode-layering';
+export * from './attachable-source';
 export * from './book-build-protocol';
 export * from './browser-auth-protocol';
 export * from './chapter-bundle';
@@ -14,19 +12,20 @@ export * from './diagram-spec';
 export * from './entity-hover';
 export * from './entity-mentions';
 export * from './entity-type-registry';
+export * from './text-range';
 export * from './entity-type-forms';
 export * from './excalidraw-canvas-ops';
 export * from './git-status-protocol';
 export * from './knowledge-templates';
 export * from './book-build-task-protocol';
 export * from './manuscript-workspace-protocol';
-export * from './model-provider-protocol';
 export * from './narrative-entity-protocol';
 export * from './narrative-graph-protocol';
 export * from './obsidian-plugin-protocol';
 export * from './office-preview';
 export * from './relations-map';
 export * from './office-preview-protocol';
+export * from './source-attach-routing';
 export * from './source-library-protocol';
 export * from './word-at-offset';
 export * from './yaml-schema-validator';

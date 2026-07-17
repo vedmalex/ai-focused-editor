@@ -3,6 +3,7 @@ import { parse } from 'yaml';
 import { bookScaffoldEntries } from './book-scaffold';
 import { flattenManifestRows } from './book-config-forms';
 import {
+  aiSettingsMigrationChecks,
   assembleBookDoctorReport,
   citationsParseFinding,
   deriveChapterTitle,
@@ -669,5 +670,57 @@ describe('assembleBookDoctorReport', () => {
     expect(report.findings.some(finding => finding.code === 'entity-tag-unknown-kind')).toBe(false);
     // The parse problem is surfaced informationally.
     expect(report.findings.some(finding => finding.code === 'entity-type-problem')).toBe(true);
+  });
+
+  test('surfaces a legacy-AI-settings migration fix + finding from the workspace settings', () => {
+    const report = assembleBookDoctorReport({
+      scaffoldEntries: bookScaffoldEntries(),
+      exists: existsIn(ALL_SCAFFOLD_PATHS),
+      contentHasMarkdown: true,
+      manifestExists: true,
+      manifestRows: flattenManifestRows(parse('version: 1\ncontent:\n  - path: content/chapter-01.md\n')),
+      manuscriptCandidates: [{ path: 'content/chapter-01.md' }],
+      metadata: { title: 'Book', author: 'Author' },
+      workspaceSettings: JSON.stringify({ 'aiFocusedEditor.ai.activeAlias': 'deep' })
+    });
+    const fix = report.fixes.find(f => f.code === 'migrate-ai-settings');
+    expect(fix?.path).toBe('.theia/settings.json');
+    expect(fix?.aiSettings?.legacyKeys).toEqual(['aiFocusedEditor.ai.activeAlias']);
+    expect(report.findings.some(f => f.code === 'legacy-ai-settings' && f.severity === 'warning')).toBe(true);
+  });
+});
+
+describe('aiSettingsMigrationChecks', () => {
+  test('returns nothing for an absent settings file', () => {
+    expect(aiSettingsMigrationChecks(undefined)).toEqual({});
+  });
+
+  test('returns nothing when no legacy keys are present', () => {
+    expect(aiSettingsMigrationChecks(JSON.stringify({ 'aiConnect.activeAlias': 'deep' }))).toEqual({});
+  });
+
+  test('produces a fix + warning finding when legacy keys are present', () => {
+    const { fix, finding } = aiSettingsMigrationChecks(
+      JSON.stringify({
+        'aiFocusedEditor.ai.endpoints': [],
+        'aiFocusedEditor.ai.activeAlias': 'deep'
+      })
+    );
+    expect(fix?.code).toBe('migrate-ai-settings');
+    expect(fix?.aiSettings?.legacyKeys).toEqual([
+      'aiFocusedEditor.ai.endpoints',
+      'aiFocusedEditor.ai.activeAlias'
+    ]);
+    expect(fix?.params).toEqual([2, 'aiFocusedEditor.ai.endpoints, aiFocusedEditor.ai.activeAlias']);
+    expect(finding?.code).toBe('legacy-ai-settings');
+    expect(finding?.severity).toBe('warning');
+    expect(finding?.kind).toBe('settings');
+  });
+
+  test('reports malformed settings without offering a fix', () => {
+    const { fix, finding } = aiSettingsMigrationChecks('{ "aiFocusedEditor.ai.activeAlias": }');
+    expect(fix).toBeUndefined();
+    expect(finding?.code).toBe('legacy-ai-settings-malformed');
+    expect(finding?.severity).toBe('warning');
   });
 });

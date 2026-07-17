@@ -31,12 +31,12 @@ import {
   type KnowledgeKind,
   type KnowledgeMeta
 } from '../common/knowledge-generation';
-import { AiProfilePreferenceService } from './ai-profile-preference-service';
-import { AiRequestLogService } from './ai-request-log-service';
+import { AiProfilePreferenceService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
+import { AiRequestLogService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import {
   AiHistoryRecord,
   AiHistoryService
-} from './ai-history-service';
+} from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 
 const AI_FOCUSED_EDITOR_CATEGORY = 'AI Focused Editor';

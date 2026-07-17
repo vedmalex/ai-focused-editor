@@ -51,6 +51,13 @@
       "problem-entity-tag-unknown-kind-detail": "Тегов с неизвестным типом «{0}» — {1} (различных id: {2}). Определите этот тип, чтобы его теги создавали карточки.",
       "problem-entity-type-problem-label": "entities/types.yaml: проблема с типом «{0}»",
       "problem-entity-type-problem-detail": "{1}",
+      "problem-migrate-ai-settings": "Перенести устаревшие AI-настройки на aiConnect.* ({0} шт.: {1}).",
+      "problem-legacy-ai-settings-label": "Устаревшие AI-настройки в .theia/settings.json",
+      "problem-legacy-ai-settings-detail": "Устаревших ключей aiFocusedEditor.ai.* в .theia/settings.json — {0} ({1}). Они переименованы в aiConnect.*; примените исправление, чтобы перенести их.",
+      "problem-legacy-ai-settings-malformed-label": "не удалось разобрать .theia/settings.json",
+      "problem-legacy-ai-settings-malformed-detail": ".theia/settings.json не является корректным JSON, поэтому диагностика не смогла проверить его на устаревшие AI-настройки. Исправьте синтаксис JSON и запустите диагностику снова, чтобы перенести ключи aiFocusedEditor.ai.*.",
+      "ai-settings-migrated": "Перенесено устаревших AI-настроек в .theia/settings.json на aiConnect.* — {0}.",
+      "ai-settings-malformed": "Не удалось перенести AI-настройки: .theia/settings.json не является корректным JSON. Исправьте синтаксис и запустите снова.",
       "report-more-files": "…и ещё {0}"
     }
   }

@@ -17,15 +17,31 @@ import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { ChatService } from '@theia/ai-chat/lib/common';
+import {
+  IMAGE_CONTEXT_VARIABLE,
+  ImageContextVariable
+} from '@theia/ai-chat/lib/common/image-context-variable';
+import { ILogger } from '@theia/core/lib/common/logger';
 import type { AIVariable } from '@theia/ai-core';
 import { FILE_VARIABLE } from '@theia/ai-core/lib/browser/file-variable-contribution';
 import {
+  attachableSourceKind,
+  attachableSourceMimeType,
   buildChapterBundle,
+  countNonWhitespace,
+  decideSourceAttachRoute,
+  isAttachableSource,
+  SourceLibraryBackendService,
   SourceLibraryService,
   type ChapterBundleItem,
   type ChapterBundleVariable,
+  type SourceLibraryBackendService as SourceLibraryBackendServiceType,
   type SourceLibraryService as SourceLibraryServiceType
 } from '../common';
+import {
+  AiCapabilityService,
+  AiProfilePreferenceService
+} from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import {
   AuthorMaterialTreeNode,
   ManuscriptTreeNode
@@ -84,7 +100,7 @@ interface ContextTarget {
 }
 
 interface CategoryPick extends QuickPickItem {
-  category: 'chapters' | 'sources' | 'entities' | 'notes' | 'citations' | 'excerpts' | 'diagrams' | 'book';
+  category: 'chapters' | 'sources' | 'images' | 'entities' | 'notes' | 'citations' | 'excerpts' | 'diagrams' | 'book';
 }
 
 interface ArtifactPick extends QuickPickItem {
@@ -142,11 +158,23 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
   @inject(SourceLibraryService)
   protected readonly sourceLibrary!: SourceLibraryServiceType;
 
+  @inject(SourceLibraryBackendService)
+  protected readonly sourceLibraryBackend!: SourceLibraryBackendServiceType;
+
+  @inject(AiCapabilityService)
+  protected readonly capabilities!: AiCapabilityService;
+
+  @inject(AiProfilePreferenceService)
+  protected readonly aiProfilePreferences!: AiProfilePreferenceService;
+
   @inject(FileService)
   protected readonly fileService!: FileService;
 
   @inject(EditorManager)
   protected readonly editorManager!: EditorManager;
+
+  @inject(ILogger)
+  protected readonly logger!: ILogger;
 
   registerCommands(commands: CommandRegistry): void {
     commands.registerCommand(ChatContextCommands.ADD_CONTEXT, {
@@ -198,6 +226,8 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
       this.variables.collectBookFiles()
     ]);
 
+    const images = sources.filter(source => isAttachableSource(source.path));
+
     const categories: CategoryPick[] = [
       {
         category: 'chapters',
@@ -208,6 +238,11 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
         category: 'sources',
         label: nls.localize('ai-focused-editor/chat-context/category-sources', 'Sources'),
         description: String(sources.length)
+      },
+      {
+        category: 'images',
+        label: nls.localize('ai-focused-editor/chat-context/category-images', 'Attach as Image...'),
+        description: String(images.length)
       },
       {
         category: 'entities',
@@ -250,7 +285,7 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
     }
 
     const artifacts = this.artifactPicksFor(pickedCategory.category, {
-      chapters, sources, entities, notes, citations, excerpts, diagrams, book
+      chapters, sources, images, entities, notes, citations, excerpts, diagrams, book
     });
     if (artifacts.length === 0) {
       this.messages.info(nls.localize(
@@ -276,6 +311,7 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
     data: {
       chapters: { path: string; title: string }[];
       sources: { path: string; label: string }[];
+      images: { path: string; label: string }[];
       entities: { id: string; label: string }[];
       notes: { path: string; label: string }[];
       citations: { id: string; label: string }[];
@@ -298,6 +334,16 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
           description: source.path,
           variable: SOURCE_CONTEXT_VARIABLE,
           arg: source.path
+        }));
+      case 'images':
+        // Binary sources (image/PDF) attach as the real bytes through Theia's
+        // `imageContext` variable; the raw path is the arg, resolved to a full
+        // image-context argument in `attach`.
+        return data.images.map(image => ({
+          label: image.label,
+          description: image.path,
+          variable: IMAGE_CONTEXT_VARIABLE as AIVariable,
+          arg: image.path
         }));
       case 'entities':
         return data.entities.map(entity => ({
@@ -383,9 +429,15 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
       if (node.sectionKind === 'sources') {
         // Excalidraw diagrams attach as a text summary (`#diagram`), not the
         // raw binary source text (`#source`).
-        return relative.toLowerCase().endsWith(DIAGRAM_EXTENSION)
-          ? { variable: DIAGRAM_CONTEXT_VARIABLE, arg: relative }
-          : { variable: SOURCE_CONTEXT_VARIABLE, arg: relative };
+        if (relative.toLowerCase().endsWith(DIAGRAM_EXTENSION)) {
+          return { variable: DIAGRAM_CONTEXT_VARIABLE, arg: relative };
+        }
+        // Images/PDFs attach as the actual bytes (`imageContext`) so a
+        // vision-capable model sees them, not the text-extraction `#source`.
+        if (isAttachableSource(relative)) {
+          return { variable: IMAGE_CONTEXT_VARIABLE as AIVariable, arg: relative };
+        }
+        return { variable: SOURCE_CONTEXT_VARIABLE, arg: relative };
       }
       if (node.sectionKind === 'knowledge') {
         return { variable: NOTE_CONTEXT_VARIABLE, arg: relative };
@@ -616,14 +668,192 @@ export class ChatContextActionsContribution implements CommandContribution, Menu
 
   /** Attach `{variable, arg}` to the active chat session and reveal the chat. */
   protected async attach(target: ContextTarget, label: string): Promise<void> {
+    // Binary sources (image/PDF) attach as an `imageContext` variable, but only
+    // if the active model can actually read them — capability-gate them and,
+    // for a PDF, decide text-vs-vision before committing the payload.
+    if (target.variable.id === IMAGE_CONTEXT_VARIABLE.id) {
+      await this.attachBinarySource(target.arg, label);
+      return;
+    }
+    await this.addVariable(target.variable, target.arg, label);
+  }
+
+  /**
+   * Attach a `{variable, arg}` (already a resolved context arg) to the active
+   * session, reveal the chat, and confirm. The shared tail of every attach.
+   */
+  protected async addVariable(variable: AIVariable, arg: string, label: string): Promise<void> {
     const session = this.chatService.getActiveSession() ?? this.chatService.createSession();
-    session.model.context.addVariables({ variable: target.variable, arg: target.arg });
+    session.model.context.addVariables({ variable, arg });
     await this.revealChatView();
     this.messages.info(nls.localize(
       'ai-focused-editor/chat-context/attached',
       'Added "{0}" to the chat context.',
       label
     ));
+  }
+
+  /**
+   * Attach an image/PDF source, gating on the active model's vision capability:
+   *  - IMAGE: needs a vision model. If the model explicitly lacks vision, warn
+   *    and do not attach a payload it cannot read (unknown → proceed).
+   *  - PDF: prefer extracted text when the document yields substantial text
+   *    (cheaper, model-agnostic); otherwise fall back to vision when available,
+   *    else block a scanned PDF that no available model can read.
+   */
+  protected async attachBinarySource(path: string, label: string): Promise<void> {
+    const kind = attachableSourceKind(path);
+    const capabilities = await this.capabilities.getActiveAliasCapabilities();
+    // Explicit `false` blocks; `undefined` (unknown capabilities) never blocks.
+    const visionKnownUnsupported = capabilities?.supportsImageInput === false;
+
+    if (kind === 'image') {
+      if (visionKnownUnsupported) {
+        await this.warnNoVision();
+        return;
+      }
+      await this.attachAsVision(path, label);
+      return;
+    }
+
+    // PDF (document): route by whether text extraction yields meaningful text.
+    const extractedTextLength = await this.extractedTextLength(path);
+    // Unknown capabilities count as "has vision" so an unknown model is never
+    // blocked here (the block branch is reserved for a model we KNOW lacks it).
+    const hasVision = capabilities === undefined || capabilities.supportsImageInput === true;
+    const route = decideSourceAttachRoute({ hasVision, extractedTextLength });
+
+    if (route === 'text') {
+      if (visionKnownUnsupported) {
+        this.messages.info(nls.localize(
+          'ai-focused-editor/chat-context/pdf-text-fallback',
+          'The active model ("{0}") does not support images — attached the extracted text of PDF "{1}" instead.',
+          await this.activeAliasName(),
+          label
+        ));
+      } else {
+        this.messages.info(nls.localize(
+          'ai-focused-editor/chat-context/pdf-attached-as-text',
+          'Attached "{0}" as extracted text (cheaper and works on any model).',
+          label
+        ));
+      }
+      await this.addVariable(SOURCE_CONTEXT_VARIABLE, path, label);
+      return;
+    }
+
+    if (route === 'vision') {
+      await this.attachAsVision(path, label);
+      return;
+    }
+
+    // Blocked: a scanned PDF with no extractable text and no vision model.
+    this.messages.warn(nls.localize(
+      'ai-focused-editor/chat-context/pdf-blocked-scanned',
+      'PDF "{0}" has no extractable text and appears scanned — choose a vision model in Model Config to attach it as an image.',
+      label
+    ));
+  }
+
+  /** Attach a binary source as a Theia `imageContext` (vision) payload. */
+  protected async attachAsVision(path: string, label: string): Promise<void> {
+    const arg = await this.buildImageContextArg(path);
+    if (!arg) {
+      this.messages.error(nls.localize(
+        'ai-focused-editor/chat-context/image-attach-failed',
+        'Could not attach "{0}" as an image.',
+        label
+      ));
+      return;
+    }
+    await this.addVariable(IMAGE_CONTEXT_VARIABLE as AIVariable, arg, label);
+  }
+
+  /**
+   * Non-whitespace length of the text extracted from a source document, or 0
+   * when extraction fails/yields nothing. Reuses the backend `extractSourceText`
+   * path (the same one the `#source` variable resolves PDFs through).
+   */
+  protected async extractedTextLength(path: string): Promise<number> {
+    const rootUri = this.workspaceService.tryGetRoots()[0]?.resource;
+    if (!rootUri) {
+      return 0;
+    }
+    try {
+      const extraction = await this.sourceLibraryBackend.extractSourceText(rootUri.toString(), path);
+      return extraction.ok && extraction.text ? countNonWhitespace(extraction.text) : 0;
+    } catch (error) {
+      this.logger.error(`Failed to extract source text for chat-attach routing: ${path}`, error);
+      return 0;
+    }
+  }
+
+  /** Warn that the active model cannot read images (Task A gating message). */
+  protected async warnNoVision(): Promise<void> {
+    this.messages.warn(nls.localize(
+      'ai-focused-editor/chat-context/no-vision',
+      'The active model ("{0}") does not support images — attach a text source or choose a vision model in Model Config.',
+      await this.activeAliasName()
+    ));
+  }
+
+  /** Friendly name of the active alias for capability warnings (label, else id). */
+  protected async activeAliasName(): Promise<string> {
+    try {
+      const aliases = await this.aiProfilePreferences.listAliases();
+      const active = aliases.find(alias => alias.active);
+      if (active) {
+        return active.label || active.id;
+      }
+    } catch {
+      // Fall through to the raw id.
+    }
+    return this.aiProfilePreferences.getActiveAliasId();
+  }
+
+  /**
+   * Build a Theia `imageContext` argument string for a binary source at the
+   * workspace-relative `path`.
+   *
+   * Images use a path-based reference (`{ wsRelativePath, name }`) — Theia's
+   * image resolver loads and base64-encodes the bytes on demand at send time,
+   * so the session never holds megabytes inline. PDFs are inlined with their
+   * bytes + an explicit `application/pdf` mime, because Theia's extension→mime
+   * table does not know `.pdf` and would otherwise mislabel it as
+   * `application/octet-stream`.
+   */
+  protected async buildImageContextArg(path: string): Promise<string | undefined> {
+    const kind = attachableSourceKind(path);
+    const mimeType = attachableSourceMimeType(path);
+    if (!kind || !mimeType) {
+      return undefined;
+    }
+    const name = this.baseName(path);
+    if (kind === 'image') {
+      return ImageContextVariable.createArgString({ wsRelativePath: path, name });
+    }
+    // PDF (document): read the bytes now and inline them with the correct mime.
+    const rootUri = this.workspaceService.tryGetRoots()[0]?.resource;
+    if (!rootUri) {
+      return undefined;
+    }
+    try {
+      const content = await this.fileService.readFile(rootUri.resolve(path));
+      const data = this.toBase64(content.value.buffer);
+      return ImageContextVariable.createArgString({ name, wsRelativePath: path, data, mimeType });
+    } catch (error) {
+      this.logger.error(`Failed to read binary source for chat attach: ${path}`, error);
+      return undefined;
+    }
+  }
+
+  /** Base64-encode raw bytes without a data-URL prefix. */
+  protected toBase64(buffer: Uint8Array): string {
+    let binary = '';
+    for (let i = 0; i < buffer.length; i++) {
+      binary += String.fromCharCode(buffer[i]);
+    }
+    return btoa(binary);
   }
 
   /**

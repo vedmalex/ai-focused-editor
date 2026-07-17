@@ -15,6 +15,7 @@ import {
   WorkspaceDiagnostic,
   YamlSchemaValidator
 } from '../common';
+import { type AiSettingsMigrationResult, migrateAiSettingsText } from '../common/ai-settings-migration';
 
 interface ManifestContentEntry {
   path?: unknown;
@@ -94,6 +95,26 @@ export class NodeManuscriptWorkspaceService implements ManuscriptWorkspaceBacken
     }
 
     return this.yamlSchemaValidator.validate(schemaKind, uri, document);
+  }
+
+  /**
+   * Rewrite the workspace `.theia/settings.json`, migrating the legacy
+   * `aiFocusedEditor.ai.*` keys to their neutral `aiConnect.*` twins. Reuses the
+   * pure {@link migrateAiSettingsText} (comment/format-preserving jsonc edits);
+   * an absent file is a no-op success and a malformed file is reported without a
+   * write. Persists only when the text actually changes.
+   */
+  async migrateAiSettings(rootUri: string): Promise<AiSettingsMigrationResult> {
+    const settingsPath = join(this.toRootPath(rootUri), '.theia', 'settings.json');
+    const text = await this.readTextIfExists(settingsPath);
+    if (text === undefined) {
+      return { ok: true, malformed: false, text: '', changed: false, movedKeys: [], droppedKeys: [] };
+    }
+    const result = migrateAiSettingsText(text);
+    if (result.ok && result.changed) {
+      await fs.writeFile(settingsPath, result.text, 'utf8');
+    }
+    return result;
   }
 
   /**

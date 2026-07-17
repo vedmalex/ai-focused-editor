@@ -2,7 +2,7 @@ import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { nls } from '@theia/core/lib/common/nls';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { CustomAgentFactory } from '@theia/ai-chat/lib/browser/custom-agent-factory';
-import { AiConnectTheiaLanguageModel } from './ai-connect-theia-language-model';
+import { AiConnectTheiaLanguageModel } from '@ai-focused-editor/ai-connect-theia/lib/browser';
 
 const MANUSCRIPT_AGENT_ID = 'ai-focused-editor.manuscript';
 

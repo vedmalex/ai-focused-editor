@@ -4,17 +4,14 @@
       "category": "AI Focused Editor",
       "modes-category": "AI-режимы",
       "submenu-label": "AI-режимы",
-
       "show-project-modes": "AI Focused Editor: Показать AI-режимы проекта",
       "copy-project-modes": "AI Focused Editor: Копировать сводку AI-режимов проекта",
       "open-project-modes-file": "AI Focused Editor: Открыть файл AI-режимов проекта",
-
       "modes-summary": "AI-режимов проекта: {0}: {1}",
       "no-modes-loaded": "AI-режимы проекта не загружены.",
       "modes-summary-with-diagnostics": "{0} Диагностик: {1}.",
       "modes-copied": "Скопировано AI-режимов проекта: {0} — в буфер обмена.",
       "open-workspace-first": "Откройте рабочую область рукописи, прежде чем открывать AI-режимы проекта.",
-
       "mode-unavailable": "Этот AI-режим больше недоступен; перезагрузите файл режимов.",
       "open-editor-first": "Откройте редактор, прежде чем запускать этот AI-режим.",
       "select-text-first": "Выделите текст, прежде чем запускать «{0}».",
@@ -26,12 +23,11 @@
       "run-progress": "AI Focused Editor: {0}…",
       "empty-result": "«{0}» вернул пустой результат.",
       "no-change": "«{0}» не дал изменений для применения.",
-      "result-ready": "Результат «{0}» готов к просмотру в diff и в наборе изменений чата.",
+      "result-ready": "Результат «{0}» готов — посмотрите сравнение и нажмите «Применить».",
       "mode-failed": "«{0}» завершился ошибкой: {1}",
       "agent-description": "Агент AI-режима проекта: {0}",
       "fragment-name": "AI Focused Editor: {0}",
       "fragment-fallback-description": "AI-режим проекта: {0}",
-
       "editor-label": "AI-режимы",
       "editor-caption": "Форма AI-режимов: {0}",
       "open-handler-label": "Редактор формы AI-режимов",
@@ -39,7 +35,6 @@
       "edit-global-modes": "Изменить глобальные AI-режимы…",
       "open-workspace-edit": "Откройте рабочую область рукописи, прежде чем редактировать AI-режимы.",
       "global-unavailable": "Не удалось определить расположение файла глобальных AI-режимов.",
-
       "origin-built-in": "встроенный",
       "origin-global": "глобальный",
       "origin-book": "книга",
@@ -50,7 +45,6 @@
       "override-in-book": "Переопределить в книге",
       "override-globally": "Переопределить глобально",
       "field-enabled": "Включён (снимите флажок, чтобы скрыть из меню, агентов и списков)",
-
       "context-selection": "Выделение",
       "context-word": "Слово под курсором",
       "context-chapter": "Вся глава",
@@ -58,11 +52,9 @@
       "apply-replace": "Заменить ввод",
       "apply-insert": "Вставить после ввода",
       "apply-chat": "Отправить в чат",
-
       "fix-problems": "Исправьте отмеченные проблемы режимов перед сохранением (id должны быть заданы, уникальны, и у каждого режима должен быть системный промпт).",
       "saved": "Сохранено: {0}.",
       "save-failed": "Не удалось сохранить AI-режимы: {0}",
-
       "problem-id-required": "Режим {0}: требуется id.",
       "problem-duplicate-id": "Режим {0}: повторяющийся id «{1}».",
       "problem-id-not-kebab-case": "Режим {0}: id «{1}» должен быть в kebab-case (строчные буквы, цифры, дефисы).",
@@ -72,7 +64,6 @@
       "problem-temperature-out-of-range": "Режим {0}: температура обычно находится в диапазоне от 0 до 2.",
       "problem-max-tokens-not-a-number": "Режим {0}: maxTokens должно быть целым числом.",
       "problem-max-tokens-out-of-range": "Режим {0}: maxTokens должно быть больше 0.",
-
       "loading": "Загрузка AI-режимов…",
       "heading": "AI-режимы",
       "help-1": "AI-промпты и агенты, заданные автором. Изменения применяются сразу: пункты меню и @агенты перерегистрируются при сохранении.",
@@ -84,13 +75,11 @@
       "save": "Сохранить",
       "reload": "Перезагрузить с диска",
       "help-2": "Сохранение пишет чистый YAML и сохраняет заголовок файла, ключ version и комментарии. Используйте «Открыть с помощью…», чтобы редактировать исходный файл.",
-
       "new-mode": "(новый режим)",
       "delete-mode-title": "Удалить этот режим",
       "delete": "Удалить",
       "badge-menu": "меню",
       "badge-agent": "@агент",
-
       "field-id": "Идентификатор",
       "field-id-ph": "слаг в kebab-case, например: improve-selection",
       "field-label": "Название",
@@ -109,7 +98,8 @@
       "field-user-prompt-ph": "необязательный префикс пользовательского сообщения",
       "field-temperature": "Температура",
       "field-max-tokens": "Макс. токенов",
-      "field-max-tokens-ph": "например: 800"
+      "field-max-tokens-ph": "например: 800",
+      "selection-elsewhere": "Выделение сделано в предпросмотре или другой панели — выделите текст в самом редакторе главы."
     }
   }
 }

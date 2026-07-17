@@ -37,6 +37,10 @@ import {
 } from './entity-type-registry';
 import { buildEntityYaml } from './entity-creation';
 import { OBSIDIAN_PLUGIN_ID } from './obsidian-plugin-protocol';
+import { scanLegacyAiSettings } from './ai-settings-migration';
+
+/** Workspace-relative path of the Theia settings file the AI-settings check reads. */
+export const WORKSPACE_SETTINGS_PATH = '.theia/settings.json';
 
 /**
  * Manifest reconstruction metadata attached to the special `manifest.yaml` fix.
@@ -97,6 +101,13 @@ export interface BookDoctorFix {
    */
   obsidianPlugin?: ObsidianPluginFix;
   /**
+   * Present on the legacy-AI-settings migration fix. Its presence tells the
+   * browser to route the fix through the backend `migrateAiSettings` call (a
+   * surgical, comment-preserving rewrite of `.theia/settings.json`) instead of
+   * the normal FileService create.
+   */
+  aiSettings?: AiSettingsMigrationFix;
+  /**
    * Stable kebab-case identifier for the fix kind (e.g. `create-folder`). The
    * rendering contribution maps it to a localized {@link description}; when
    * absent/unknown it falls back to the English {@link description}. Purely
@@ -110,10 +121,25 @@ export interface BookDoctorFix {
   params?: (string | number)[];
 }
 
+/**
+ * Marker attached to the legacy-AI-settings migration fix. Carries the legacy
+ * `aiFocusedEditor.ai.*` keys found in the workspace settings file (for the
+ * label/message); the node-side fix rewrites them to their `aiConnect.*` twins.
+ */
+export interface AiSettingsMigrationFix {
+  /** Legacy keys present in `.theia/settings.json` (mapping order). */
+  legacyKeys: string[];
+}
+
 /** A report-only observation the doctor surfaces but never auto-changes. */
 export interface BookDoctorFinding {
   /** Category, for grouping/telemetry. */
-  kind: 'metadata' | 'parse-error' | 'entity';
+  kind: 'metadata' | 'parse-error' | 'entity' | 'settings';
+  /**
+   * Optional severity hint for rendering (defaults to informational). Only the
+   * settings findings set this today (`warning`); the rest stay informational.
+   */
+  severity?: 'info' | 'warning';
   /** Short label (path or one-line summary). */
   label: string;
   /** Longer explanation, shown in the QuickPick detail row. */
@@ -234,6 +260,13 @@ export interface BookDoctorInput {
    * fix. Absent (or a `null` bundled version) yields no plugin fix.
    */
   obsidianPlugin?: ObsidianPluginCheckInput;
+  /**
+   * Raw text of the workspace `.theia/settings.json` (may be JSONC or malformed).
+   * `undefined` when the file is absent — then the legacy-AI-settings check is
+   * skipped entirely. Drives the `migrate-ai-settings` fix / `legacy-ai-settings`
+   * finding.
+   */
+  workspaceSettings?: string;
 }
 
 /** Resolved inputs for {@link obsidianPluginFindings}. */
@@ -807,6 +840,63 @@ export function obsidianPluginFindings(input: ObsidianPluginCheckInput): BookDoc
   return [];
 }
 
+/* ----------------------------------------------------------------------- */
+/* Legacy AI settings migration (aiFocusedEditor.ai.* -> aiConnect.*)         */
+/* ----------------------------------------------------------------------- */
+
+/**
+ * Legacy-AI-settings check — inspect the workspace `.theia/settings.json` text
+ * for retired `aiFocusedEditor.ai.*` keys:
+ *  - keys present → a `migrate-ai-settings` FIX (rewrites them to the neutral
+ *    `aiConnect.*` twins, comment-preserving) plus a `legacy-ai-settings`
+ *    report finding (severity warning);
+ *  - malformed JSON → a report-only `legacy-ai-settings-malformed` finding, and
+ *    NO fix (the doctor never rewrites an unparseable settings file);
+ *  - absent file / no legacy keys → nothing.
+ */
+export function aiSettingsMigrationChecks(rawSettings: string | undefined): {
+  fix?: BookDoctorFix;
+  finding?: BookDoctorFinding;
+} {
+  if (rawSettings === undefined) {
+    return {};
+  }
+  const scan = scanLegacyAiSettings(rawSettings);
+  if (scan.malformed) {
+    return {
+      finding: {
+        kind: 'settings',
+        severity: 'warning',
+        code: 'legacy-ai-settings-malformed',
+        label: `${WORKSPACE_SETTINGS_PATH} could not be parsed`,
+        detail: `${WORKSPACE_SETTINGS_PATH} is not valid JSON, so the doctor could not check it for legacy AI settings. Fix the JSON syntax, then re-run the doctor to migrate any aiFocusedEditor.ai.* keys.`
+      }
+    };
+  }
+  if (scan.legacyKeys.length === 0) {
+    return {};
+  }
+  const keyList = scan.legacyKeys.join(', ');
+  return {
+    fix: {
+      path: WORKSPACE_SETTINGS_PATH,
+      kind: 'file',
+      code: 'migrate-ai-settings',
+      params: [scan.legacyKeys.length, keyList],
+      description: `Migrate ${scan.legacyKeys.length} legacy AI setting(s) to aiConnect.* (${keyList}).`,
+      aiSettings: { legacyKeys: [...scan.legacyKeys] }
+    },
+    finding: {
+      kind: 'settings',
+      severity: 'warning',
+      code: 'legacy-ai-settings',
+      params: [scan.legacyKeys.length, keyList],
+      label: `Legacy AI settings in ${WORKSPACE_SETTINGS_PATH}`,
+      detail: `${scan.legacyKeys.length} legacy aiFocusedEditor.ai.* key(s) in ${WORKSPACE_SETTINGS_PATH} (${keyList}). These have been renamed to aiConnect.*; apply the fix to migrate them.`
+    }
+  };
+}
+
 /**
  * Compose the full {@link BookDoctorReport} from resolved inputs. Fixes are
  * de-duplicated by path, preserving the parents-before-children order the
@@ -885,6 +975,13 @@ export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorRepo
     }
   }
 
+  // Legacy AI settings: migrate retired aiFocusedEditor.ai.* keys in the
+  // workspace settings file to their neutral aiConnect.* twins.
+  const aiSettings = aiSettingsMigrationChecks(input.workspaceSettings);
+  if (aiSettings.fix) {
+    push(aiSettings.fix);
+  }
+
   const findings: BookDoctorFinding[] = [];
   if (input.metadata) {
     findings.push(...metadataFindings(input.metadata));
@@ -904,6 +1001,9 @@ export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorRepo
   findings.push(...entityCardOrphanFindings(occurrences, existingCards, effectiveTypes));
   findings.push(...entityUnknownKindFindings(occurrences, effectiveTypes));
   findings.push(...entityTypeProblemFindings(input.entityTypeProblems ?? []));
+  if (aiSettings.finding) {
+    findings.push(aiSettings.finding);
+  }
 
   return { fixes, findings };
 }

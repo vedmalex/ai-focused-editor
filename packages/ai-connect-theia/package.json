@@ -1,0 +1,45 @@
+{
+  "name": "@ai-focused-editor/ai-connect-theia",
+  "version": "0.1.0",
+  "description": "Reusable Theia extension: ai-connect endpoint/alias connection, failover, verification, request logging, and Model Config UI.",
+  "keywords": [
+    "theia-extension"
+  ],
+  "license": "UNLICENSED",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "main": "lib/common/index.js",
+  "typings": "lib/common/index.d.ts",
+  "dependencies": {
+    "@theia/ai-core": "^1.73.0",
+    "@theia/core": "^1.73.0",
+    "@theia/editor": "^1.73.0",
+    "@theia/filesystem": "^1.73.0",
+    "@theia/workspace": "^1.73.0",
+    "@vedmalex/ai-connect": "^0.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "reflect-metadata": "0.2.2",
+    "typescript": "~5.8.3"
+  },
+  "scripts": {
+    "build": "rm -rf lib && tsc && mkdir -p lib/node/i18n/ru && cp src/node/i18n/ru/*.json lib/node/i18n/ru/",
+    "clean": "rm -rf lib *.tsbuildinfo",
+    "watch": "tsc -w"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/ai-connect-frontend-module",
+      "backend": "lib/node/ai-connect-backend-module"
+    },
+    {
+      "frontend": "lib/browser/ai-rotation-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/ai-debug-frontend-module"
+    }
+  ]
+}

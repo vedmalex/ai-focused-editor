@@ -43,6 +43,7 @@ import {
   uniqueRelativePath
 } from '../common/entity-creation';
 import type { NarrativeEntityTagKindFromRegistry } from '../common/entity-type-registry';
+import { normalizeRange } from '../common/text-range';
 
 /** Semantic tag kinds the wrap quick-actions operate on (registry tag kinds). */
 type SemanticQuickActionKind = NarrativeEntityTagKindFromRegistry;
@@ -268,7 +269,7 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
       return;
     }
 
-    const selectedText = editor.document.getText(editor.selection);
+    const selectedText = editor.document.getText(normalizeRange(editor.selection));
     const label = selectedText.trim();
     if (!label) {
       await this.messages.warn(nls.localize(
@@ -308,7 +309,7 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
     const replaced = await editor.replaceText({
       source: `ai-focused-editor.semanticMarkdown.wrap.${kind}`,
       replaceOperations: [{
-        range: editor.selection,
+        range: normalizeRange(editor.selection),
         text: replacement
       }]
     });
@@ -350,7 +351,7 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
       return;
     }
 
-    const selection = editor.selection;
+    const selection = normalizeRange(editor.selection);
     const selectedText = editor.document.getText(selection);
     if (!selectedText.trim()) {
       await this.messages.warn(nls.localize(
@@ -637,7 +638,7 @@ export class SemanticMarkdownActionsContribution implements CommandContribution,
     if (!editor) {
       return false;
     }
-    return editor.document.getText(editor.selection).trim().length > 0;
+    return editor.document.getText(normalizeRange(editor.selection)).trim().length > 0;
   }
 
   protected async getRoot(): Promise<URI | undefined> {

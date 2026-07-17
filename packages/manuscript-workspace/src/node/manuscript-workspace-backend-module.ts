@@ -16,9 +16,6 @@ import {
   BookBuildServicePath,
   GitStatusService,
   GitStatusServicePath,
-  LocalAiConnectionService,
-  LocalAiConnectionServicePath,
-  LocalAiStreamClient,
   ManuscriptWorkspaceBackendService,
   ManuscriptWorkspaceBackendServicePath,
   NarrativeEntityBackendService,
@@ -37,7 +34,6 @@ import { NodeBookBuildService } from './node-book-build-service';
 import { NodeNarrativeGraphService } from './node-narrative-graph-service';
 import { NodeGitStatusService } from './node-git-status-service';
 import { NodeOfficePreviewService } from './node-office-preview-service';
-import { NodeLocalAiConnectionService } from './node-local-ai-connection-service';
 import { NodeManuscriptWorkspaceService } from './node-manuscript-workspace-service';
 import { NodeObsidianPluginService } from './node-obsidian-plugin-service';
 import {
@@ -56,8 +52,6 @@ export class ManuscriptWorkspaceBackendContribution implements BackendApplicatio
 }
 
 export default new ContainerModule(bind => {
-  bind(NodeLocalAiConnectionService).toSelf().inSingletonScope();
-  bind(LocalAiConnectionService).toService(NodeLocalAiConnectionService);
   bind(NodeGitStatusService).toSelf().inSingletonScope();
   bind(GitStatusService).toService(NodeGitStatusService);
   bind(NodeBookBuildService).toSelf().inSingletonScope();
@@ -80,13 +74,6 @@ export default new ContainerModule(bind => {
   bind(OfficePreviewService).toService(NodeOfficePreviewService);
   bind(NodeObsidianPluginService).toSelf().inSingletonScope();
   bind(ObsidianPluginBackendService).toService(NodeObsidianPluginService);
-  bind(ConnectionHandler).toDynamicValue(ctx =>
-    new RpcConnectionHandler<LocalAiStreamClient>(LocalAiConnectionServicePath, client => {
-      const service = ctx.container.get<NodeLocalAiConnectionService>(NodeLocalAiConnectionService);
-      service.addClient(client);
-      return service;
-    })
-  ).inSingletonScope();
   bind(ConnectionHandler).toDynamicValue(ctx =>
     new RpcConnectionHandler(BookBuildServicePath, () =>
       ctx.container.get(BookBuildService)

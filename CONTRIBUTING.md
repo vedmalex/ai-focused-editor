@@ -93,7 +93,7 @@ commits).
 - **Build steps live in committed scripts** (`scripts/copy-*-assets.mjs`),
   never in `apps/*/esbuild.mjs` — those files are regenerated and gitignored.
 - **Secrets**: API keys only in user-scope settings
-  (`aiFocusedEditor.ai.apiKeys`), auth secrets only in
+  (`aiConnect.apiKeys`), auth secrets only in
   `~/.ai-focused-editor/` or env. Nothing secret in workspace files.
 - **Book folders are user data**: the doctor never deletes or rewrites
   wholesale; `.obsidian/` vault state is gitignored.
