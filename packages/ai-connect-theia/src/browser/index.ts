@@ -10,6 +10,7 @@ export * from './browser-ai-connection-service';
 export * from './local-ai-stream-client';
 export * from './ai-verification-service';
 export * from './ai-capability-service';
+export * from './ai-health-service';
 export * from './ai-request-log-service';
 export * from './ai-history-service';
 export * from './ai-rotation-contribution';

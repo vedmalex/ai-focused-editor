@@ -6,6 +6,8 @@ import type {
   UsageInfo
 } from '@vedmalex/ai-connect';
 import type { AiRouteCapabilities } from './route-capabilities';
+import type { AiHealthReport } from './ai-health';
+import type { AiImageGenerationOptions, AiImageGenerationResult } from './ai-image';
 
 export const AiConnectionService = Symbol('AiConnectionService');
 export const LocalAiConnectionService = Symbol('LocalAiConnectionService');
@@ -144,6 +146,23 @@ export interface AiConnectionService {
    * to undefined when unknown (no route resolved / transport cannot report).
    */
   getCapabilities(profile: AiConnectionProfile): Promise<AiRouteCapabilities | undefined>;
+  /**
+   * Run a live, READ-ONLY two-stage health check against the route(s) the
+   * profile resolves to (Stage-1 endpoint reachability, Stage-2 a minimal model
+   * chat ping capturing latency). `opts.reachabilityOnly` runs the cheap Stage-1
+   * only. Never mutates router health. On the api path this uses the browser
+   * client's `checkHealth`; local transports (acp/cli/server) are answered by
+   * the backend over the JSON-RPC boundary.
+   */
+  checkHealth(profile: AiConnectionProfile, opts?: { reachabilityOnly?: boolean }): Promise<AiHealthReport>;
+  /**
+   * Generate one or more images from a text prompt via the route the profile
+   * resolves to (the route must support image OUTPUT — see
+   * {@link AiRouteCapabilities.supportsImageOutput}). Returns the generated
+   * images as raw base64 + mime type plus any non-fatal warnings. api transport
+   * only for now; local transports return an empty result with a warning.
+   */
+  generateImage(profile: AiConnectionProfile, prompt: string, options?: AiImageGenerationOptions): Promise<AiImageGenerationResult>;
 }
 
 /** Wire events pushed from the backend to the frontend during a local-transport stream. */
@@ -169,4 +188,6 @@ export interface LocalAiConnectionService {
   cancelStream(streamId: string): Promise<void>;
   /** Backend mirror of {@link AiConnectionService.getCapabilities} for local (acp/cli/server) transports. */
   getCapabilities(profile: AiConnectionProfile): Promise<AiRouteCapabilities | undefined>;
+  /** Backend mirror of {@link AiConnectionService.checkHealth} for local (acp/cli/server) transports. */
+  checkHealth(profile: AiConnectionProfile, opts?: { reachabilityOnly?: boolean }): Promise<AiHealthReport>;
 }

@@ -282,6 +282,11 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 58 — Health-диагностика + image-сервис (генерик, shipped)
+
+- **Health-диагностика в ai-connect-theia**: `checkHealth(profile)` через `client.checkHealth` (двухстадийно: доступность эндпоинта + минимальный пинг модели с латентностью); `AiHealthService.checkAll()` гоняет по всем настроенным алиасам; чистые типы+маппинг (`ai-health.ts`, тесты). Model Config получил панель «Проверить соединения» — по алиасу: зелёный ✓ reachable+model ok / жёлтый degraded / красный unreachable, с мс и деталью. Live-проба через playwright: живой mock → «✓ reachable, model ok 10 ms», мёртвый эндпоинт → «✗ unreachable Failed to fetch».
+- **Генерация изображений (сервис)**: `generateImage(profile, prompt, {size,aspectRatio,style})` через `client.generate({operation:'image'})`, картинки из `attachments` извлекаются `materializePortableFile` → {base64, mimeType, name}; гейт по `supportsImageOutput`. Чистые типы `ai-image.ts` с тестами. Книжная команда — следующей волной. 1122 теста / 65 файлов.
+
 ## Wave 57 — ai-connect 0.11.0: tools+attachments вместе, per-model caps (shipped)
 
 - **Обновление до 0.11.0** — закрывает обе наши FT: **FT-002** (clientTools + attachments в одном запросе, capability-гейтится, а не отклоняется) и **FT-003** (per-model capabilities: embeddings-модель на vision-провайдере больше не рапортует image input — наш гейт стал модель-точным без изменений кода). Плюс clientTools теперь на всех четырёх транспортах (api/acp/cli/server).

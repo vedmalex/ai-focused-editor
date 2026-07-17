@@ -5,6 +5,7 @@ import {
   AiConnectionProfile,
   AiGenerateRequest,
   AiGenerateResult,
+  AiHealthReport,
   AiModelDiscoveryResult,
   AiRouteCapabilities,
   CONSERVATIVE_LOCAL_CAPABILITIES,
@@ -12,6 +13,7 @@ import {
   LocalAiStreamClient,
   LocalAiStreamWireEvent,
   resolveCandidateCapabilities,
+  toAiHealthReport,
   toPortableFileInputs
 } from '../common';
 import {
@@ -175,6 +177,24 @@ export class NodeLocalAiConnectionService implements LocalAiConnectionService {
       return resolveCandidateCapabilities(candidates, profile.model) ?? CONSERVATIVE_LOCAL_CAPABILITIES;
     } catch {
       return CONSERVATIVE_LOCAL_CAPABILITIES;
+    } finally {
+      await client.dispose();
+    }
+  }
+
+  /**
+   * Backend mirror of the health check for local (acp/cli/server) transports:
+   * run the local client's READ-ONLY two-stage `checkHealth` and flatten it into
+   * our {@link AiHealthReport}. Disposed like the other local-client methods.
+   */
+  async checkHealth(profile: AiConnectionProfile, opts?: { reachabilityOnly?: boolean }): Promise<AiHealthReport> {
+    const client = createLocalClient(
+      defineConfig(buildAiConnectConfigInput(profile)),
+      this.buildLocalClientOptions(profile)
+    );
+    try {
+      const report = await client.checkHealth(opts?.reachabilityOnly ? { reachabilityOnly: true } : undefined);
+      return toAiHealthReport(report);
     } finally {
       await client.dispose();
     }

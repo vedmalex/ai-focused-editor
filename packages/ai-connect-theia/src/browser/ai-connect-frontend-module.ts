@@ -26,6 +26,7 @@ import { LocalAiStreamClientImpl } from './local-ai-stream-client';
 import { AiProfilePreferenceService } from './ai-profile-preference-service';
 import { AiVerificationService } from './ai-verification-service';
 import { AiCapabilityService } from './ai-capability-service';
+import { AiHealthService } from './ai-health-service';
 import { AiProfileStatusBarContribution } from './ai-profile-status-bar-contribution';
 import { AiHistoryService } from './ai-history-service';
 import { AiRequestLogService } from './ai-request-log-service';
@@ -67,6 +68,7 @@ export default new ContainerModule(bind => {
   bind(AiProfilePreferenceService).toSelf().inSingletonScope();
   bind(AiVerificationService).toSelf().inSingletonScope();
   bind(AiCapabilityService).toSelf().inSingletonScope();
+  bind(AiHealthService).toSelf().inSingletonScope();
   bind(AiHistoryService).toSelf().inSingletonScope();
   bind(AiRequestLogService).toSelf().inSingletonScope();
   bind(AiProfileStatusBarContribution).toSelf().inSingletonScope();
