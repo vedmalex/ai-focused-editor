@@ -282,6 +282,13 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 59 — Генерация изображений в книге (shipped)
+
+- **Команда «Сгенерировать изображение…»** в меню Manuscript: промпт (QuickInput) + пресет размера (1024², портрет, ландшафт) → `generateImage` через активный алиас → картинка сохраняется в книгу `sources/generated/<slug>-<n>.png` (slug транслитерацией промпта) → offer «Вставить в главу» вставляет `![alt](относительный-путь)` в активную главу. Изображение — реальный источник книги, значит потом прикладывается к чату (правило адресуемости). Чистый `generated-image.ts` (mime→ext, slug, путь; 12 тестов).
+- **Убран ошибочный жёсткий гейт**: `supportsImageOutput` рапортуется на уровне маршрута и **false даже для рабочих image-моделей** (проверено: openai-маршрут → false, но `generate({operation:'image'})` возвращает картинку). Блокировка отключила бы рабочую фичу — теперь проходим всегда, реальную невозможность озвучит ai-connect на запросе. Наблюдение заведено как ai-connect FT-004.
+- **Тонкий пункт «Проверить соединения»** в меню открывает Model Config с генерик-панелью health.
+- Live-проба через playwright насквозь: команда → промпт «лотос на воде» → файл `lotos-na-vode-1.png` в книге → мок получил `/v1/images/generations` (1024×1024) → приложение подтвердило «Inserted image reference into chapter-01.md». 1134 теста / 66 файлов; 10/10 flows.
+
 ## Wave 58 — Health-диагностика + image-сервис (генерик, shipped)
 
 - **Health-диагностика в ai-connect-theia**: `checkHealth(profile)` через `client.checkHealth` (двухстадийно: доступность эндпоинта + минимальный пинг модели с латентностью); `AiHealthService.checkAll()` гоняет по всем настроенным алиасам; чистые типы+маппинг (`ai-health.ts`, тесты). Model Config получил панель «Проверить соединения» — по алиасу: зелёный ✓ reachable+model ok / жёлтый degraded / красный unreachable, с мс и деталью. Live-проба через playwright: живой mock → «✓ reachable, model ok 10 ms», мёртвый эндпоинт → «✗ unreachable Failed to fetch».

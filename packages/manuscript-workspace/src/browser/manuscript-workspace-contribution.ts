@@ -2,11 +2,15 @@ import {
   Command,
   CommandContribution,
   CommandRegistry,
+  CommandService,
   MenuContribution,
   MenuModelRegistry,
-  MessageService
+  MessageService,
+  QuickInputService
 } from '@theia/core/lib/common';
 import { nls } from '@theia/core/lib/common/nls';
+import { BinaryBuffer } from '@theia/core/lib/common/buffer';
+import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 import { ApplicationShell } from '@theia/core/lib/browser/shell/application-shell';
 import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
@@ -32,6 +36,10 @@ import {
   AiModeRegistry,
   normalizeRange,
   generateWithFailover,
+  GENERATED_IMAGES_FOLDER,
+  buildGeneratedImageFilename,
+  generatedImageRelativePath,
+  imageAltFromPrompt,
   ManuscriptNode,
   ManuscriptWorkspaceService,
   NarrativeEntityService,
@@ -39,6 +47,7 @@ import {
 } from '../common';
 import type { AliasCheckVerdict, AliasLegVerdict, NarrativeEntityService as NarrativeEntityServiceType } from '../common';
 import { AiProfilePreferenceService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
+import { ModelConfigCommands } from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import { AiRequestLogService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import { AiVerificationService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import {
@@ -140,6 +149,26 @@ export namespace AiFocusedEditorCommands {
     'ai-focused-editor/workspace/review-chapter',
     CATEGORY_KEY
   );
+
+  export const GENERATE_IMAGE: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.ai.generateImage',
+      category: 'AI Focused Editor',
+      label: 'Generate Image...'
+    },
+    'ai-focused-editor/workspace/generate-image',
+    CATEGORY_KEY
+  );
+
+  export const CHECK_CONNECTIONS: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.ai.checkConnections',
+      category: 'AI Focused Editor',
+      label: 'Check Connections'
+    },
+    'ai-focused-editor/workspace/check-connections',
+    CATEGORY_KEY
+  );
 }
 
 @injectable()
@@ -158,6 +187,15 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
 
   @inject(AiProfilePreferenceService)
   protected readonly aiProfilePreferences!: AiProfilePreferenceService;
+
+  @inject(FileService)
+  protected readonly fileService!: FileService;
+
+  @inject(QuickInputService)
+  protected readonly quickInput!: QuickInputService;
+
+  @inject(CommandService)
+  protected readonly commandService!: CommandService;
 
   @inject(AiRequestLogService)
   protected readonly requestLog!: AiRequestLogService;
@@ -229,6 +267,242 @@ export class ManuscriptWorkspaceCommandContribution implements CommandContributi
     registry.registerCommand(AiFocusedEditorCommands.AI_REVIEW_CHAPTER, {
       execute: () => this.aiReviewCurrentChapter()
     });
+
+    registry.registerCommand(AiFocusedEditorCommands.GENERATE_IMAGE, {
+      execute: () => this.generateImage()
+    });
+
+    registry.registerCommand(AiFocusedEditorCommands.CHECK_CONNECTIONS, {
+      execute: () => this.checkConnections()
+    });
+  }
+
+  /**
+   * Task B — thin pointer into the generic health UI: the AiHealthService +
+   * Model Config view own the live "Check Connections" panel, so this command
+   * just opens that view (its health section runs on click). Deliberately
+   * duplicates none of the health logic.
+   */
+  protected async checkConnections(): Promise<void> {
+    await this.commandService.executeCommand(ModelConfigCommands.OPEN.id);
+  }
+
+  /**
+   * Generate an image from a text prompt and land it as a real book source under
+   * `sources/generated/`, so it is previewable AND later attachable to AI chat.
+   * Gates on the active alias's image-output capability, prompts for the
+   * description and a size preset, then writes every returned image and offers to
+   * insert a Markdown reference to the first one into the active chapter.
+   */
+  protected async generateImage(): Promise<void> {
+    // NOTE: we do NOT hard-gate on `supportsImageOutput`. ai-connect reports it
+    // per-ROUTE and false-by-default even for providers that DO generate images
+    // (verified: an openai route returns supportsImageOutput=false yet
+    // generate({operation:'image'}) succeeds). Blocking on it would disable a
+    // working feature. If a route genuinely cannot, ai-connect fails the request
+    // with a clean error, surfaced below.
+    const profile = await this.aiProfilePreferences.getConfiguredProfile();
+    if (!profile) {
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/generate-image-needs-profile',
+        'Configure an AI connection (add an endpoint and alias in the Model Config view) before generating an image.'
+      ));
+      return;
+    }
+
+    const prompt = await this.quickInput.input({
+      title: AiFocusedEditorCommands.GENERATE_IMAGE.label,
+      placeHolder: nls.localize('ai-focused-editor/workspace/generate-image-placeholder', 'e.g. a misty castle on a green hill at dawn'),
+      prompt: nls.localize('ai-focused-editor/workspace/generate-image-prompt', 'Describe the image to generate')
+    });
+    if (!prompt || !prompt.trim()) {
+      return;
+    }
+    const promptText = prompt.trim();
+
+    const size = await this.pickImageSize();
+    if (size === undefined) {
+      // The user dismissed the size picker (Escape) — abort the whole flow.
+      return;
+    }
+
+    const snapshot = await this.manuscriptWorkspace.getSnapshot();
+    if (!snapshot.rootUri) {
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/generate-image-needs-workspace',
+        'Open a manuscript workspace folder before generating an image.'
+      ));
+      return;
+    }
+
+    const progress = await this.messages.showProgress({
+      text: nls.localize('ai-focused-editor/workspace/generate-image-progress', 'AI Focused Editor: generating image...')
+    });
+    try {
+      const result = await this.aiConnection.generateImage(profile, promptText, { size });
+      for (const warning of result.warnings) {
+        await this.messages.warn(warning);
+      }
+      if (result.images.length === 0) {
+        await this.messages.warn(nls.localize(
+          'ai-focused-editor/workspace/generate-image-empty',
+          'The model returned no image for this prompt.'
+        ));
+        return;
+      }
+
+      const rootUri = new URI(snapshot.rootUri);
+      const folderUri = rootUri.resolve(GENERATED_IMAGES_FOLDER);
+      // createFolder is recursive (mkdirp); ensures sources/ and sources/generated/.
+      await this.fileService.createFolder(folderUri);
+
+      const savedPaths: string[] = [];
+      let firstImageUri: URI | undefined;
+      for (let index = 0; index < result.images.length; index++) {
+        const image = result.images[index];
+        const bytes = this.decodeBase64(image.base64);
+        if (!bytes) {
+          await this.messages.warn(nls.localize(
+            'ai-focused-editor/workspace/generate-image-decode-failed',
+            'Skipped an image the model returned in an unreadable form.'
+          ));
+          continue;
+        }
+        const fileName = buildGeneratedImageFilename(promptText, index, image.mimeType);
+        const targetUri = folderUri.resolve(fileName);
+        await this.fileService.createFile(targetUri, BinaryBuffer.wrap(bytes), { overwrite: true });
+        savedPaths.push(generatedImageRelativePath(promptText, index, image.mimeType));
+        if (!firstImageUri) {
+          firstImageUri = targetUri;
+        }
+      }
+
+      if (savedPaths.length === 0) {
+        await this.messages.warn(nls.localize(
+          'ai-focused-editor/workspace/generate-image-none-saved',
+          'No image could be saved from the model response.'
+        ));
+        return;
+      }
+
+      await this.tryAppendChatEvent({
+        kind: 'ai-generate-image',
+        command: AiFocusedEditorCommands.GENERATE_IMAGE.id,
+        data: {
+          prompt: promptText,
+          size,
+          savedPaths,
+          warnings: result.warnings
+        }
+      });
+
+      const markdownEditor = this.getMarkdownEditorForInsert();
+      if (markdownEditor && firstImageUri) {
+        const insertAction = nls.localize('ai-focused-editor/workspace/generate-image-insert-action', 'Insert into chapter');
+        const chosen = await this.messages.info(
+          nls.localize(
+            'ai-focused-editor/workspace/generate-image-saved',
+            'Saved {0} image(s) to {1}',
+            savedPaths.length,
+            savedPaths.join(', ')
+          ),
+          insertAction
+        );
+        if (chosen === insertAction) {
+          await this.insertGeneratedImageReference(markdownEditor, firstImageUri, promptText);
+        }
+      } else {
+        await this.messages.info(nls.localize(
+          'ai-focused-editor/workspace/generate-image-saved',
+          'Saved {0} image(s) to {1}',
+          savedPaths.length,
+          savedPaths.join(', ')
+        ));
+      }
+    } catch (error) {
+      await this.tryAppendChatEvent({
+        kind: 'ai-command-error',
+        command: AiFocusedEditorCommands.GENERATE_IMAGE.id,
+        data: {
+          error: error instanceof Error ? error.message : String(error)
+        }
+      });
+      await this.messages.error(nls.localize(
+        'ai-focused-editor/workspace/generate-image-failed',
+        'Image generation failed: {0}',
+        error instanceof Error ? error.message : String(error)
+      ));
+    } finally {
+      progress.cancel();
+    }
+  }
+
+  /**
+   * Minimal size preset picker (default 1024x1024). Returns the chosen size
+   * string, or `undefined` when the user dismissed the picker (so the caller can
+   * abort rather than silently defaulting).
+   */
+  protected async pickImageSize(): Promise<string | undefined> {
+    const items: { label: string; size: string }[] = [
+      { label: nls.localize('ai-focused-editor/workspace/generate-image-size-square', '1024 × 1024 (square)'), size: '1024x1024' },
+      { label: nls.localize('ai-focused-editor/workspace/generate-image-size-portrait', '1024 × 1792 (portrait)'), size: '1024x1792' },
+      { label: nls.localize('ai-focused-editor/workspace/generate-image-size-landscape', '1792 × 1024 (landscape)'), size: '1792x1024' }
+    ];
+    const picked = await this.quickInput.showQuickPick(items, {
+      title: AiFocusedEditorCommands.GENERATE_IMAGE.label,
+      placeholder: nls.localize('ai-focused-editor/workspace/generate-image-size-placeholder', 'Image size (default 1024 × 1024)')
+    });
+    return picked?.size;
+  }
+
+  /** Decode raw base64 (no data-url prefix) to bytes; undefined on malformed input. */
+  protected decodeBase64(base64: string): Uint8Array | undefined {
+    try {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The active Markdown editor eligible for an inline image reference, if any. */
+  protected getMarkdownEditorForInsert(): TextEditor | undefined {
+    const editor = this.editorManager.currentEditor?.editor ?? this.editorManager.activeEditor?.editor;
+    if (!editor) {
+      return undefined;
+    }
+    const isMarkdown = editor.uri.path.ext.toLowerCase() === '.md' || editor.document.languageId === 'markdown';
+    return isMarkdown ? editor : undefined;
+  }
+
+  /** Insert a relative `![alt](path)` reference at the caret of the active chapter. */
+  protected async insertGeneratedImageReference(editor: TextEditor, targetUri: URI, promptText: string): Promise<void> {
+    const relative = editor.uri.parent.relative(targetUri)?.toString() ?? targetUri.path.base;
+    const alt = imageAltFromPrompt(promptText);
+    const caret = editor.cursor;
+    const inserted = await editor.replaceText({
+      source: 'ai-focused-editor.ai.generateImage.insert',
+      replaceOperations: [{
+        range: { start: caret, end: caret },
+        text: `![${alt}](${relative})`
+      }]
+    });
+    if (inserted) {
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/workspace/generate-image-inserted',
+        'Inserted image reference into {0}',
+        editor.uri.path.base
+      ));
+    } else {
+      await this.messages.warn(nls.localize(
+        'ai-focused-editor/workspace/generate-image-insert-failed',
+        'Could not insert the image reference into the chapter.'
+      ));
+    }
   }
 
   /**
@@ -1063,6 +1337,12 @@ export class ManuscriptWorkspaceMenuContribution implements MenuContribution {
     });
     menus.registerMenuAction(menuPath, {
       commandId: AiFocusedEditorCommands.AI_REVIEW_CHAPTER.id
+    });
+    menus.registerMenuAction(menuPath, {
+      commandId: AiFocusedEditorCommands.GENERATE_IMAGE.id
+    });
+    menus.registerMenuAction(menuPath, {
+      commandId: AiFocusedEditorCommands.CHECK_CONNECTIONS.id
     });
 
     // Writer-facing AI actions belong in the editor context menu (spec FR-009).
