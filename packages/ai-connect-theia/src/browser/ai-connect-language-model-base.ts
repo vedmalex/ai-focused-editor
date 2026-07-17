@@ -86,19 +86,14 @@ export abstract class AiConnectLanguageModelBase implements LanguageModel {
       throw new Error(this.emptyChainMessage());
     }
 
-    const attachments = this.collectAttachments(request.messages);
-    // ai-connect 0.10.1 does not allow clientTools together with attachments
-    // ("supported only for text requests without attachments"). When the user
-    // attached an image/PDF the intent is for the model to SEE it, so the
-    // attachment wins and tools are dropped for this turn.
-    const clientTools = attachments && attachments.length > 0
-      ? undefined
-      : this.toClientTools(request.tools);
+    // ai-connect >= 0.11 runs the client-tool loop together with attachments
+    // (routing is capability-gated: the route must support both client-tool
+    // execution AND image/file input, else a clean unsupported_capability).
     const generateRequest: AiGenerateRequest = {
       messages: this.toAiConnectMessages(request.messages),
       parameters: request.settings,
-      clientTools,
-      attachments,
+      clientTools: this.toClientTools(request.tools),
+      attachments: this.collectAttachments(request.messages),
       logContext: {
         command: 'theia-ai-language-model-request',
         modelId: this.id,

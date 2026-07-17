@@ -282,6 +282,12 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 57 — ai-connect 0.11.0: tools+attachments вместе, per-model caps (shipped)
+
+- **Обновление до 0.11.0** — закрывает обе наши FT: **FT-002** (clientTools + attachments в одном запросе, capability-гейтится, а не отклоняется) и **FT-003** (per-model capabilities: embeddings-модель на vision-провайдере больше не рапортует image input — наш гейт стал модель-точным без изменений кода). Плюс clientTools теперь на всех четырёх транспортах (api/acp/cli/server).
+- **Снят последний обход** в `ai-connect-language-model-base.ts`: раньше при вложении снимали инструменты (0.10.1 не разрешал вместе) — теперь `stream({clientTools, attachments})` работает штатно. Live-проба: картинка + инструмент в одном запросе — раунд 1 несёт оба, инструмент исполнился, раунд 2 отдал финал (`delta→tool-call→tool-result→delta`).
+- `ModelReferenceEntry.contextLength` стал optional — совместимо (мы уже читаем как optional). 1104 теста / 63 файла.
+
 ## Wave 56 — Files-API: крупные файлы и ссылки по id (shipped)
 
 - **Большие файлы уже работают прозрачно**: ai-connect сам заливает oversize-PDF в Files-API провайдера и ссылается по `providerFileId` (при неудаче — фолбэк на inline). Наш attachment-путь (волны 51–52) отправляет документы как вложения, поэтому крупные PDF обрабатываются без нового кода — это и был основной вопрос «передача файлов».
