@@ -282,6 +282,12 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 61 — Вьюер картинок + режим вычитки как отдельная раскладка (shipped)
+
+- **Вьюер изображений (все форматы)**: клик по файлу-картинке (webp-скан и т.п.) раньше открывал текстовый редактор с «binary or unsupported encoding» — теперь ImageViewerWidget (opener priority-400 > текст). `common/image-mime.ts` — единый источник (14 форматов; browser-renderable набор). webp/png/jpg/gif/svg/bmp/ico/avif → картинка; tiff/heic → панель «конвертируйте в PNG/JPEG» (браузер их не декодирует), не битая картинка. Две дублирующие MIME-карты превью унифицированы. Live: webp — картинкой, tiff — сообщение.
+- **Вычитка — opt-in**: секция дерева появляется только при наличии наборов; доктор не создаёт папки всем книгам, создание по требованию командой (решение владельца — не все книги делают скан/OCR/перевод).
+- **«Режим вычитки» — отдельная раскладка** (как «Режим письма»): команда-переключатель показывает выделенный боковой вид со списком наборов (прогресс-чип, «+ Новый набор», refresh), сворачивает писательские панели (body-class), авто-открывает последний набор; выход восстанавливает раскладку. Клик по набору открывает двухпанельный редактор. Live-проба: режим → `afe-proofreading-mode`, вид со «set-a 1/2 ✓», набор открыт в редакторе. 1211 тестов / 71 файл; 10/10 flows.
+
 ## Wave 60 — Режимы вычитки (OCR + перевод), портирование ScanCheck (shipped)
 
 - **Двухпанельный вид вычитки** портирован из ScanCheck (Tauri) в наш редактор: скан слева, редактируемый текст справа (в режиме перевода — третья read-only панель с оригиналом). Один виджет, два режима переключаются наличием папки исходного текста (как в ScanCheck `isTranslationMode`). ReactWidget + Navigatable + Saveable, opener priority-500 на `proofreading/**/proofset.yaml`, картинка через тот же readFile→data-URI, что в превью.
