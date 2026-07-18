@@ -24,19 +24,7 @@ import {
 } from '../common';
 import { ChangeProposal, ChangeProposalService } from './change-proposal-service';
 import { ProofreadingAiContext, ProofreadingAiService } from './proofreading-ai-service';
-
-/** Extension → MIME for the left scan pane (mirrors the preview widget's map). */
-const IMAGE_MIME_BY_EXT: Record<string, string> = {
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  png: 'image/png',
-  webp: 'image/webp',
-  gif: 'image/gif',
-  bmp: 'image/bmp',
-  tiff: 'image/tiff',
-  tif: 'image/tiff',
-  svg: 'image/svg+xml'
-};
+import { imageMimeForPath } from '../common/image-mime';
 
 /** Skip inlining any single scan whose bytes exceed this (preview-widget parity). */
 const MAX_SINGLE_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -50,16 +38,6 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
   }
   return btoa(binary);
-}
-
-/** Lower-case extension (no dot) of a POSIX path, or '' when there is none. */
-function extensionOf(path: string): string {
-  const slash = path.lastIndexOf('/');
-  const dot = path.lastIndexOf('.');
-  if (dot <= slash + 1) {
-    return '';
-  }
-  return path.slice(dot + 1).toLowerCase();
 }
 
 /**
@@ -302,7 +280,7 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
    * over {@link MAX_SINGLE_IMAGE_BYTES}, or unreadable (preview-widget parity).
    */
   protected async readImageDataUri(uri: URI): Promise<string | undefined> {
-    const mime = IMAGE_MIME_BY_EXT[extensionOf(uri.path.toString())] ?? 'application/octet-stream';
+    const mime = imageMimeForPath(uri.path.toString()) ?? 'application/octet-stream';
     try {
       const stat = await this.fileService.resolve(uri, { resolveMetadata: true });
       if (stat.size > MAX_SINGLE_IMAGE_BYTES) {
