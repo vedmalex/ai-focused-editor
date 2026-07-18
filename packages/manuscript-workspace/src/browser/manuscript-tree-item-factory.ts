@@ -36,7 +36,8 @@ const SECTION_LABEL_DEFAULTS: Record<string, string> = {
   citations: 'Citations',
   sources: 'Sources',
   knowledge: 'Knowledge',
-  skills: 'Skills'
+  skills: 'Skills',
+  proofreading: 'Proofreading'
 };
 
 /**

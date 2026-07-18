@@ -73,8 +73,20 @@ export const DEFAULT_FIRST_CHAPTER_TITLE = 'Chapter 1';
 /** Placeholder title used when {@link bookScaffoldEntries} is called without options. */
 const DEFAULT_BOOK_TITLE = 'Untitled';
 
-/** The single scaffold entry that only makes sense for a brand-new book (see {@link isNewBookOnlyEntry}). */
+/** The starter first chapter — a new-book-only entry (see {@link isNewBookOnlyEntry}). */
 const CHAPTER_01_PATH = 'content/chapter-01.md';
+
+/** The book-native proofreading area — a new-book-only entry (see {@link isNewBookOnlyEntry}). */
+const PROOFREADING_AREA_PATH = 'proofreading';
+
+/**
+ * Scaffold paths that only make sense for a brand-new book: the doctor skips
+ * offering them on an established book (one whose `content/` already holds
+ * Markdown), while the New Book wizard materializes them unconditionally. The
+ * empty `proofreading/` area is created for new books but never nagged onto an
+ * existing book that legitimately has no proofreading sets.
+ */
+const NEW_BOOK_ONLY_PATHS: ReadonlySet<string> = new Set([CHAPTER_01_PATH, PROOFREADING_AREA_PATH]);
 
 /*
  * Canonical starter YAML shapes for the config files that carry no per-book
@@ -342,6 +354,17 @@ export function bookScaffoldEntries(options?: NewBookOptions): BookScaffoldEntry
     description: 'Seed style-guide skill: frontmatter (name/description) plus a body explaining how skills work.'
   });
 
+  // Proofreading working copies. Each proofreading "set" is a
+  // `proofreading/<slug>/` folder (created by the "New Proofreading Set…"
+  // command); the area itself is seeded empty for a new book. New-book-only, so
+  // the doctor never nags an established book that has no proofreading.
+  entries.push({
+    path: PROOFREADING_AREA_PATH,
+    kind: 'folder',
+    level: 'recommended',
+    description: 'Proofreading working copies: one folder per set (scan↔text pairing, verified state).'
+  });
+
   return entries;
 }
 
@@ -359,13 +382,13 @@ export function missingScaffoldEntries(
 }
 
 /**
- * True for the one entry that only makes sense when creating a brand-new book:
- * the starter `content/chapter-01.md`. The doctor can use this to skip offering
- * a starter chapter for an already-populated `content/` folder, while the New
- * Book wizard creates it unconditionally.
+ * True for an entry that only makes sense when creating a brand-new book — the
+ * starter `content/chapter-01.md` and the empty `proofreading/` area. The doctor
+ * uses this to skip offering these on an already-populated `content/` folder,
+ * while the New Book wizard creates them unconditionally.
  */
 export function isNewBookOnlyEntry(entry: BookScaffoldEntry): boolean {
-  return entry.path === CHAPTER_01_PATH;
+  return NEW_BOOK_ONLY_PATHS.has(entry.path);
 }
 
 /**

@@ -26,6 +26,7 @@ export * from './obsidian-plugin-protocol';
 export * from './office-preview';
 export * from './proofreading-model';
 export * from './proofreading-prompts';
+export * from './proofreading-scaffold';
 export * from './proofreading-sidecar';
 export * from './relations-map';
 export * from './office-preview-protocol';

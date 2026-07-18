@@ -41,6 +41,14 @@ import {
   skillFolderRelativePath,
   uniqueRelativePath
 } from '../common/entity-creation';
+import {
+  buildProofreadingSetSkeleton,
+  proofreadingSetFolder,
+  proofreadingSetFolders,
+  proofsetRelPath,
+  writeProofsetYaml,
+  type ProofreadingMode
+} from '../common';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import {
   AFE_MANUSCRIPT_SECTION_CONTEXT_KEY,
@@ -117,6 +125,11 @@ export namespace AuthorMaterialsCommands {
   export const NEW_SKILL: Command = Command.toLocalizedCommand(
     { id: 'ai-focused-editor.authorMaterials.newSkill', category: CATEGORY, label: 'New Skill...' },
     'ai-focused-editor/create/new-skill',
+    CATEGORY_KEY
+  );
+  export const NEW_PROOFREADING_SET: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.proofreading.newSet', category: CATEGORY, label: 'New Proofreading Set...' },
+    'ai-focused-editor/proofreading/new-set',
     CATEGORY_KEY
   );
 }
@@ -381,6 +394,10 @@ export class AuthorMaterialsCreateContribution
       execute: () => this.createSkill(),
       isEnabled: () => this.hasWorkspace()
     });
+    commands.registerCommand(AuthorMaterialsCommands.NEW_PROOFREADING_SET, {
+      execute: () => this.createProofreadingSet(),
+      isEnabled: () => this.hasWorkspace()
+    });
   }
 
   registerMenus(menus: MenuModelRegistry): void {
@@ -430,7 +447,8 @@ export class AuthorMaterialsCreateContribution
       { command: AuthorMaterialsCommands.NEW_KNOWLEDGE_NOTE, section: 'knowledge' },
       { command: AuthorMaterialsCommands.ADD_SOURCE_FILE, section: 'sources' },
       { command: AuthorMaterialsCommands.NEW_DIAGRAM, section: 'sources' },
-      { command: AuthorMaterialsCommands.NEW_SKILL, section: 'skills' }
+      { command: AuthorMaterialsCommands.NEW_SKILL, section: 'skills' },
+      { command: AuthorMaterialsCommands.NEW_PROOFREADING_SET, section: 'proofreading' }
     ];
   }
 
@@ -900,6 +918,115 @@ export class AuthorMaterialsCreateContribution
 
     await this.openAndRefresh(fileUri);
     this.messages.info(nls.localize('ai-focused-editor/create/skill-created', 'Created skill "{0}".', trimmedName));
+  }
+
+  /**
+   * Create a proofreading set: prompt for a name and OCR/translation mode, slug
+   * the name, then scaffold the book-native folders — `sources/scans/<slug>/` for
+   * scans and `proofreading/<slug>/text/` (+ `source/` in translation mode) for the
+   * working copy — and write `proofreading/<slug>/proofset.yaml`. When scans have
+   * already been dropped into the images folder, `pages[]` is seeded from them
+   * (verified:false); otherwise it starts empty and the widget populates on open.
+   * The sidecar opens in the priority-500 Proofreading editor.
+   */
+  protected async createProofreadingSet(): Promise<void> {
+    const root = await this.getRoot();
+    if (!root) {
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/proofreading/new-set-no-workspace',
+        'Open a manuscript workspace before creating a proofreading set.'
+      ));
+      return;
+    }
+
+    const name = await this.quickInput.input({
+      title: nls.localize('ai-focused-editor/proofreading/new-set-title', 'New Proofreading Set'),
+      prompt: nls.localize('ai-focused-editor/proofreading/new-set-prompt', 'Proofreading set name'),
+      placeHolder: nls.localize('ai-focused-editor/proofreading/new-set-placeholder', 'e.g. Chapter 1 scans'),
+      validateInput: async value => (value.trim()
+        ? undefined
+        : nls.localize('ai-focused-editor/proofreading/new-set-empty', 'Proofreading set name cannot be empty.'))
+    });
+    const trimmed = name?.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const mode = await this.pickProofreadingMode();
+    if (!mode) {
+      return;
+    }
+
+    const slug = createSemanticEntityId('proofset', trimmed);
+    const existing = await this.collectExistingRelPaths(root, 'proofreading');
+    const relFolder = uniqueRelativePath(proofreadingSetFolder(slug), candidate => existing.has(candidate));
+    const finalSlug = relFolder.slice(relFolder.lastIndexOf('/') + 1);
+    const folders = proofreadingSetFolders(finalSlug, mode);
+
+    // Scans usually arrive first: seed pages[] from any images already dropped.
+    const imageNames = await this.listFolderFileNames(root, folders.imagesFolder);
+    const set = buildProofreadingSetSkeleton({ slug: finalSlug, mode, imageNames });
+
+    await this.ensureFolder(root.resolve('proofreading'));
+    await this.ensureFolder(root.resolve('sources'));
+    await this.ensureFolder(root.resolve('sources/scans'));
+    await this.ensureFolder(root.resolve(folders.imagesFolder));
+    await this.ensureFolder(root.resolve(relFolder));
+    await this.ensureFolder(root.resolve(folders.textFolder));
+    if (folders.sourceTextFolder) {
+      await this.ensureFolder(root.resolve(folders.sourceTextFolder));
+    }
+
+    const fileUri = root.resolve(proofsetRelPath(finalSlug));
+    try {
+      await this.fileService.create(fileUri, writeProofsetYaml(undefined, set), { overwrite: false });
+    } catch (error) {
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/proofreading/new-set-failed',
+        'Could not create proofreading set: {0}',
+        this.detail(error)
+      ));
+      return;
+    }
+
+    await this.openAndRefresh(fileUri);
+    this.messages.info(nls.localize(
+      'ai-focused-editor/proofreading/new-set-created',
+      'Created proofreading set "{0}". Drop scans into {1}/ and OCR/text into {2}/.',
+      trimmed,
+      folders.imagesFolder,
+      folders.textFolder
+    ));
+  }
+
+  /** Quick-pick the proofreading workflow (OCR vs translation). */
+  protected async pickProofreadingMode(): Promise<ProofreadingMode | undefined> {
+    interface ModePick extends QuickPickItem {
+      mode: ProofreadingMode;
+    }
+    const picks: ModePick[] = [
+      {
+        label: nls.localize('ai-focused-editor/proofreading/mode-ocr', 'OCR proofreading'),
+        description: nls.localize('ai-focused-editor/proofreading/mode-ocr-detail', 'Correct recognized text against the scan'),
+        mode: 'ocr'
+      },
+      {
+        label: nls.localize('ai-focused-editor/proofreading/mode-translation', 'Translation proofreading'),
+        description: nls.localize('ai-focused-editor/proofreading/mode-translation-detail', 'Review a translation against the original text and scan'),
+        mode: 'translation'
+      }
+    ];
+    const picked = await this.quickInput.showQuickPick(picks, {
+      title: nls.localize('ai-focused-editor/proofreading/new-set-title', 'New Proofreading Set'),
+      placeholder: nls.localize('ai-focused-editor/proofreading/mode-placeholder', 'Choose a proofreading mode')
+    });
+    return picked?.mode;
+  }
+
+  /** Base file names (non-directory) directly under a workspace-relative folder ([] when absent). */
+  protected async listFolderFileNames(root: URI, relFolder: string): Promise<string[]> {
+    const stat = await this.fileService.resolve(root.resolve(relFolder)).catch(() => undefined);
+    return (stat?.children ?? []).filter(child => !child.isDirectory).map(child => child.name);
   }
 
   /**

@@ -940,6 +940,7 @@
 .afe-ico-sources { color: var(--theia-descriptionForeground); }
 .afe-ico-knowledge { color: var(--theia-charts-yellow, #cca700); }
 .afe-ico-skills { color: var(--theia-charts-purple, #b180d7); }
+.afe-ico-proofreading { color: var(--theia-charts-green, #89d185); }
 
 /* codicon icons in the tree need a small alignment nudge next to labels */
 .theia-TreeNode .codicon[class*='afe-ico-'] {

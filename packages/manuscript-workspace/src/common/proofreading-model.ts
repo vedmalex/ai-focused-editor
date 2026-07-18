@@ -244,3 +244,13 @@ export function computeProgress(set: Pick<ProofreadingSet, 'pages'>): {
   const percent = total === 0 ? 0 : Math.round((verified / total) * 100);
   return { verified, needsRework, total, percent };
 }
+
+/**
+ * Compact, locale-neutral progress chip for a proofreading set — the secondary
+ * text shown on the set's tree node (the `N/M ✓` shape, mirroring the header
+ * indicator `computeProgress` also feeds). Symbolic (digits + `✓`) so it needs
+ * no translation; an empty set reads `0/0 ✓`.
+ */
+export function formatProgressChip(progress: { verified: number; total: number }): string {
+  return `${progress.verified}/${progress.total} ✓`;
+}

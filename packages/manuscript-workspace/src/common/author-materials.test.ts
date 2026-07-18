@@ -201,6 +201,29 @@ describe('knowledge filtering', () => {
   });
 });
 
+describe('proofreading section', () => {
+  test('one leaf per set, numeric-sorted by slug, with a verified-progress chip', () => {
+    const sections = buildAuthorMaterialsSections(baseInput({
+      proofreadingSets: [
+        { slug: 'chapter-10', label: 'chapter-10', uri: `${ROOT}/proofreading/chapter-10/proofset.yaml`, verified: 0, total: 4, percent: 0 },
+        { slug: 'chapter-2', label: 'chapter-2', uri: `${ROOT}/proofreading/chapter-2/proofset.yaml`, verified: 3, total: 10, percent: 30 }
+      ]
+    }));
+    const proofreading = sections.find(section => section.kind === 'proofreading')!;
+    expect(proofreading.count).toBe(2);
+    expect(proofreading.items.map(item => item.label)).toEqual(['chapter-2', 'chapter-10']);
+    expect(proofreading.items[0].description).toBe('3/10 ✓');
+    expect(proofreading.items[0].uri).toBe(`${ROOT}/proofreading/chapter-2/proofset.yaml`);
+  });
+
+  test('no sets => an empty proofreading section', () => {
+    const sections = buildAuthorMaterialsSections(baseInput());
+    const proofreading = sections.find(section => section.kind === 'proofreading')!;
+    expect(proofreading.count).toBe(0);
+    expect(proofreading.items).toEqual([]);
+  });
+});
+
 describe('allowed material types', () => {
   test('accepts documents, images, and structural files; rejects dotfiles and binaries', () => {
     expect(isAllowedMaterialFile('notes.md')).toBe(true);
@@ -291,7 +314,7 @@ describe('dynamic author-type sections', () => {
     const sections = buildAuthorMaterialsSections(baseInput({ effectiveEntityTypes: effective }));
     expect(sections.map(section => section.kind)).toEqual([
       'manuscript', 'characters', 'terms', 'artifacts', 'locations', 'factions',
-      'citations', 'sources', 'knowledge', 'skills'
+      'citations', 'sources', 'knowledge', 'skills', 'proofreading'
     ]);
   });
 

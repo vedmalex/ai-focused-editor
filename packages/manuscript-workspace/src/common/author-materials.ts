@@ -3,6 +3,7 @@ import type { NarrativeEntity } from './narrative-entity-protocol';
 import { BASE_ENTITY_TYPES, mergeEntityTypes } from './entity-type-registry';
 import type { EffectiveEntityType, EntityTypeProblem } from './entity-type-registry';
 import type { CitationEntry, SourceLibraryItem } from './source-library-protocol';
+import { formatProgressChip } from './proofreading-model';
 
 /**
  * Pure grouping logic for the unified author-materials navigator. This module
@@ -26,7 +27,8 @@ export type BaseAuthorMaterialsSectionKind =
   | 'citations'
   | 'sources'
   | 'knowledge'
-  | 'skills';
+  | 'skills'
+  | 'proofreading';
 
 /**
  * Navigator section kind. The nine built-in sections stay literals (so switch/
@@ -50,7 +52,8 @@ export const AUTHOR_MATERIALS_SECTION_ORDER: readonly BaseAuthorMaterialsSection
   'citations',
   'sources',
   'knowledge',
-  'skills'
+  'skills',
+  'proofreading'
 ];
 
 const SECTION_LABELS: Record<BaseAuthorMaterialsSectionKind, string> = {
@@ -62,7 +65,8 @@ const SECTION_LABELS: Record<BaseAuthorMaterialsSectionKind, string> = {
   citations: 'Citations',
   sources: 'Sources',
   knowledge: 'Knowledge',
-  skills: 'Skills'
+  skills: 'Skills',
+  proofreading: 'Proofreading'
 };
 
 /** True for one of the nine built-in section kinds (has a static English label). */
@@ -131,6 +135,28 @@ export interface SkillEntry {
   uri: string;
 }
 
+/**
+ * A proofreading "set" discovered under `proofreading/<slug>/proofset.yaml`.
+ * `verified`/`total`/`percent` come from `computeProgress` over the sidecar's
+ * pages (computed by the browser scanner), rendered as a progress chip on the
+ * set's tree node; opening the item opens the sidecar (the priority-500
+ * Proofreading editor takes over).
+ */
+export interface ProofreadingSetEntry {
+  /** Set folder slug, e.g. `chapter-1`; stable id within the section. */
+  slug: string;
+  /** Display label for the set (the folder slug). */
+  label: string;
+  /** Absolute URI of the set's `proofset.yaml`, opened on activation. */
+  uri: string;
+  /** Verified page count. */
+  verified: number;
+  /** Total page count. */
+  total: number;
+  /** Verified percent (0 when the set has no pages yet). */
+  percent: number;
+}
+
 export interface AuthorMaterialsInput {
   rootUri?: string;
   /** Manifest content (manuscript section is rendered from the live nodes). */
@@ -143,6 +169,8 @@ export interface AuthorMaterialsInput {
   knowledge: KnowledgeFileEntry[];
   /** Book-local AI skills scanned from `.prompts/skills/<slug>/SKILL.md`. */
   skills: SkillEntry[];
+  /** Proofreading sets scanned from `proofreading/<slug>/proofset.yaml` (defaults to none). */
+  proofreadingSets?: ProofreadingSetEntry[];
   /**
    * The EFFECTIVE entity types (built-in + author-declared) for the open root,
    * carried through so downstream consumers (dynamic sections, the type
@@ -354,6 +382,8 @@ export function buildAuthorMaterialsSections(input: AuthorMaterialsInput): Autho
   sections.push(makeSection('knowledge', countMaterialFiles(knowledge), knowledge, false));
   const skills = skillItems(input.skills);
   sections.push(makeSection('skills', skills.length, skills, false));
+  const proofreading = proofreadingItems(input.proofreadingSets ?? []);
+  sections.push(makeSection('proofreading', proofreading.length, proofreading, false));
 
   return sections;
 }
@@ -448,6 +478,24 @@ function skillItems(skills: SkillEntry[]): AuthorMaterialItem[] {
       uri: skill.uri
     }))
     .sort(byLabel);
+}
+
+/**
+ * One flat leaf per proofreading set, labelled by its folder slug, opening its
+ * `proofset.yaml`. The description carries the verified-progress chip
+ * (`N/M ✓`); sets are sorted numeric-aware by slug so `chapter-2` precedes
+ * `chapter-10`.
+ */
+function proofreadingItems(sets: ProofreadingSetEntry[]): AuthorMaterialItem[] {
+  return sets
+    .map(set => ({
+      id: set.slug,
+      label: set.label?.trim() || set.slug,
+      description: formatProgressChip({ verified: set.verified, total: set.total }),
+      uri: set.uri
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label, undefined, { numeric: true })
+      || left.id.localeCompare(right.id));
 }
 
 function byLabel(left: AuthorMaterialItem, right: AuthorMaterialItem): number {
