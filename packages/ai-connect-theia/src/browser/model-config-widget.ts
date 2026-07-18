@@ -18,6 +18,7 @@ import React from '@theia/core/shared/react';
 import type {
   AiAliasDescriptor,
   AiEndpointDescriptor,
+  AiEndpointHealth,
   AiRouteCapabilities,
   AliasCheckVerdict,
   AliasLegVerdict,
@@ -29,6 +30,7 @@ import type {
 import { AiConnectionService, parseV1Import } from '../common';
 import { AiVerificationService } from './ai-verification-service';
 import { AiCapabilityService } from './ai-capability-service';
+import { AiHealthService } from './ai-health-service';
 import {
   AiProviderCatalogEntry,
   getAiProviderCatalog,
@@ -85,6 +87,9 @@ export class ModelConfigWidget extends ReactWidget {
   @inject(AiCapabilityService)
   protected readonly capabilities!: AiCapabilityService;
 
+  @inject(AiHealthService)
+  protected readonly health!: AiHealthService;
+
   @inject(PreferenceService)
   protected readonly preferenceService!: PreferenceService;
 
@@ -117,6 +122,9 @@ export class ModelConfigWidget extends ReactWidget {
   // Stage 2: last per-alias check result, keyed by alias id.
   protected aliasChecks: Record<string, AliasCheckVerdict> = {};
   protected checkingAliasId: string | undefined;
+  // Live connection-health check (per configured alias); no cache, runs on click.
+  protected checkingHealth = false;
+  protected healthResults: AiEndpointHealth[] | undefined;
   protected readonly refreshDisposables = new DisposableCollection();
 
   @postConstruct()
@@ -173,6 +181,7 @@ export class ModelConfigWidget extends ReactWidget {
       React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-config/connections-heading', 'AI Connections')),
       this.renderTopStatus(status),
       this.renderCapabilities(),
+      this.renderHealthSection(),
       this.renderEndpointsSection(),
       this.renderAliasesSection(),
       this.renderImportSection()
@@ -236,6 +245,109 @@ export class ModelConfigWidget extends ReactWidget {
         `${name} ${on ? '✓' : '✗'}`
       ))
     );
+  }
+
+  // ===========================================================================
+  // Connection health (live checkHealth across configured aliases)
+  // ===========================================================================
+
+  /**
+   * "Check Connections" action + a live per-alias health list. Runs on click via
+   * {@link AiHealthService.checkAll} (no cache — health is a live probe); a
+   * spinner label shows while running. Each alias renders green (ok), yellow
+   * (degraded), or red (unreachable) with latency + detail. Never throws.
+   */
+  protected renderHealthSection(): React.ReactNode {
+    return React.createElement(
+      'div',
+      { className: 'afe-model-config-section' },
+      React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-config/health-heading', 'Connection Health')),
+      React.createElement(
+        'p',
+        { className: 'afe-model-config-help' },
+        nls.localize('ai-focused-editor/ai-config/health-help', 'Runs a live two-stage health check (reachability + a minimal model ping) across every configured alias. This is a live action and is not cached.')
+      ),
+      React.createElement(
+        'div',
+        { className: 'afe-model-config-actions' },
+        React.createElement(
+          'button',
+          {
+            className: 'theia-button',
+            type: 'button',
+            disabled: this.checkingHealth,
+            title: nls.localize('ai-focused-editor/ai-config/check-connections-title', 'Live health check of every configured alias (reachability + model ping)'),
+            onClick: () => { void this.runHealthCheck(); }
+          },
+          this.checkingHealth
+            ? nls.localize('ai-focused-editor/ai-config/checking-connections', 'Checking connections…')
+            : nls.localize('ai-focused-editor/ai-config/check-connections', 'Check Connections')
+        )
+      ),
+      this.renderHealthResults()
+    );
+  }
+
+  protected renderHealthResults(): React.ReactNode {
+    const results = this.healthResults;
+    if (!results) {
+      return undefined;
+    }
+    if (results.length === 0) {
+      return React.createElement('div', { className: 'afe-model-config-help' },
+        nls.localize('ai-focused-editor/ai-config/health-no-aliases', 'No aliases are configured to check.'));
+    }
+    return React.createElement(
+      'ul',
+      { className: 'afe-health-results' },
+      ...results.map(result => this.renderHealthRow(result))
+    );
+  }
+
+  protected renderHealthRow(result: AiEndpointHealth): React.ReactNode {
+    const icon = result.status === 'ok' ? '✓' : result.status === 'degraded' ? '⚠' : '✗';
+    const statusLabel = this.healthStatusLabel(result.status);
+    const parts: React.ReactNode[] = [
+      React.createElement('span', { key: 'name', className: 'afe-health-name' }, result.label),
+      React.createElement('span', { key: 'badge', className: `afe-health-badge ${result.status}` }, `${icon} ${statusLabel}`)
+    ];
+    if (typeof result.latencyMs === 'number') {
+      parts.push(React.createElement('span', { key: 'latency', className: 'afe-health-latency' },
+        nls.localize('ai-focused-editor/ai-config/health-latency', '{0} ms', Math.round(result.latencyMs))));
+    }
+    const children: React.ReactNode[] = [
+      React.createElement('div', { key: 'row', className: 'afe-health-row' }, ...parts)
+    ];
+    if (result.detail) {
+      children.push(React.createElement('div', { key: 'detail', className: 'afe-health-detail' }, result.detail));
+    }
+    return React.createElement('li', { key: result.id, className: 'afe-health-item' }, ...children);
+  }
+
+  protected healthStatusLabel(status: AiEndpointHealth['status']): string {
+    switch (status) {
+      case 'ok':
+        return nls.localize('ai-focused-editor/ai-config/health-ok', 'reachable, model ok');
+      case 'degraded':
+        return nls.localize('ai-focused-editor/ai-config/health-degraded', 'degraded');
+      default:
+        return nls.localize('ai-focused-editor/ai-config/health-unreachable', 'unreachable');
+    }
+  }
+
+  /** Run the live health check; the service never throws, but guard defensively. */
+  protected async runHealthCheck(): Promise<void> {
+    this.checkingHealth = true;
+    this.update();
+    try {
+      this.healthResults = await this.health.checkAll();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.healthResults = [{ id: '__error__', label: nls.localize('ai-focused-editor/ai-config/health-check-failed', 'Health check failed'), status: 'unreachable', detail }];
+    } finally {
+      this.checkingHealth = false;
+      this.update();
+    }
   }
 
   // ===========================================================================

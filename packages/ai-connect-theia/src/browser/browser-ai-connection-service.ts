@@ -1,6 +1,7 @@
 import {
   createBrowserClient,
-  defineConfig
+  defineConfig,
+  materializePortableFile
 } from '@vedmalex/ai-connect/browser';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import type {
@@ -8,6 +9,10 @@ import type {
   AiConnectionService,
   AiGenerateRequest,
   AiGenerateResult,
+  AiGeneratedImage,
+  AiHealthReport,
+  AiImageGenerationOptions,
+  AiImageGenerationResult,
   AiModelDiscoveryResult,
   AiRouteCapabilities,
   AiStreamEvent,
@@ -19,6 +24,8 @@ import type {
 import {
   LocalAiConnectionService as LocalAiConnectionServiceSymbol,
   resolveCandidateCapabilities,
+  toAiHealthReport,
+  toGeneratedImage,
   toPortableFileInputs
 } from '../common';
 import { LocalAiStreamClientImpl } from './local-ai-stream-client';
@@ -246,6 +253,72 @@ export class BrowserAiConnectionService implements AiConnectionService {
       return resolveCandidateCapabilities(candidates, profile.model);
     } catch {
       return undefined;
+    } finally {
+      await client.dispose();
+    }
+  }
+
+  /**
+   * Live two-stage health check. On the api path we build a browser client and
+   * call its READ-ONLY `checkHealth` (Stage-1 reachability + Stage-2 model ping),
+   * flattening ai-connect's per-route stages into {@link AiHealthReport}. Local
+   * transports (acp/cli/server) mirror discoverModels' node fallback and delegate
+   * to the backend. The client is disposed like the other api-path methods.
+   */
+  async checkHealth(profile: AiConnectionProfile, opts?: { reachabilityOnly?: boolean }): Promise<AiHealthReport> {
+    const transportKind = this.getTransportKind(profile);
+    if (transportKind !== 'api') {
+      return this.localAiConnection.checkHealth(profile, opts);
+    }
+
+    const client = createBrowserClient(defineConfig(buildAiConnectConfigInput(profile)));
+    try {
+      const report = await client.checkHealth(opts?.reachabilityOnly ? { reachabilityOnly: true } : undefined);
+      return toAiHealthReport(report);
+    } finally {
+      await client.dispose();
+    }
+  }
+
+  /**
+   * Generate images from a text prompt on the api transport: `client.generate`
+   * with `operation: 'image'`, then materialize each returned attachment into raw
+   * base64 + mime type. Warnings from the request are carried through, plus a
+   * note for any attachment that decoded without image bytes. Local transports
+   * cannot produce image output over the JSON-RPC boundary, so they return an
+   * empty result with an explanatory warning (never throw).
+   */
+  async generateImage(
+    profile: AiConnectionProfile,
+    prompt: string,
+    options?: AiImageGenerationOptions
+  ): Promise<AiImageGenerationResult> {
+    const transportKind = this.getTransportKind(profile);
+    if (transportKind !== 'api') {
+      return { images: [], warnings: ['Image generation is only available on the api (browser) transport.'] };
+    }
+
+    const client = createBrowserClient(defineConfig(buildAiConnectConfigInput(profile)));
+    try {
+      const result = await client.generate({
+        operation: 'image',
+        messages: [{ role: 'user', content: prompt }],
+        image: options
+          ? { size: options.size, aspectRatio: options.aspectRatio, style: options.style }
+          : undefined
+      });
+      const warnings = [...(result.warnings ?? [])];
+      const images: AiGeneratedImage[] = [];
+      for (const file of result.attachments ?? []) {
+        const payload = await materializePortableFile(file);
+        const image = toGeneratedImage(payload);
+        if (image) {
+          images.push(image);
+        } else {
+          warnings.push(`Dropped a generated file without image bytes: ${payload.name || payload.mimeType}`);
+        }
+      }
+      return { images, warnings };
     } finally {
       await client.dispose();
     }
