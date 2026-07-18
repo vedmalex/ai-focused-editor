@@ -11,6 +11,7 @@ import {
 } from '@theia/core/lib/browser';
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { ProofreadingWidget } from './proofreading-widget';
+import { ProofreadingAiService } from './proofreading-ai-service';
 import {
   ProofreadingCommandContribution,
   ProofreadingOpenHandler
@@ -24,6 +25,9 @@ import {
  * `manuscript-workspace-frontend-module.ts` while the two evolve in parallel.
  */
 export default new ContainerModule(bind => {
+  // AI orchestration for the four proofreading actions (reused by the widget).
+  bind(ProofreadingAiService).toSelf().inSingletonScope();
+
   // Transient: the WidgetManager caches one widget per proofset URI.
   bind(ProofreadingWidget).toSelf().inTransientScope();
   bind(WidgetFactory).toDynamicValue(ctx => ({

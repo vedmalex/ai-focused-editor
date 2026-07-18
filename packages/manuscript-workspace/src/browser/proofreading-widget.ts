@@ -12,14 +12,18 @@ import {
   computeProgress,
   isTranslationMode,
   matchPairs,
+  ProofreadingActionKind,
   ProofreadingPair,
   ProofreadingSet,
   ProofreadingSidecarProblem,
   parseProofsetYaml,
   setPageNeedsRework,
   setPageVerified,
+  splitDataUri,
   writeProofsetYaml
 } from '../common';
+import { ChangeProposal, ChangeProposalService } from './change-proposal-service';
+import { ProofreadingAiContext, ProofreadingAiService } from './proofreading-ai-service';
 
 /** Extension → MIME for the left scan pane (mirrors the preview widget's map). */
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
@@ -85,6 +89,12 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
   @inject(MessageService)
   protected readonly messageService!: MessageService;
 
+  @inject(ChangeProposalService)
+  protected readonly changeProposals!: ChangeProposalService;
+
+  @inject(ProofreadingAiService)
+  protected readonly aiService!: ProofreadingAiService;
+
   protected uri!: URI;
   protected rootUri: URI | undefined;
   protected loading = true;
@@ -109,6 +119,9 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
   protected currentImageError: string | undefined;
   /** Read-only original text for the translation-mode middle pane. */
   protected currentSourceText: string | undefined;
+
+  /** True while an AI action is in flight (disables the action buttons). */
+  protected aiRunning = false;
 
   /**
    * Set false during {@link load}; mutation handlers no-op until it flips true so
@@ -252,10 +265,13 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
     this.currentImageError = undefined;
     this.currentSourceText = undefined;
 
-    // Editable text: load once into the buffer; keep any unsaved edits.
-    if (!this.editBuffers.has(pair.base)) {
+    // Editable text: keep unsaved manual edits (dirty pages), but re-read a clean
+    // page from disk so an applied AI ChangeProposal (written to the working-copy
+    // file) is reflected on the next navigation to that page.
+    const isDirty = this.dirtyBases.has(pair.base);
+    if (!this.editBuffers.has(pair.base) || !isDirty) {
       const text = pair.missing ? undefined : await this.readTextIfExists(this.toUri(pair.textRelPath)!);
-      this.editBuffers.set(pair.base, text ?? '');
+      this.editBuffers.set(pair.base, text ?? this.editBuffers.get(pair.base) ?? '');
     }
 
     // Read-only source text (translation mode only).
@@ -374,6 +390,105 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
     this.set = setPageNeedsRework(this.set, pair.base, !this.needsRework(pair.base));
     this.setDirty(true);
     this.update();
+  }
+
+  // --- AI actions ---
+
+  /** Human label for an AI action button / proposal title. */
+  protected aiActionLabel(kind: ProofreadingActionKind): string {
+    switch (kind) {
+      case 'reOcr':
+        return nls.localize('ai-focused-editor/proofreading/ai-reocr', 'Re-OCR');
+      case 'proofread':
+        return nls.localize('ai-focused-editor/proofreading/ai-proofread', 'Proofread');
+      case 'translate':
+        return nls.localize('ai-focused-editor/proofreading/ai-translate', 'Translate');
+      case 'translationQa':
+        return nls.localize('ai-focused-editor/proofreading/ai-translation-qa', 'Translation QA');
+    }
+  }
+
+  /**
+   * Run one AI action for the current page: read the current text (+ source text
+   * and scan-image bytes), call the service, then offer the whole-page result as a
+   * ChangeProposal diff+Apply against the working-copy text file. Errors and
+   * warnings are surfaced via the message service; the flow never throws.
+   */
+  protected async runAiAction(kind: ProofreadingActionKind): Promise<void> {
+    const pair = this.currentPair;
+    if (!pair || !this.set || this.aiRunning) {
+      return;
+    }
+    this.aiRunning = true;
+    this.update();
+    try {
+      const currentText = this.editBuffers.get(pair.base) ?? '';
+      const ctx: ProofreadingAiContext = { currentText, sourceText: this.currentSourceText };
+      // Image-input actions reuse the exact bytes the left pane already loaded.
+      if (kind !== 'proofread' && this.currentImageDataUri) {
+        const parts = splitDataUri(this.currentImageDataUri);
+        if (parts) {
+          ctx.imageAttachment = { base64: parts.base64, mimeType: parts.mimeType };
+        }
+      }
+
+      const result = await this.dispatchAiAction(kind, ctx);
+      if (result.error) {
+        await this.messageService.error(nls.localize(
+          'ai-focused-editor/proofreading/ai-failed',
+          '{0} failed: {1}',
+          this.aiActionLabel(kind),
+          result.error
+        ));
+        return;
+      }
+      if (result.warnings.length > 0) {
+        await this.messageService.warn(result.warnings.join('\n'));
+      }
+
+      const text = result.text ?? '';
+      if (!text || text === currentText) {
+        await this.messageService.info(nls.localize(
+          'ai-focused-editor/proofreading/ai-no-change',
+          '{0}: no changes proposed for this page.',
+          this.aiActionLabel(kind)
+        ));
+        return;
+      }
+
+      const target = this.toUri(pair.textRelPath);
+      if (!target) {
+        return;
+      }
+      const proposal: ChangeProposal = {
+        uri: target.toString(),
+        originalText: currentText,
+        targetText: text,
+        title: this.aiActionLabel(kind)
+      };
+      this.changeProposals.notifyReady(proposal, nls.localize(
+        'ai-focused-editor/proofreading/ai-ready',
+        '{0} is ready — review the diff, then Apply.',
+        this.aiActionLabel(kind)
+      ));
+    } finally {
+      this.aiRunning = false;
+      this.update();
+    }
+  }
+
+  /** Route to the matching service method (keeps `runAiAction` type-safe). */
+  protected dispatchAiAction(kind: ProofreadingActionKind, ctx: ProofreadingAiContext): ReturnType<ProofreadingAiService['reOcr']> {
+    switch (kind) {
+      case 'reOcr':
+        return this.aiService.reOcr(ctx);
+      case 'proofread':
+        return this.aiService.proofread(ctx);
+      case 'translate':
+        return this.aiService.translate(ctx);
+      case 'translationQa':
+        return this.aiService.translationQa(ctx);
+    }
   }
 
   // --- Saveable ---
@@ -546,16 +661,43 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
           progress.percent
         )
       ),
-      // Placeholder for the AI action buttons wired in the next wave.
-      React.createElement(
-        'div',
-        { className: 'afe-proofreading-ai-actions', 'data-placeholder': 'ai-actions' },
-        React.createElement(
+      this.renderAiActions(translation, !!pair)
+    );
+  }
+
+  /**
+   * Mode-gated AI action buttons (ScanCheck's #ocrAiActionsRow vs
+   * #translationAiActionsRow): OCR mode exposes Re-OCR + Proofread, translation
+   * mode exposes Translate + Translation QA. Disabled with no current page or
+   * while an action is in flight; a spinner shows the running state.
+   */
+  protected renderAiActions(translation: boolean, hasPair: boolean): React.ReactNode {
+    const kinds: ProofreadingActionKind[] = translation
+      ? ['translate', 'translationQa']
+      : ['reOcr', 'proofread'];
+    return React.createElement(
+      'div',
+      { className: 'afe-proofreading-ai-actions', 'data-placeholder': 'ai-actions' },
+      ...kinds.map(kind => React.createElement(
+        'button',
+        {
+          key: kind,
+          className: 'theia-button afe-proofreading-ai-button',
+          type: 'button',
+          disabled: !hasPair || this.aiRunning,
+          onClick: () => { void this.runAiAction(kind); }
+        },
+        this.aiActionLabel(kind)
+      )),
+      this.aiRunning
+        ? React.createElement(
           'span',
-          { className: 'afe-proofreading-ai-placeholder' },
-          nls.localize('ai-focused-editor/proofreading/ai-actions-soon', 'AI actions coming soon')
+          { className: 'afe-proofreading-ai-running' },
+          React.createElement('span', { className: 'codicon codicon-loading codicon-modifier-spin' }),
+          ' ',
+          nls.localize('ai-focused-editor/proofreading/ai-running', 'Running AI action...')
         )
-      )
+        : undefined
     );
   }
 
