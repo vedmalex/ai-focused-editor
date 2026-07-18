@@ -75,6 +75,9 @@
       "frontend": "lib/browser/proofreading-frontend-module"
     },
     {
+      "frontend": "lib/browser/image-viewer-frontend-module"
+    },
+    {
       "frontend": "lib/browser/citation-editor-frontend-module"
     },
     {

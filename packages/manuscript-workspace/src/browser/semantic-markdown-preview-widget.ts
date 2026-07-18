@@ -29,16 +29,7 @@ import {
   extractImageTargets,
   rewriteImageTargets
 } from '../common/preview-images';
-
-/** Extension (lower-case, no dot) -> data-URI mime for inlinable raster/vector images. */
-const IMAGE_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  svg: 'image/svg+xml'
-};
+import { imageMimeForPath } from '../common/image-mime';
 
 /** Skip inlining any single image whose bytes exceed this, and cap the total per render. */
 const MAX_SINGLE_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -62,16 +53,6 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
   }
   return btoa(binary);
-}
-
-/** Lower-case extension (no dot) of a POSIX path, or '' when there is none. */
-function extensionOf(path: string): string {
-  const slash = path.lastIndexOf('/');
-  const dot = path.lastIndexOf('.');
-  if (dot <= slash + 1) {
-    return '';
-  }
-  return path.slice(dot + 1).toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +327,7 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
       if (!resolved) {
         continue; // escapes the workspace root, or otherwise not resolvable.
       }
-      const mime = IMAGE_MIME_BY_EXTENSION[extensionOf(resolved.path)];
+      const mime = imageMimeForPath(resolved.path);
       if (!mime) {
         continue; // not a recognised image extension.
       }
