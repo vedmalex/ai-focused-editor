@@ -2496,6 +2496,104 @@ body.afe-writing-mode .lm-TabBar-toolbar .item {
   }
 }
 
+/* ============================================================================
+   Proofreading Mode + Proofreading view (ProofreadingModeContribution)
+   ----------------------------------------------------------------------------
+   Two layers, same split as Writing Mode:
+     (1) .afe-proofreading-view — the left-area side view listing the book's
+         proofreading sets (header actions + set rows with a progress chip).
+     (2) body.afe-proofreading-mode — the focused review layout, applied only
+         while the mode is toggled on, so default flows (which never carry this
+         class) are untouched. It de-emphasizes writing-only chrome so the
+         two-pane proofreading surface owns the screen.
+   ========================================================================== */
+
+/* (1) The Proofreading side view. */
+.afe-proofreading-view,
+.afe-proofreading-view-body {
+  height: 100%;
+  box-sizing: border-box;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.afe-proofreading-view-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.afe-proofreading-view-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--theia-sideBar-border, var(--theia-editorGroup-border));
+}
+
+.afe-proofreading-view-newset {
+  flex: 1 1 auto;
+}
+
+.afe-proofreading-view-loading,
+.afe-proofreading-view-empty {
+  padding: 12px 12px;
+  margin: 0;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-proofreading-view-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+
+.afe-proofreading-view-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.afe-proofreading-view-item:hover {
+  background: var(--theia-list-hoverBackground);
+}
+
+.afe-proofreading-view-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.afe-proofreading-view-item-chip {
+  flex: 0 0 auto;
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-badge-foreground);
+  background: var(--theia-badge-background);
+  border-radius: 8px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+/* (2) Proofreading Mode: suppress writing-only chrome. The panels themselves are
+   collapsed/revealed by the contribution via ApplicationShell; here we hide the
+   right activity bar (icon strip) so nothing but the review surface competes for
+   focus. The LEFT bar stays visible because it hosts the Proofreading view. */
+body.afe-proofreading-mode .lm-TabBar.theia-app-right {
+  display: none;
+}
+
+/* Roomier tab-bar toolbar targets while reviewing. */
+body.afe-proofreading-mode .lm-TabBar-toolbar .item {
+  min-height: 28px;
+  padding: 2px 4px;
+}
+
 /* ---------- entity types form editor (entities/types.yaml) ---------- */
 
 .afe-entity-types-editor {
