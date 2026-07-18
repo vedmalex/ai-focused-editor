@@ -6,9 +6,25 @@ import {
   computeProgress,
   getBaseName,
   getEditableRelativePath,
+  isProofsetPath,
   isTranslationMode,
   matchPairs
 } from './proofreading-model';
+
+describe('isProofsetPath', () => {
+  test('matches proofset.yaml under a proofreading/ segment', () => {
+    expect(isProofsetPath('proofreading/set-1/proofset.yaml')).toBe(true);
+    expect(isProofsetPath('/book/proofreading/set-1/proofset.yaml')).toBe(true);
+    expect(isProofsetPath('file:///Users/x/book/Proofreading/S/proofset.yaml')).toBe(true);
+  });
+
+  test('rejects the wrong basename or a proofset.yaml outside proofreading/', () => {
+    expect(isProofsetPath('proofreading/set-1/other.yaml')).toBe(false);
+    expect(isProofsetPath('content/proofset.yaml')).toBe(false);
+    expect(isProofsetPath('proofset.yaml')).toBe(false);
+    expect(isProofsetPath('')).toBe(false);
+  });
+});
 
 describe('getBaseName', () => {
   test('strips only the LAST extension, preserving dotted names', () => {

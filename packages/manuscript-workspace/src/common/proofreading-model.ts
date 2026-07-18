@@ -84,6 +84,27 @@ export interface ProofreadingFolders {
   sourceTextFolder?: string;
 }
 
+/** Fixed basename of the per-set proofreading sidecar the open handler recognizes. */
+export const PROOFSET_FILE_NAME = 'proofset.yaml';
+
+/**
+ * True when a path points at a proofreading sidecar: its basename is
+ * `proofset.yaml` AND a `proofreading/` folder appears somewhere on the path
+ * (so a stray `proofset.yaml` outside the book-native area is not claimed). Pure
+ * path derivation — accepts either a POSIX path or a `file://` URI path string.
+ */
+export function isProofsetPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/').toLowerCase();
+  const segments = normalized.split('/').filter(segment => segment.length > 0);
+  if (segments.length === 0) {
+    return false;
+  }
+  if (segments[segments.length - 1] !== PROOFSET_FILE_NAME) {
+    return false;
+  }
+  return segments.slice(0, -1).includes('proofreading');
+}
+
 /** ScanCheck default image extensions (`appConfig.js` defaults). */
 export const DEFAULT_IMAGE_EXTENSIONS: readonly string[] = ['.jpg', '.jpeg', '.png', '.webp', '.tiff', '.bmp'];
 
