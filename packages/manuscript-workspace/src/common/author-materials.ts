@@ -382,8 +382,13 @@ export function buildAuthorMaterialsSections(input: AuthorMaterialsInput): Autho
   sections.push(makeSection('knowledge', countMaterialFiles(knowledge), knowledge, false));
   const skills = skillItems(input.skills);
   sections.push(makeSection('skills', skills.length, skills, false));
+  // Proofreading is an OPT-IN mode: the section appears ONLY when the book
+  // actually has proofreading sets, so it never clutters the navigator of a
+  // book that does no scan/OCR/translation review (owner request 2026-07-18).
   const proofreading = proofreadingItems(input.proofreadingSets ?? []);
-  sections.push(makeSection('proofreading', proofreading.length, proofreading, false));
+  if (proofreading.length > 0) {
+    sections.push(makeSection('proofreading', proofreading.length, proofreading, false));
+  }
 
   return sections;
 }

@@ -57,7 +57,7 @@ function baseInput(overrides: Partial<AuthorMaterialsInput> = {}): AuthorMateria
 describe('section ordering', () => {
   test('sections are emitted in the fixed navigator order', () => {
     const sections = buildAuthorMaterialsSections(baseInput());
-    expect(sections.map(section => section.kind)).toEqual([...AUTHOR_MATERIALS_SECTION_ORDER]);
+    expect(sections.map(section => section.kind)).toEqual(AUTHOR_MATERIALS_SECTION_ORDER.filter(k => k !== 'proofreading'));
   });
 
   test('only manuscript is expanded by default', () => {
@@ -216,11 +216,9 @@ describe('proofreading section', () => {
     expect(proofreading.items[0].uri).toBe(`${ROOT}/proofreading/chapter-2/proofset.yaml`);
   });
 
-  test('no sets => an empty proofreading section', () => {
+  test('no sets => the proofreading section is omitted entirely (opt-in mode)', () => {
     const sections = buildAuthorMaterialsSections(baseInput());
-    const proofreading = sections.find(section => section.kind === 'proofreading')!;
-    expect(proofreading.count).toBe(0);
-    expect(proofreading.items).toEqual([]);
+    expect(sections.find(section => section.kind === 'proofreading')).toBeUndefined();
   });
 });
 
@@ -314,7 +312,7 @@ describe('dynamic author-type sections', () => {
     const sections = buildAuthorMaterialsSections(baseInput({ effectiveEntityTypes: effective }));
     expect(sections.map(section => section.kind)).toEqual([
       'manuscript', 'characters', 'terms', 'artifacts', 'locations', 'factions',
-      'citations', 'sources', 'knowledge', 'skills', 'proofreading'
+      'citations', 'sources', 'knowledge', 'skills'
     ]);
   });
 
@@ -354,7 +352,7 @@ describe('dynamic author-type sections', () => {
   test('an effective list with no author types yields exactly the base section order', () => {
     const builtInOnly = mergeEntityTypes(BASE_ENTITY_TYPES, []);
     const sections = buildAuthorMaterialsSections(baseInput({ effectiveEntityTypes: builtInOnly }));
-    expect(sections.map(section => section.kind)).toEqual([...AUTHOR_MATERIALS_SECTION_ORDER]);
+    expect(sections.map(section => section.kind)).toEqual(AUTHOR_MATERIALS_SECTION_ORDER.filter(k => k !== 'proofreading'));
   });
 });
 
