@@ -129,6 +129,37 @@ export function buildProofreadingMessages(input: ProofreadingPromptInput): Proof
   return { system, user: parts.join('\n') };
 }
 
+/**
+ * System prompt for the free-form "custom command for selection" action: the
+ * model is an editing assistant that applies the user's instruction to a text
+ * fragment and returns ONLY the edited fragment (no commentary), so the result
+ * can be spliced straight back into the selection range.
+ */
+export const CUSTOM_COMMAND_SYSTEM = [
+  'Ты — редактор-ассистент, работающий с фрагментом текста.',
+  'Примени к фрагменту инструкцию пользователя, сохранив структуру строк и абзацев, если инструкция не требует иного.',
+  'Верни только изменённый фрагмент, без комментариев, пояснений и разметки.'
+].join('\n');
+
+/**
+ * Assemble the system + user messages for the custom-command action. Pure and
+ * deterministic: the user message carries the instruction followed by the
+ * selected fragment (the tested seam; the browser service turns it into a
+ * request). No image is ever attached for this action.
+ */
+export function buildCustomCommandMessages(instruction: string, fragment: string): ProofreadingPromptMessages {
+  const user = [
+    'Инструкция:',
+    '',
+    instruction.trim(),
+    '',
+    'Фрагмент:',
+    '',
+    fragment
+  ].join('\n');
+  return { system: CUSTOM_COMMAND_SYSTEM, user };
+}
+
 /** A raw base64 image payload split out of a `data:` URI. */
 export interface DataUriParts {
   mimeType: string;

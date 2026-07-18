@@ -5,6 +5,7 @@ import {
   AiConnectionService,
   AiGenerateRequest,
   ProofreadingActionKind,
+  buildCustomCommandMessages,
   buildProofreadingMessages,
   generateWithFailover
 } from '../common';
@@ -85,6 +86,50 @@ export class ProofreadingAiService {
   /** Compare original vs translation and return a corrected translation (translation mode). */
   translationQa(ctx: ProofreadingAiContext): Promise<ProofreadingAiResult> {
     return this.run('translationQa', ctx, true);
+  }
+
+  /**
+   * Run a free-form instruction against a text fragment (the editor "custom
+   * command for selection" action). Text-only — no image is attached; the result
+   * is the edited fragment, spliced back into the selection by the widget. Errors
+   * become a `{ error }` result (never thrown), mirroring {@link run}.
+   */
+  async customCommand(fragment: string, instruction: string): Promise<ProofreadingAiResult> {
+    try {
+      const profile = await this.aiProfilePreferences.getConfiguredProfile();
+      if (!profile) {
+        return {
+          warnings: [],
+          error: nls.localize(
+            'ai-focused-editor/proofreading/ai-needs-profile',
+            'Configure an AI connection (add an endpoint and alias in the Model Config view) before running proofreading AI actions.'
+          )
+        };
+      }
+      const { system, user } = buildCustomCommandMessages(instruction, fragment);
+      const commandId = `${COMMAND_ID_PREFIX}.customCommand`;
+      const request: AiGenerateRequest = {
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user }
+        ],
+        parameters: { temperature: 0 },
+        logContext: { command: commandId }
+      };
+      const chain = await this.aiProfilePreferences.getFailoverChain();
+      const result = await generateWithFailover(
+        this.aiConnection,
+        chain.length > 0 ? chain : [profile],
+        request,
+        this.requestLog.createRecorder(commandId)
+      );
+      return { text: result.text, warnings: result.warnings ?? [] };
+    } catch (error) {
+      return {
+        warnings: [],
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
   }
 
   /**
