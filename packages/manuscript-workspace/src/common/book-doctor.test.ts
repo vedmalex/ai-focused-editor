@@ -52,7 +52,8 @@ const ALL_SCAFFOLD_PATHS = bookScaffoldEntries().map(entry => entry.path);
 describe('scaffoldFixes', () => {
   test('offers every scaffold entry when nothing exists', () => {
     const fixes = scaffoldFixes(bookScaffoldEntries(), () => false, false);
-    // 19 canonical entries, all missing.
+    // Every canonical entry, all missing (contentHasMarkdown=false keeps the
+    // new-book-only entries in too).
     expect(fixes.map(fix => fix.path)).toEqual(ALL_SCAFFOLD_PATHS);
     // Folders carry no seed; files carry a (possibly empty) seed string.
     const manifest = fixes.find(fix => fix.path === 'manifest.yaml');

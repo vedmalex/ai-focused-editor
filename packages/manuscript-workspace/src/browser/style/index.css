@@ -940,6 +940,7 @@
 .afe-ico-sources { color: var(--theia-descriptionForeground); }
 .afe-ico-knowledge { color: var(--theia-charts-yellow, #cca700); }
 .afe-ico-skills { color: var(--theia-charts-purple, #b180d7); }
+.afe-ico-proofreading { color: var(--theia-charts-green, #89d185); }
 
 /* codicon icons in the tree need a small alignment nudge next to labels */
 .theia-TreeNode .codicon[class*='afe-ico-'] {
@@ -2705,4 +2706,179 @@ body.afe-writing-mode .lm-TabBar-toolbar .item {
 
 .afe-entity-types-editor-help {
   margin: 6px 0;
+}
+
+/* --- Proofreading two/three-pane editor --------------------------------- */
+
+.afe-proofreading-widget,
+.afe-proofreading-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size1);
+  outline: none;
+}
+
+.afe-proofreading-status {
+  padding: 14px;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-proofreading-status.error,
+.afe-proofreading-problem.error {
+  color: var(--theia-errorForeground);
+}
+
+.afe-proofreading-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.afe-proofreading-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.afe-proofreading-page-indicator {
+  min-width: 64px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.afe-proofreading-toggles {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.afe-proofreading-toggle.active {
+  background: var(--theia-button-background);
+  color: var(--theia-button-foreground);
+}
+
+.afe-proofreading-progress {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-proofreading-ai-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.afe-proofreading-ai-placeholder {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.afe-proofreading-problems {
+  margin: 0;
+  padding: 6px 14px 6px 30px;
+  flex: 0 0 auto;
+  color: var(--theia-editorWarning-foreground, var(--theia-descriptionForeground));
+  border-bottom: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-proofreading-panes {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.afe-proofreading-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+}
+
+.afe-proofreading-pane:last-child {
+  border-right: none;
+}
+
+.afe-proofreading-pane-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-weight: 600;
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+  border-bottom: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  flex: 0 0 auto;
+}
+
+.afe-proofreading-missing-badge {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--theia-editorWarning-foreground, var(--theia-descriptionForeground));
+}
+
+.afe-proofreading-image-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background: var(--theia-editor-background);
+}
+
+.afe-proofreading-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.afe-proofreading-image-missing {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+  padding: 14px;
+  text-align: center;
+}
+
+.afe-proofreading-source {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--theia-editor-font-family, monospace);
+  font-size: var(--theia-editor-font-size, var(--theia-ui-font-size1));
+  background: var(--theia-editor-background);
+}
+
+.afe-proofreading-textarea {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 12px;
+  font-family: var(--theia-editor-font-family, monospace);
+  font-size: var(--theia-editor-font-size, var(--theia-ui-font-size1));
+  color: var(--theia-input-foreground, var(--theia-foreground));
+  background: var(--theia-editor-background);
 }

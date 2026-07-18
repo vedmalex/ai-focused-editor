@@ -16,7 +16,8 @@ import {
   SourceLibraryService
 } from '../common';
 import { parse } from 'yaml';
-import { buildAuthorMaterialsSections, joinUri, type KnowledgeFileEntry, type SkillEntry } from '../common/author-materials';
+import { buildAuthorMaterialsSections, joinUri, type KnowledgeFileEntry, type ProofreadingSetEntry, type SkillEntry } from '../common/author-materials';
+import { computeProgress, parseProofsetYaml, PROOFSET_FILE_NAME } from '../common';
 import { EntityTypeRegistryService } from './entity-type-registry-service';
 import { ManuscriptTreeItemFactory } from './manuscript-tree-item-factory';
 
@@ -73,6 +74,7 @@ export class ManuscriptTreeModel extends TreeModelImpl {
   protected sourceSnapshot: SourceLibrarySnapshot | undefined;
   protected knowledgeFiles: KnowledgeFileEntry[] = [];
   protected skillEntries: SkillEntry[] = [];
+  protected proofreadingSets: ProofreadingSetEntry[] = [];
   protected autoRefreshHandle: ReturnType<typeof setTimeout> | undefined;
   protected mutationInFlight = false;
 
@@ -91,7 +93,8 @@ export class ManuscriptTreeModel extends TreeModelImpl {
           || path.includes('/entities/')
           || path.includes('/sources/')
           || path.includes('/knowledge/')
-          || path.includes('/.prompts/skills/');
+          || path.includes('/.prompts/skills/')
+          || path.includes('/proofreading/');
       });
       if (affectsMaterials) {
         this.scheduleAutoRefresh();
@@ -112,9 +115,10 @@ export class ManuscriptTreeModel extends TreeModelImpl {
     // Feed the dumb frontend registry from the fresh entity snapshot so
     // consumers see author-declared types (and their validation problems).
     this.entityTypeRegistry.update(entities?.effectiveEntityTypes, entities?.typeProblems);
-    [this.knowledgeFiles, this.skillEntries] = await Promise.all([
+    [this.knowledgeFiles, this.skillEntries, this.proofreadingSets] = await Promise.all([
       this.scanKnowledge(manuscript.rootUri),
-      this.scanSkills(manuscript.rootUri)
+      this.scanSkills(manuscript.rootUri),
+      this.scanProofreading(manuscript.rootUri)
     ]);
     this.rebuildRoot();
     return manuscript;
@@ -161,6 +165,7 @@ export class ManuscriptTreeModel extends TreeModelImpl {
       sources: this.sourceSnapshot?.items ?? [],
       knowledge: this.knowledgeFiles,
       skills: this.skillEntries,
+      proofreadingSets: this.proofreadingSets,
       effectiveEntityTypes: this.entitySnapshot?.effectiveEntityTypes,
       typeProblems: this.entitySnapshot?.typeProblems
     });
@@ -270,6 +275,56 @@ export class ManuscriptTreeModel extends TreeModelImpl {
         description: meta.description?.trim() || undefined,
         path: root.relative(skillFile)?.toString() ?? `.prompts/skills/${slug}/SKILL.md`,
         uri: skillFile.toString()
+      });
+    }
+    return entries;
+  }
+
+  /**
+   * Enumerate the book's proofreading sets: one folder per set under
+   * `proofreading/<slug>/`, each carrying a `proofset.yaml` sidecar. Each sidecar
+   * is parsed (tolerantly) and `computeProgress` over its pages yields the tree
+   * chip. A folder without a valid `proofset.yaml` is skipped; a missing
+   * `proofreading/` area yields an empty list (mirrors `scanKnowledge`/`scanSkills`).
+   */
+  protected async scanProofreading(rootUri: string | undefined): Promise<ProofreadingSetEntry[]> {
+    if (!rootUri) {
+      return [];
+    }
+    const root = new URI(rootUri);
+    const areaUri = root.resolve('proofreading');
+    let dir: FileStat;
+    try {
+      dir = await this.fileService.resolve(areaUri);
+    } catch {
+      return [];
+    }
+    const entries: ProofreadingSetEntry[] = [];
+    for (const child of dir.children ?? []) {
+      if (!child.isDirectory) {
+        continue;
+      }
+      const slug = child.name;
+      const proofsetUri = child.resource.resolve(PROOFSET_FILE_NAME);
+      let text: string;
+      try {
+        text = (await this.fileService.read(proofsetUri)).value;
+      } catch {
+        // A set folder without a proofset.yaml is not a set — skip it.
+        continue;
+      }
+      const { set } = parseProofsetYaml(text);
+      if (!set) {
+        continue;
+      }
+      const progress = computeProgress(set);
+      entries.push({
+        slug,
+        label: slug,
+        uri: proofsetUri.toString(),
+        verified: progress.verified,
+        total: progress.total,
+        percent: progress.percent
       });
     }
     return entries;

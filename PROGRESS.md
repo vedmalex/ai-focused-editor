@@ -282,6 +282,14 @@ All MVP-Core/MVP-Thin requests shipped; post-MVP and backlog requests implemente
 - **My Books catalog**: `aiFocusedEditor.library.path` → the welcome page scans two levels for `manifest.yaml`, reads title/author/cover, shows a responsive card grid above Recent; cards open the workspace. 20 catalog tests.
 - Tests: 669 across 37 files; build + browser smoke + 10/10 flows; auth confirmed off by default (localhost unblocked).
 
+## Wave 60 — Режимы вычитки (OCR + перевод), портирование ScanCheck (shipped)
+
+- **Двухпанельный вид вычитки** портирован из ScanCheck (Tauri) в наш редактор: скан слева, редактируемый текст справа (в режиме перевода — третья read-only панель с оригиналом). Один виджет, два режима переключаются наличием папки исходного текста (как в ScanCheck `isTranslationMode`). ReactWidget + Navigatable + Saveable, opener priority-500 на `proofreading/**/proofset.yaml`, картинка через тот же readFile→data-URI, что в превью.
+- **Пары по basename, отметка «проверено/на доработку», прогресс** — чистое ядро `proofreading-model.ts` + `proofreading-sidecar.ts` (comment-preserving YAML, AJV-схема, состояние по имени страницы, не индексу — как ScanCheck; per-set, не глобально). Правки — в рабочую копию под `proofreading/` (решение владельца), реальный `content/` не трогается.
+- **4 AI-действия** (Re-OCR, вычитка, перевод, QA перевода) через `generateWithFailover` со сканом-вложением; результат — цельностраничный ChangeProposal → Monaco diff + Apply (наш `ChangeProposalService`). Дефолтные ru-промпты портированы из ScanCheck. Поабзацный accept/reject — будущая волна (решение владельца: сначала цельная страница).
+- **Создание и обнаружение**: команда «Новый набор вычитки…» (транслит-slug, режим, mkdirp папок, seed страниц из сканов), секция «Вычитка» в дереве с чипом прогресса, book-scaffold/doctor знают про `proofreading/` (new-book-only, existing книги не дёргает).
+- Live-пробы playwright насквозь: рендер обеих панелей + скан; отметка verified → сайдкар на диске (`verified:true`, прогресс 50%); Proofread → diff → Apply пишет исправленный текст в рабочую копию; команда «Новый набор» → транслит `Рукопись БГ`→`rukopis-bg`, виджет открылся, секция «Proofreading (1)» в дереве. 1199 тестов / 70 файлов; 10/10 flows.
+
 ## Wave 59 — Генерация изображений в книге (shipped)
 
 - **Команда «Сгенерировать изображение…»** в меню Manuscript: промпт (QuickInput) + пресет размера (1024², портрет, ландшафт) → `generateImage` через активный алиас → картинка сохраняется в книгу `sources/generated/<slug>-<n>.png` (slug транслитерацией промпта) → offer «Вставить в главу» вставляет `![alt](относительный-путь)` в активную главу. Изображение — реальный источник книги, значит потом прикладывается к чату (правило адресуемости). Чистый `generated-image.ts` (mime→ext, slug, путь; 12 тестов).
