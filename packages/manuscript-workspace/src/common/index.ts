@@ -24,6 +24,8 @@ export * from './narrative-entity-protocol';
 export * from './narrative-graph-protocol';
 export * from './obsidian-plugin-protocol';
 export * from './office-preview';
+export * from './proofreading-model';
+export * from './proofreading-sidecar';
 export * from './relations-map';
 export * from './office-preview-protocol';
 export * from './source-attach-routing';
