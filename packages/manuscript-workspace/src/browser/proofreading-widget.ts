@@ -1,9 +1,15 @@
 import URI from '@theia/core/lib/common/uri';
-import { Disposable, Emitter, Event, MessageService } from '@theia/core/lib/common';
+import { Disposable, Emitter, Event, InMemoryResources, MessageService } from '@theia/core/lib/common';
 import { Navigatable, StatefulWidget } from '@theia/core/lib/browser';
 import { Saveable, SaveOptions } from '@theia/core/lib/browser/saveable';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { Message } from '@theia/core/shared/@lumino/messaging';
 import { nls } from '@theia/core/lib/common/nls';
+import { MonacoEditorProvider } from '@theia/monaco/lib/browser/monaco-editor-provider';
+import { MonacoEditor } from '@theia/monaco/lib/browser/monaco-editor';
+import { MonacoTextModelService } from '@theia/monaco/lib/browser/monaco-text-model-service';
+import { MonacoEditorModel } from '@theia/monaco/lib/browser/monaco-editor-model';
+import { IReference } from '@theia/monaco-editor-core/esm/vs/base/common/lifecycle';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { FileChangesEvent } from '@theia/filesystem/lib/common/files';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
@@ -34,11 +40,27 @@ const MAX_SINGLE_IMAGE_BYTES = 10 * 1024 * 1024;
 /** Debounce for the folder-watch auto-refresh (mirrors ManuscriptTreeModel). */
 const REFRESH_DEBOUNCE_MS = 300;
 
+/**
+ * In-memory URI scheme for the per-page editable Monaco models. Each base gets
+ * one stable model URI; the model (and thus its undo/redo stack) is kept alive
+ * across page navigation so the edit history survives forward/back.
+ */
+const PROOFREADING_EDIT_SCHEME = 'afe-proofreading-edit';
+
+/** Character budget for an adjacent-page text preview. */
+const ADJACENT_TEXT_PREVIEW_CHARS = 200;
+
 /** Session-persisted pane-visibility toggles. */
 interface ProofreadingViewOptions {
   showScanPane: boolean;
   showSourcePane: boolean;
+  showAdjacentPages: boolean;
 }
+
+/** A lazily-loaded preview of an adjacent page (thumbnail or text snippet). */
+type AdjacentPreview =
+  | { kind: 'image'; dataUri: string }
+  | { kind: 'text'; snippet: string };
 
 /** Encode raw bytes as base64 without blowing the call stack (preview-widget copy). */
 function bytesToBase64(bytes: Uint8Array): string {
@@ -84,6 +106,15 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
   @inject(ProofreadingAiService)
   protected readonly aiService!: ProofreadingAiService;
 
+  @inject(MonacoEditorProvider)
+  protected readonly editorProvider!: MonacoEditorProvider;
+
+  @inject(MonacoTextModelService)
+  protected readonly monacoModels!: MonacoTextModelService;
+
+  @inject(InMemoryResources)
+  protected readonly inMemoryResources!: InMemoryResources;
+
   protected uri!: URI;
   protected rootUri: URI | undefined;
   protected loading = true;
@@ -115,6 +146,41 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
   /** Pane-visibility toggles (session state); the editable text pane is always shown. */
   protected showScanPane = true;
   protected showSourcePane = true;
+  /** When on, show a preview of the previous page above and the next page below. */
+  protected showAdjacentPages = false;
+
+  // --- embedded Monaco text editor (the editable text pane) ---
+
+  /**
+   * The single embedded Monaco editor. Its DOM host node ({@link editorHostNode})
+   * is widget-owned and reparented across React re-renders, so the editor DOM is
+   * never wiped by React's reconciliation.
+   */
+  protected monacoEditor: MonacoEditor | undefined;
+  /** Widget-owned, created-once DOM host the editor lives in (see the ref callback). */
+  protected editorHostNode: HTMLDivElement | undefined;
+  /** Guards against creating the editor twice while its async creation is in flight. */
+  protected editorCreating = false;
+  /** Base whose model is currently shown in the editor. */
+  protected currentEditorBase: string | undefined;
+  /**
+   * Per-base editable Monaco model references. Keeping every reference alive keeps
+   * each model's undo/redo stack alive, so switching pages and back preserves the
+   * edit history. The reference (not just the model) is stored so it can be
+   * disposed on widget close.
+   */
+  protected readonly editorModels = new Map<string, IReference<MonacoEditorModel>>();
+  /** Content-change listeners for the per-base models, disposed with the widget. */
+  protected readonly editorModelListeners = new Map<string, Disposable>();
+  /**
+   * Bases whose model is being seeded programmatically (initial value / disk
+   * refresh). Their content-change events must NOT mark the set dirty.
+   */
+  protected readonly seedingBases = new Set<string>();
+
+  /** Lazily-loaded previews for the adjacent-page strip (Unit 2). */
+  protected prevPreview: AdjacentPreview | undefined;
+  protected nextPreview: AdjacentPreview | undefined;
 
   /** Pending folder-watch refresh timer; cleared on dispose. */
   protected refreshHandle: ReturnType<typeof setTimeout> | undefined;
@@ -154,13 +220,31 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
         this.refreshHandle = undefined;
       }
     }));
+    // Dispose every per-base model listener + reference on widget close (no leaks).
+    this.toDispose.push(Disposable.create(() => this.disposeEditorModels()));
     void this.load();
+  }
+
+  /** Dispose all per-base model listeners and references (the editor is in toDispose). */
+  protected disposeEditorModels(): void {
+    for (const listener of this.editorModelListeners.values()) {
+      listener.dispose();
+    }
+    this.editorModelListeners.clear();
+    for (const reference of this.editorModels.values()) {
+      reference.dispose();
+    }
+    this.editorModels.clear();
   }
 
   // --- StatefulWidget (session-persist the pane toggles) ---
 
   storeState(): ProofreadingViewOptions {
-    return { showScanPane: this.showScanPane, showSourcePane: this.showSourcePane };
+    return {
+      showScanPane: this.showScanPane,
+      showSourcePane: this.showSourcePane,
+      showAdjacentPages: this.showAdjacentPages
+    };
   }
 
   restoreState(state: object | undefined): void {
@@ -171,7 +255,13 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
     if (options && typeof options.showSourcePane === 'boolean') {
       this.showSourcePane = options.showSourcePane;
     }
+    if (options && typeof options.showAdjacentPages === 'boolean') {
+      this.showAdjacentPages = options.showAdjacentPages;
+    }
     this.update();
+    if (this.showAdjacentPages) {
+      void this.loadAdjacentPreviews();
+    }
   }
 
   getResourceUri(): URI | undefined {
@@ -180,6 +270,15 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
 
   createMoveToUri(resourceUri: URI): URI | undefined {
     return resourceUri;
+  }
+
+  protected override onActivateRequest(msg: Message): void {
+    super.onActivateRequest(msg);
+    if (this.monacoEditor) {
+      this.monacoEditor.focus();
+    } else {
+      this.node.focus();
+    }
   }
 
   protected setDirty(dirty: boolean): void {
@@ -379,6 +478,11 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
       const text = pair.missing ? undefined : await this.readTextIfExists(this.toUri(pair.textRelPath)!);
       this.editBuffers.set(pair.base, text ?? this.editBuffers.get(pair.base) ?? '');
     }
+    // Reflect a clean page's on-disk text (e.g. an applied AI ChangeProposal) into
+    // its live model. Dirty pages keep their unsaved edits (and undo history).
+    if (!isDirty && this.editorModels.has(pair.base)) {
+      this.seedModel(pair.base, this.editBuffers.get(pair.base) ?? '');
+    }
 
     // Read-only source text (translation mode only).
     if (pair.sourceTextRelPath) {
@@ -400,6 +504,12 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
       }
     }
     this.update();
+    // Point the embedded editor at this page (undo history is per-model, preserved).
+    // Awaited so navigation deterministically completes the model swap.
+    await this.showModel(pair.base);
+    if (this.showAdjacentPages) {
+      void this.loadAdjacentPreviews();
+    }
   }
 
   /**
@@ -432,6 +542,157 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
     }
   }
 
+  // --- embedded Monaco editor (editable text pane) ---
+
+  /**
+   * Stable in-memory model URI for a page. Keyed by the full workspace-relative
+   * text path (NOT just the base) so two proofreading sets open at once with a
+   * shared page base (e.g. `chapter-01`) never collide on one shared model. The
+   * real extension is preserved as the URI suffix for Monaco language detection
+   * (`encodeURIComponent` leaves `.` intact, only escaping the `/` separators).
+   */
+  protected editModelUri(base: string): URI {
+    const pair = this.pairs.find(candidate => candidate.base === base);
+    const rel = pair?.textRelPath ?? `${this.set?.textFolder ?? ''}/${base}.md`;
+    return new URI(`${PROOFREADING_EDIT_SCHEME}:/${encodeURIComponent(rel)}`);
+  }
+
+  /**
+   * Ensure a live editable Monaco model exists for a base, seeded from its edit
+   * buffer. The model reference is cached and kept alive so its undo/redo stack
+   * survives page navigation; a content listener mirrors edits into the buffer.
+   */
+  protected async ensureModelRef(base: string): Promise<IReference<MonacoEditorModel>> {
+    const existing = this.editorModels.get(base);
+    if (existing) {
+      return existing;
+    }
+    const uri = this.editModelUri(base);
+    const content = this.editBuffers.get(base) ?? '';
+    try {
+      this.inMemoryResources.add(uri, content);
+    } catch {
+      this.inMemoryResources.update(uri, content);
+    }
+    const reference = await this.monacoModels.createModelReference(uri);
+    this.editorModels.set(base, reference);
+    const listener = reference.object.textEditorModel.onDidChangeContent(() => this.onEditorModelChanged(base));
+    this.editorModelListeners.set(base, listener);
+    return reference;
+  }
+
+  /** Mirror a user edit in the base's model into its edit buffer + dirty state. */
+  protected onEditorModelChanged(base: string): void {
+    if (this.seedingBases.has(base)) {
+      return;
+    }
+    const reference = this.editorModels.get(base);
+    if (!reference) {
+      return;
+    }
+    this.editBuffers.set(base, reference.object.textEditorModel.getValue());
+    if (!this.ready) {
+      return;
+    }
+    this.dirtyBases.add(base);
+    this.setDirty(true);
+    // Deliberately no this.update(): re-rendering would fight the live editor. The
+    // dirty indicator is driven by the Saveable events fired from setDirty().
+  }
+
+  /** Programmatically set a base's model value without marking it dirty (seeding). */
+  protected seedModel(base: string, value: string): void {
+    const reference = this.editorModels.get(base);
+    if (!reference) {
+      return;
+    }
+    const model = reference.object.textEditorModel;
+    if (model.getValue() === value) {
+      return;
+    }
+    this.seedingBases.add(base);
+    try {
+      model.setValue(value);
+    } finally {
+      this.seedingBases.delete(base);
+    }
+  }
+
+  /** Create the embedded editor once, over the current page's model. */
+  protected async ensureEditor(): Promise<void> {
+    if (this.monacoEditor || this.editorCreating || !this.editorHostNode) {
+      return;
+    }
+    const base = this.currentPair?.base;
+    if (base === undefined) {
+      return;
+    }
+    this.editorCreating = true;
+    try {
+      await this.ensureModelRef(base);
+      const editor = await this.editorProvider.createInline(this.editModelUri(base), this.editorHostNode, {
+        readOnly: false,
+        lineNumbers: 'on',
+        wordWrap: 'on',
+        automaticLayout: true,
+        scrollBeyondLastLine: false,
+        minimap: { enabled: false }
+      });
+      if (this.isDisposed) {
+        editor.dispose();
+        return;
+      }
+      this.monacoEditor = editor;
+      this.currentEditorBase = base;
+      this.toDispose.push(editor);
+      editor.getControl().layout();
+    } finally {
+      this.editorCreating = false;
+    }
+  }
+
+  /** Swap the editor to show a base's model (keeps that model's undo history). */
+  protected async showModel(base: string): Promise<void> {
+    const reference = await this.ensureModelRef(base);
+    if (!this.monacoEditor) {
+      return;
+    }
+    const model = reference.object.textEditorModel;
+    const control = this.monacoEditor.getControl();
+    if (this.currentEditorBase !== base || control.getModel() !== model) {
+      control.setModel(model);
+      this.currentEditorBase = base;
+    }
+    control.layout();
+  }
+
+  /** Ensure the editor exists and shows the current page (called from the host ref). */
+  protected async ensureEditorForCurrentPage(): Promise<void> {
+    await this.ensureEditor();
+    const base = this.currentPair?.base;
+    if (base !== undefined) {
+      await this.showModel(base);
+    }
+  }
+
+  /**
+   * React ref for the editor-pane placeholder: appends the widget-owned host node
+   * (a move that preserves Monaco's DOM) and lazily creates/points the editor.
+   */
+  protected readonly attachEditorHost = (placeholder: HTMLDivElement | null): void => {
+    if (!placeholder) {
+      return;
+    }
+    if (!this.editorHostNode) {
+      this.editorHostNode = document.createElement('div');
+      this.editorHostNode.className = 'afe-proofreading-editor-host-node';
+    }
+    if (this.editorHostNode.parentElement !== placeholder) {
+      placeholder.appendChild(this.editorHostNode);
+    }
+    void this.ensureEditorForCurrentPage();
+  };
+
   // --- navigation ---
 
   protected async goToPage(index: number): Promise<void> {
@@ -453,19 +714,6 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
       event.preventDefault();
       void this.goToPage(this.currentIndex + 1);
     }
-  }
-
-  // --- text edits ---
-
-  protected onTextChanged(value: string): void {
-    const pair = this.currentPair;
-    if (!this.ready || !pair) {
-      return;
-    }
-    this.editBuffers.set(pair.base, value);
-    this.dirtyBases.add(pair.base);
-    this.setDirty(true);
-    this.update();
   }
 
   // --- verified / needs-rework toggles ---
@@ -667,7 +915,9 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
       { className: 'afe-proofreading-shell', tabIndex: 0, onKeyDown: (event: React.KeyboardEvent) => this.handleKeyDown(event) },
       this.renderHeader(),
       this.renderProblems(),
-      this.renderPanes()
+      this.renderAdjacent('prev'),
+      this.renderPanes(),
+      this.renderAdjacent('next')
     );
   }
 
@@ -812,6 +1062,19 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
     controls.push(React.createElement(
       'button',
       {
+        key: 'toggle-adjacent',
+        className: `theia-button secondary afe-proofreading-toggle${this.showAdjacentPages ? ' active' : ''}`,
+        type: 'button',
+        title: nls.localize('ai-focused-editor/proofreading/adjacent-pages-tooltip', 'Show a preview of the previous and next pages'),
+        onClick: () => this.toggleAdjacentPages()
+      },
+      React.createElement('span', { className: 'codicon codicon-list-flat' }),
+      ' ',
+      nls.localize('ai-focused-editor/proofreading/adjacent-pages', 'Adjacent pages')
+    ));
+    controls.push(React.createElement(
+      'button',
+      {
         key: 'refresh',
         className: 'theia-button secondary afe-proofreading-refresh',
         type: 'button',
@@ -947,7 +1210,6 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
       ? nls.localize('ai-focused-editor/proofreading/translation-label', 'Translation')
       : nls.localize('ai-focused-editor/proofreading/text-label', 'Text')
     ;
-    const value = this.editBuffers.get(pair.base) ?? '';
     return React.createElement(
       'div',
       { key: 'text', className: 'afe-proofreading-pane afe-proofreading-text-pane' },
@@ -963,15 +1225,122 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
           )
           : undefined
       ),
-      React.createElement('textarea', {
-        className: 'afe-proofreading-textarea',
-        value,
-        spellCheck: false,
-        placeholder: pair.missing
-          ? nls.localize('ai-focused-editor/proofreading/text-placeholder', 'No text file yet — start typing to create it on save.')
-          : undefined,
-        onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => this.onTextChanged(event.currentTarget.value)
+      // Stable-key placeholder; the widget-owned Monaco host node is appended into
+      // it via the ref (a DOM move React never reconciles), so the editor — and its
+      // per-page undo/redo history — survives every re-render and page navigation.
+      React.createElement('div', {
+        key: 'editor-host',
+        className: 'afe-proofreading-editor-host',
+        ref: this.attachEditorHost
       })
+    );
+  }
+
+  // --- adjacent-pages preview strip (Unit 2) ---
+
+  protected toggleAdjacentPages(): void {
+    this.showAdjacentPages = !this.showAdjacentPages;
+    this.prevPreview = undefined;
+    this.nextPreview = undefined;
+    this.update();
+    if (this.showAdjacentPages) {
+      void this.loadAdjacentPreviews();
+    }
+  }
+
+  /**
+   * Load previews for the pages immediately before/after the current one (thumbnail
+   * when the adjacent page has a scan, else a short text snippet). Never blocks the
+   * main page load; race-guarded so a stale async read cannot clobber a newer page.
+   */
+  protected async loadAdjacentPreviews(): Promise<void> {
+    if (!this.showAdjacentPages) {
+      return;
+    }
+    const indexAtCall = this.currentIndex;
+    const [prev, next] = await Promise.all([
+      this.buildAdjacentPreview(this.pairs[indexAtCall - 1]),
+      this.buildAdjacentPreview(this.pairs[indexAtCall + 1])
+    ]);
+    if (this.currentIndex !== indexAtCall || !this.showAdjacentPages) {
+      return;
+    }
+    this.prevPreview = prev;
+    this.nextPreview = next;
+    this.update();
+  }
+
+  /** Build one adjacent-page preview (image thumbnail or clamped text snippet). */
+  protected async buildAdjacentPreview(pair: ProofreadingPair | undefined): Promise<AdjacentPreview | undefined> {
+    if (!pair) {
+      return undefined;
+    }
+    if (pairHasImage(pair) && pair.imageRelPath) {
+      const imageUri = this.toUri(pair.imageRelPath);
+      const dataUri = imageUri ? await this.readImageDataUri(imageUri) : undefined;
+      if (dataUri) {
+        return { kind: 'image', dataUri };
+      }
+    }
+    // Prefer the live edit buffer (the editable target — in translation mode this is
+    // the translation, the most useful linkage); fall back to reading the file.
+    let text = this.editBuffers.get(pair.base);
+    if (text === undefined && !pair.missing) {
+      const textUri = this.toUri(pair.textRelPath);
+      text = textUri ? await this.readTextIfExists(textUri) : undefined;
+    }
+    const snippet = (text ?? '').replace(/\s+/g, ' ').trim().slice(0, ADJACENT_TEXT_PREVIEW_CHARS);
+    return { kind: 'text', snippet };
+  }
+
+  /**
+   * Render the adjacent-page block for one side, or nothing when there is no page
+   * on that side. Clicking (or Enter/Space) navigates to that page.
+   */
+  protected renderAdjacent(side: 'prev' | 'next'): React.ReactNode {
+    if (!this.showAdjacentPages || this.pairs.length === 0) {
+      return undefined;
+    }
+    const index = side === 'prev' ? this.currentIndex - 1 : this.currentIndex + 1;
+    const pair = this.pairs[index];
+    if (!pair) {
+      return undefined;
+    }
+    const preview = side === 'prev' ? this.prevPreview : this.nextPreview;
+    const label = side === 'prev'
+      ? `◀ ${nls.localize('ai-focused-editor/proofreading/adjacent-page', 'page {0}', index + 1)}`
+      : `${nls.localize('ai-focused-editor/proofreading/adjacent-page', 'page {0}', index + 1)} ▶`;
+    let body: React.ReactNode;
+    if (preview?.kind === 'image') {
+      body = React.createElement('img', {
+        className: 'afe-proofreading-adjacent-thumb',
+        src: preview.dataUri,
+        alt: label
+      });
+    } else if (preview?.kind === 'text') {
+      body = React.createElement('div', { className: 'afe-proofreading-adjacent-text' }, preview.snippet);
+    } else {
+      body = React.createElement('div', { className: 'afe-proofreading-adjacent-text' },
+        nls.localize('ai-focused-editor/proofreading/adjacent-loading', 'Loading preview...'));
+    }
+    return React.createElement(
+      'div',
+      {
+        key: `adjacent-${side}`,
+        className: `afe-proofreading-adjacent ${side}`,
+        role: 'button',
+        tabIndex: 0,
+        title: label,
+        onClick: () => { void this.goToPage(index); },
+        onKeyDown: (event: React.KeyboardEvent) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            void this.goToPage(index);
+          }
+        }
+      },
+      React.createElement('span', { className: 'afe-proofreading-adjacent-label' }, label, ` · ${pair.base}`),
+      body
     );
   }
 }
