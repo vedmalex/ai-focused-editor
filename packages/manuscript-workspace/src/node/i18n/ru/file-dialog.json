@@ -1,0 +1,13 @@
+{
+  "ai-focused-editor": {
+    "file-dialog": {
+      "new-folder": "Новая папка",
+      "new-folder-prompt": "Введите имя новой папки",
+      "new-folder-placeholder": "Имя папки",
+      "name-empty": "Имя папки не может быть пустым",
+      "name-invalid": "Имя папки не должно содержать разделители пути",
+      "name-exists": "Файл или папка «{0}» уже существует",
+      "create-failed": "Не удалось создать папку «{0}»: {1}"
+    }
+  }
+}

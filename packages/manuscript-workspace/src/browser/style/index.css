@@ -3092,3 +3092,43 @@ body.afe-proofreading-mode .lm-TabBar-toolbar .item {
   color: var(--theia-input-foreground, var(--theia-foreground));
   background: var(--theia-editor-background);
 }
+
+/* --- Open dialog: "New Folder" navigation button ------------------------- */
+/* Theia's file dialog lays the navigation icons out with absolute lefts
+ * (back auto / forward 23 / home 45 / up 67, 21px icons on a 22px pitch) and
+ * starts the location list at --theia-private-location-list-panel-left (92px).
+ * Our extra icon takes the next slot (89px); shift the location list by one
+ * slot, keeping its right edge in place. Scoped to our enhanced dialog only. */
+.dialogContent.afe-FileDialogWithNewFolder {
+  --theia-private-location-list-panel-left: 114px;
+  --theia-private-location-list-panel-width: 385px;
+}
+
+.dialogContent.afe-FileDialogWithNewFolder .afe-NewFolderButton {
+  left: 89px;
+}
+
+/* Inline name-input row shown when the New Folder button is pressed.
+ * A QuickInput cannot be used here: the modal AbstractDialog marks all other
+ * body children `inert`, which makes monaco's #quick-input-container
+ * unfocusable while the dialog is open. */
+.dialogContent.afe-FileDialogWithNewFolder .afe-NewFolderInputPanel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.dialogContent.afe-FileDialogWithNewFolder .afe-NewFolderNameInput {
+  flex: 0 0 auto;
+  width: 220px;
+  height: var(--theia-private-file-dialog-input-height);
+}
+
+.dialogContent.afe-FileDialogWithNewFolder .afe-NewFolderError {
+  color: var(--theia-errorForeground);
+  font-size: var(--theia-ui-font-size0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
