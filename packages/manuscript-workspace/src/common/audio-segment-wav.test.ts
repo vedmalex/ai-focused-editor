@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import type { TranscribeSegmentFileRequest } from './audio-conversion-protocol';
 import {
   PcmAudioData,
   WAV_HEADER_SIZE,
+  bytesToBase64,
   encodeWavPcm16,
   extractSegmentWav,
   sliceSegmentSamples
@@ -118,5 +120,54 @@ describe('extractSegmentWav', () => {
     const wav = extractSegmentWav(audio, 0, 1); // 10 frames
     expect(wav.byteLength).toBe(WAV_HEADER_SIZE + 10 * 2);
     expect(view(wav).getUint32(40, true)).toBe(20);
+  });
+});
+
+describe('bytesToBase64', () => {
+  test('matches the platform base64 for all padding remainders', () => {
+    const cases = [
+      new Uint8Array([]),
+      new Uint8Array([1]),
+      new Uint8Array([1, 2]),
+      new Uint8Array([1, 2, 3]),
+      new Uint8Array([255, 254, 253, 252]),
+      Uint8Array.from({ length: 257 }, (_, i) => i % 256)
+    ];
+    for (const bytes of cases) {
+      expect(bytesToBase64(bytes)).toBe(Buffer.from(bytes).toString('base64'));
+    }
+  });
+
+  test('round-trips a WAV byte stream losslessly', () => {
+    const audio: PcmAudioData = {
+      sampleRate: 8000,
+      channels: [Float32Array.from({ length: 8000 }, (_, i) => Math.sin(i / 20))]
+    };
+    const wav = extractSegmentWav(audio, 0.25, 0.75);
+    const decoded = Buffer.from(bytesToBase64(wav), 'base64');
+    expect(decoded.equals(Buffer.from(wav))).toBe(true);
+  });
+});
+
+describe('WAV slice → TranscribeSegmentFileRequest (the Phase-5 STT payload)', () => {
+  test('the base64 payload decodes to a complete RIFF/WAVE file for the [start, end] slice', () => {
+    const audio: PcmAudioData = {
+      sampleRate: 16000,
+      channels: [Float32Array.from({ length: 48000 }, (_, i) => Math.sin(i / 30) * 0.5)]
+    };
+    const wav = extractSegmentWav(audio, 1, 2); // 16000 frames, mono PCM16
+    const request: TranscribeSegmentFileRequest = {
+      audioBase64: bytesToBase64(wav),
+      audioFileName: 'segment.wav',
+      transcription: { backend: 'local', whisperCliPath: '/x/whisper-cli', modelPath: '/x/model.bin', language: 'ru' }
+    };
+    expect(request.segmentPath).toBeUndefined();
+    const decoded = Buffer.from(request.audioBase64!, 'base64');
+    expect(decoded.length).toBe(WAV_HEADER_SIZE + 16000 * 2);
+    expect(ascii(decoded, 0, 4)).toBe('RIFF');
+    expect(ascii(decoded, 8, 4)).toBe('WAVE');
+    const dataView = new DataView(decoded.buffer, decoded.byteOffset, decoded.byteLength);
+    expect(dataView.getUint32(24, true)).toBe(16000); // sample rate survives
+    expect(dataView.getUint32(40, true)).toBe(16000 * 2); // data chunk = sliced frames
   });
 });

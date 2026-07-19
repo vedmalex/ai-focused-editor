@@ -11,7 +11,9 @@ import {
   OpenHandler,
   WidgetFactory
 } from '@theia/core/lib/browser';
+import { ServiceConnectionProvider } from '@theia/core/lib/browser/messaging/service-connection-provider';
 import { ContainerModule } from '@theia/core/shared/inversify';
+import { AudioConversionService, AudioConversionServicePath } from '../common';
 import { TranscriptCheckWidget } from './transcript-check-widget';
 import { TranscriptCheckSetsService } from './transcript-check-sets-service';
 import { TranscriptSpeakersService } from './transcript-speakers-service';
@@ -32,7 +34,11 @@ import {
 export default new ContainerModule(bind => {
   bind(TranscriptCheckSetsService).toSelf().inSingletonScope();
   bind(TranscriptSpeakersService).toSelf().inSingletonScope();
-  // AI seam: Phase 4 (proofread) / Phase 5 (STT) swap this stub's internals.
+  // Backend STT pipeline proxy (Phase-5 per-segment re-recognition).
+  bind(AudioConversionService).toDynamicValue(ctx =>
+    ServiceConnectionProvider.createProxy(ctx.container, AudioConversionServicePath)
+  ).inSingletonScope();
+  // AI lanes: Phase 4 (ai-connect proofread) + Phase 5 (backend STT).
   bind(TranscriptCheckAiService).toSelf().inSingletonScope();
 
   // Transient: the WidgetManager caches one widget per transcriptset URI.

@@ -124,3 +124,26 @@ export function encodeWavPcm16(audio: PcmAudioData): Uint8Array {
 export function extractSegmentWav(audio: PcmAudioData, startSec: number, endSec: number): Uint8Array {
   return encodeWavPcm16(sliceSegmentSamples(audio, startSec, endSec));
 }
+
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+/**
+ * Encode bytes to standard base64 (with `=` padding). Pure TS — no `btoa`
+ * (browser-only, chokes past ~64k when spread into `String.fromCharCode`) and
+ * no `Buffer` (node-only), so the SAME code runs in the widget, the backend,
+ * and under `bun test`. Used to ship an in-memory WAV slice through the
+ * `TranscribeSegmentFileRequest.audioBase64` field.
+ */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let output = '';
+  for (let index = 0; index < bytes.length; index += 3) {
+    const byte0 = bytes[index];
+    const byte1 = index + 1 < bytes.length ? bytes[index + 1] : 0;
+    const byte2 = index + 2 < bytes.length ? bytes[index + 2] : 0;
+    output += BASE64_ALPHABET[byte0 >> 2];
+    output += BASE64_ALPHABET[((byte0 & 0x03) << 4) | (byte1 >> 4)];
+    output += index + 1 < bytes.length ? BASE64_ALPHABET[((byte1 & 0x0f) << 2) | (byte2 >> 6)] : '=';
+    output += index + 2 < bytes.length ? BASE64_ALPHABET[byte2 & 0x3f] : '=';
+  }
+  return output;
+}

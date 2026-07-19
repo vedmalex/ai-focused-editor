@@ -367,6 +367,8 @@ export class TranscriptCheckWidget extends ReactWidget implements Navigatable, S
   protected operationFeedback: { segmentIndex: number; kind: 'merge' | 'split' } | undefined;
   protected operationFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
   protected mediaSizeWarnedBases = new Set<string>();
+  /** In-flight per-segment AI action (one at a time; buttons disable meanwhile). */
+  protected aiRunning: { segmentIndex: number; kind: 'proofread' | 'retranscribe' } | undefined;
 
   // --- panes (StatefulWidget) ---
   protected showFilesPane = true;
@@ -763,6 +765,7 @@ export class TranscriptCheckWidget extends ReactWidget implements Navigatable, S
     this.mergeSelection = [];
     this.splitModeSegmentIndex = null;
     this.operationFeedback = undefined;
+    this.aiRunning = undefined;
     this.currentTime = 0;
     this.audioDuration = 0;
     this.audioPeaks = undefined;
@@ -1750,60 +1753,111 @@ export class TranscriptCheckWidget extends ReactWidget implements Navigatable, S
     this.update();
   }
 
-  // --- AI seams (Phase 4/5 — buttons live, calls stubbed) ---
+  // --- AI actions (Phase 4 proofread / Phase 5 STT re-recognition) ---
 
   protected async runProofreadForSegment(segmentIndex: number): Promise<void> {
     const seg = this.segments[segmentIndex];
     const bounds = getSegmentBounds(seg);
-    if (!seg?._id || !bounds) {
+    if (!seg?._id || !bounds || this.aiRunning) {
       return;
     }
-    const result = await this.aiService.proofreadSegment({
-      startSec: bounds.start,
-      endSec: bounds.end,
-      sourceText: seg.text || '',
-      language: this.set?.language
-    });
-    if (result.error) {
-      void this.messageService.info(result.error);
-      return;
-    }
-    if (result.result) {
-      const stored = result.result;
-      this.mutateTranscript(document => setSegmentProofreadResult(document, seg._id!, stored));
+    const base = this.currentBase;
+    const ticket = { segmentIndex, kind: 'proofread' as const };
+    this.aiRunning = ticket;
+    this.update();
+    try {
+      const result = await this.aiService.proofreadSegment({
+        startSec: bounds.start,
+        endSec: bounds.end,
+        sourceText: seg.text || '',
+        language: this.set?.language
+      });
+      if (this.isDisposed) {
+        return;
+      }
+      for (const warning of result.warnings ?? []) {
+        void this.messageService.warn(warning);
+      }
+      if (result.error) {
+        void this.messageService.error(result.error);
+        return;
+      }
+      // Guard against a file switch while the request was in flight: the
+      // result belongs to `base`'s transcript, and mutateTranscript writes
+      // into the CURRENT one.
+      if (result.result && this.currentBase === base) {
+        const stored = result.result;
+        this.mutateTranscript(document => setSegmentProofreadResult(document, seg._id!, stored));
+      }
+    } finally {
+      if (this.aiRunning === ticket) {
+        this.aiRunning = undefined;
+      }
+      if (!this.isDisposed) {
+        this.update();
+      }
     }
   }
 
   protected async runRetranscribeForSegment(segmentIndex: number): Promise<void> {
     const seg = this.segments[segmentIndex];
     const bounds = getSegmentBounds(seg);
-    if (!seg?._id || !bounds) {
+    if (!seg?._id || !bounds || this.aiRunning) {
       return;
     }
-    // TODO(Phase 5): slice the WAV locally via `extractSegmentWav` over
-    // `this.decodedAudioBuffer` (or delegate to the AudioTranscriptionService
-    // backend) before calling the STT provider.
-    const result = await this.aiService.retranscribeSegment({
-      mediaRelPath: this.currentPair?.mediaRelPath,
-      startSec: bounds.start,
-      endSec: bounds.end,
-      sourceText: seg.text || '',
-      language: this.set?.language
-    });
-    if (result.error) {
-      void this.messageService.info(result.error);
-      return;
-    }
-    if (result.result) {
-      const stored = result.result;
-      this.mutateTranscript(document => setSegmentTranscriptionResult(document, seg._id!, {
-        provider: stored.provider,
-        model: stored.model,
-        text: stored.suggestedText,
-        sourceText: stored.sourceText,
-        updatedAt: stored.updatedAt,
-        raw: stored.raw
-      }));
+    const base = this.currentBase;
+    const ticket = { segmentIndex, kind: 'retranscribe' as const };
+    this.aiRunning = ticket;
+    this.update();
+    try {
+      // Project the cached decoded AudioBuffer to plain channel arrays; the
+      // service slices [start, end] to a WAV and ships it to the backend.
+      const decoded = this.decodedAudioBuffer;
+      const audio = decoded && decoded.numberOfChannels > 0
+        ? {
+          sampleRate: decoded.sampleRate,
+          channels: Array.from(
+            { length: Math.min(2, decoded.numberOfChannels) },
+            (_, channelIndex) => decoded.getChannelData(channelIndex)
+          )
+        }
+        : undefined;
+      const result = await this.aiService.retranscribeSegment({
+        mediaRelPath: this.currentPair?.mediaRelPath,
+        startSec: bounds.start,
+        endSec: bounds.end,
+        sourceText: seg.text || '',
+        language: this.set?.language,
+        audio
+      });
+      if (this.isDisposed) {
+        return;
+      }
+      for (const warning of result.warnings ?? []) {
+        void this.messageService.warn(warning);
+      }
+      if (result.error) {
+        void this.messageService.error(result.error);
+        return;
+      }
+      if (result.result && this.currentBase === base) {
+        const stored = result.result;
+        this.mutateTranscript(document => setSegmentTranscriptionResult(document, seg._id!, {
+          provider: stored.provider,
+          model: stored.model,
+          text: stored.suggestedText,
+          sourceText: stored.sourceText,
+          updatedAt: stored.updatedAt,
+          raw: stored.raw
+        }));
+      }
+    } finally {
+      if (this.aiRunning === ticket) {
+        this.aiRunning = undefined;
+      }
+      if (!this.isDisposed) {
+        this.update();
+      }
     }
   }
 
@@ -1911,6 +1965,11 @@ export class TranscriptCheckWidget extends ReactWidget implements Navigatable, S
       container: host,
       height: 72,
       normalize: true,
+      // Decode at 16 kHz (wavesurfer's default is 8 kHz): the decoded buffer
+      // feeds the Phase-5 WAV slices, and whisper.cpp's classic WAV reader
+      // REQUIRES 16 kHz input (Groq accepts any rate). Playback itself runs
+      // through the <audio> element and is unaffected.
+      sampleRate: 16000,
       waveColor: WAVE_COLOR,
       progressColor: WAVE_PROGRESS_COLOR,
       cursorColor: WAVE_CURSOR_COLOR,
@@ -2819,13 +2878,19 @@ export class TranscriptCheckWidget extends ReactWidget implements Navigatable, S
         h('button', {
           className: 'theia-button secondary afe-transcript-ai-btn',
           type: 'button',
+          disabled: !!this.aiRunning,
           onClick: (event: React.MouseEvent) => { event.stopPropagation(); void this.runProofreadForSegment(idx); }
-        }, nls.localize('ai-focused-editor/transcript/proofread', 'Proofread')),
+        }, this.aiRunning?.kind === 'proofread' && this.aiRunning.segmentIndex === idx
+          ? nls.localize('ai-focused-editor/transcript/proofreading-busy', 'Proofreading…')
+          : nls.localize('ai-focused-editor/transcript/proofread', 'Proofread')),
         h('button', {
           className: 'theia-button secondary afe-transcript-ai-btn',
           type: 'button',
+          disabled: !!this.aiRunning,
           onClick: (event: React.MouseEvent) => { event.stopPropagation(); void this.runRetranscribeForSegment(idx); }
-        }, nls.localize('ai-focused-editor/transcript/re-recognize', 'Re-recognize'))),
+        }, this.aiRunning?.kind === 'retranscribe' && this.aiRunning.segmentIndex === idx
+          ? nls.localize('ai-focused-editor/transcript/re-recognizing-busy', 'Recognizing…')
+          : nls.localize('ai-focused-editor/transcript/re-recognize', 'Re-recognize'))),
       inSplitMode
         ? h('div', { className: 'afe-transcript-split-hint' },
           nls.localize('ai-focused-editor/transcript/split-hint', 'Split mode: move position on waveform, then press Apply.'))

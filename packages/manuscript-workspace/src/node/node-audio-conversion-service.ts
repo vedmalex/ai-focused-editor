@@ -37,7 +37,7 @@ import { randomUUID } from 'crypto';
 import { promises as fs, constants as fsConstants } from 'fs';
 import { tmpdir } from 'os';
 import { basename, join, resolve } from 'path';
-import { injectable } from '@theia/core/shared/inversify';
+import { injectable, unmanaged } from '@theia/core/shared/inversify';
 import {
   AudioConversionOptions,
   AudioConversionService,
@@ -358,7 +358,14 @@ export class NodeAudioConversionService implements AudioConversionService {
   /** Test seam: retry backoff (ms) for Groq connection errors. */
   protected groqRetryDelayMs = 1000;
 
-  constructor(runner: CommandRunner = defaultCommandRunner, groqTransport: GroqTransport = defaultGroqTransport) {
+  // Both parameters are TEST seams with defaults — `@unmanaged()` tells
+  // inversify NOT to resolve them (a plain `Function`/object parameter would
+  // otherwise fail DI construction when the RPC connection handler gets the
+  // service from the backend container).
+  constructor(
+    @unmanaged() runner: CommandRunner = defaultCommandRunner,
+    @unmanaged() groqTransport: GroqTransport = defaultGroqTransport
+  ) {
     this.runCommand = runner;
     this.groqTransport = groqTransport;
   }
@@ -428,7 +435,31 @@ export class NodeAudioConversionService implements AudioConversionService {
   }
 
   async transcribeSegmentFile(request: TranscribeSegmentFileRequest): Promise<TranscribeSegmentFileResult> {
+    // In-memory slice (browser frontend): materialize a temp file, recurse
+    // through the path branch, and ALWAYS clean the temp file up.
+    if (request.audioBase64) {
+      const extension = /\.mp3$/i.test(request.audioFileName ?? '') ? '.mp3' : '.wav';
+      const tempPath = join(tmpdir(), `ai-editor-segment-${randomUUID()}${extension}`);
+      try {
+        let bytes: Buffer;
+        try {
+          bytes = Buffer.from(request.audioBase64, 'base64');
+        } catch {
+          return { ok: false, error: 'audioBase64 is not valid base64 data' };
+        }
+        if (bytes.length === 0) {
+          return { ok: false, error: 'audioBase64 decoded to zero bytes' };
+        }
+        await fs.writeFile(tempPath, bytes);
+        return await this.transcribeSegmentFile({ segmentPath: tempPath, transcription: request.transcription });
+      } finally {
+        await unlinkIfExists(tempPath);
+      }
+    }
     try {
+      if (!request.segmentPath) {
+        return { ok: false, error: 'Either segmentPath or audioBase64 is required' };
+      }
       if (!(await pathExists(request.segmentPath))) {
         return { ok: false, error: `Segment file does not exist: ${request.segmentPath}` };
       }

@@ -12,6 +12,7 @@ import {
   getSegmentProofread,
   getSegmentTranscription,
   migrateLegacySpeakerFields,
+  normalizeProofreadIssues,
   recordSegmentTextChange,
   restoreSegmentHistoryEntry,
   setSegmentProofreadResult,
@@ -295,5 +296,38 @@ describe('migrateLegacySpeakerFields', () => {
     const result = migrateLegacySpeakerFields(segments, [{ id: 'existing', name: 'Alice' }]);
     expect(result.speakersChanged).toBe(false);
     expect(result.segments[0].speakerId).toBe('existing');
+  });
+});
+
+describe('normalizeProofreadIssues (the Phase-4 AI response shaping)', () => {
+  test('coerces well-formed issues field-by-field and keeps ids', () => {
+    const issues = normalizeProofreadIssues([
+      { id: 'i1', type: 'grammar', severity: 'warning', message: 'Bad case', excerpt: 'дом', suggestion: 'дома' }
+    ]);
+    expect(issues).toEqual([
+      { id: 'i1', type: 'grammar', severity: 'warning', message: 'Bad case', excerpt: 'дом', suggestion: 'дома' }
+    ]);
+  });
+
+  test('fills defaults, generates missing ids, and drops entries without a message', () => {
+    const issues = normalizeProofreadIssues([
+      { message: 'Only message' },
+      { type: 'noise' }, // no message → dropped
+      'not-an-object',
+      null
+    ]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].message).toBe('Only message');
+    expect(issues[0].type).toBe('issue');
+    expect(issues[0].severity).toBe('info');
+    expect(issues[0].excerpt).toBe('');
+    expect(issues[0].suggestion).toBe('');
+    expect(issues[0].id.length).toBeGreaterThan(0);
+  });
+
+  test('a non-array payload yields an empty list', () => {
+    expect(normalizeProofreadIssues(undefined)).toEqual([]);
+    expect(normalizeProofreadIssues({ issues: [] })).toEqual([]);
+    expect(normalizeProofreadIssues('nope')).toEqual([]);
   });
 });

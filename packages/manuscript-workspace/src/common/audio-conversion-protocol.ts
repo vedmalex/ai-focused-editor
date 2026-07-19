@@ -157,10 +157,24 @@ export interface MediaPipelineJobState {
   error?: string;
 }
 
-/** Per-segment re-recognition (Phase 5): one WAV/MP3 slice → normalized text. */
+/**
+ * Per-segment re-recognition (Phase 5): one WAV/MP3 slice → normalized text.
+ * EXACTLY ONE audio source must be provided:
+ *  - `segmentPath` — an absolute path already on the backend machine, or
+ *  - `audioBase64` — the slice bytes themselves (base64), used by the browser
+ *    frontend which has no filesystem path for an in-memory WAV slice. The
+ *    backend writes them to a temp file, transcribes, and deletes it.
+ */
 export interface TranscribeSegmentFileRequest {
-  /** Absolute path to the audio segment (wav/mp3). */
-  segmentPath: string;
+  /** Absolute path to the audio segment (wav/mp3). Omit when sending `audioBase64`. */
+  segmentPath?: string;
+  /** Base64-encoded audio bytes (a complete WAV/MP3 file, NOT raw PCM). */
+  audioBase64?: string;
+  /**
+   * File name hint for `audioBase64` (its extension picks the temp-file
+   * suffix, e.g. `segment.wav`). Default `segment.wav`.
+   */
+  audioFileName?: string;
   transcription: TranscriptionOptions;
 }
 

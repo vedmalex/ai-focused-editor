@@ -390,7 +390,13 @@ export function restoreSegmentHistoryEntry(
   });
 }
 
-function normalizeIssues(rawIssues: unknown): SegmentProofreadIssue[] {
+/**
+ * Normalize raw (unknown-shaped) proofread issues into the on-disk
+ * {@link SegmentProofreadIssue} shape: string coercion field-by-field,
+ * entries without a `message` dropped. Exported so the Phase-4 AI service can
+ * shape a model response with EXACTLY the store-side rules.
+ */
+export function normalizeProofreadIssues(rawIssues: unknown): SegmentProofreadIssue[] {
   if (!Array.isArray(rawIssues)) {
     return [];
   }
@@ -429,7 +435,7 @@ export function setSegmentProofreadResult(
       correctedText: typeof result?.correctedText === 'string' ? result.correctedText : '',
       sourceText: typeof result?.sourceText === 'string' ? result.sourceText : '',
       updatedAt: typeof result?.updatedAt === 'string' ? result.updatedAt : new Date().toISOString(),
-      issues: normalizeIssues(result?.issues)
+      issues: normalizeProofreadIssues(result?.issues)
     }
   };
   return {

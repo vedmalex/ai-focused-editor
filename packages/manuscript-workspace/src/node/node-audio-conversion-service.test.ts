@@ -510,6 +510,53 @@ describe('whisper-cli wiring (transcribeSegmentFile, local backend)', () => {
     expect(seenArgs[seenArgs.indexOf('-t') + 1]).toBe('8');
   });
 
+  test('audioBase64: materializes a temp WAV, transcribes it, and cleans it up', async () => {
+    const wavBytes = Buffer.from('RIFFfake-wav-payload');
+    let fileArg: string | undefined;
+    let bytesAtCallTime: Buffer | undefined;
+    const { runner } = scriptedRunner(async (command, args) => {
+      if (command === '/fake/whisper-cli') {
+        fileArg = args[args.indexOf('-f') + 1];
+        bytesAtCallTime = await fs.readFile(fileArg);
+        const ofIndex = args.indexOf('-of');
+        await fs.writeFile(`${args[ofIndex + 1]}.json`, JSON.stringify({
+          result: { language: 'ru' },
+          transcription: [{ offsets: { from: 0, to: 900 }, text: ' повторное распознавание' }]
+        }), 'utf8');
+        return { ok: true, code: 0, stdout: '', stderr: '' };
+      }
+      return undefined;
+    });
+    const service = new TestService(runner);
+    const result = await service.transcribeSegmentFile({
+      audioBase64: wavBytes.toString('base64'),
+      audioFileName: 'segment.wav',
+      transcription: { backend: 'local', whisperCliPath: '/fake/whisper-cli', modelPath: '/fake/model.bin', language: 'ru' }
+    });
+    expect(result.ok).toBe(true);
+    expect(result.text).toBe('повторное распознавание');
+    // The temp file carried the decoded bytes and lived in the OS temp dir...
+    expect(fileArg).toMatch(/ai-editor-segment-.*\.wav$/);
+    expect(bytesAtCallTime!.equals(wavBytes)).toBe(true);
+    // ...and was deleted after the call.
+    expect(await fs.access(fileArg!).then(() => true, () => false)).toBe(false);
+  });
+
+  test('audioBase64: zero-byte decode and missing-both-sources fail cleanly', async () => {
+    const service = new TestService(scriptedRunner(() => undefined).runner);
+    const empty = await service.transcribeSegmentFile({
+      audioBase64: '!!!',
+      transcription: { backend: 'local', whisperCliPath: '/x', modelPath: '/y' }
+    });
+    expect(empty.ok).toBe(false);
+    expect(empty.error).toContain('zero bytes');
+    const neither = await service.transcribeSegmentFile({
+      transcription: { backend: 'local', whisperCliPath: '/x', modelPath: '/y' }
+    });
+    expect(neither.ok).toBe(false);
+    expect(neither.error).toContain('segmentPath or audioBase64');
+  });
+
   test('missing whisperCliPath/modelPath fail with actionable errors', async () => {
     const segmentPath = join(TEST_ROOT, 'noconf.mp3');
     await fs.writeFile(segmentPath, 'fake');
