@@ -5,8 +5,6 @@ import { Saveable, SaveOptions } from '@theia/core/lib/browser/saveable';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/shared/@lumino/messaging';
 import { nls } from '@theia/core/lib/common/nls';
-import { MonacoEditorProvider } from '@theia/monaco/lib/browser/monaco-editor-provider';
-import { MonacoEditor } from '@theia/monaco/lib/browser/monaco-editor';
 import { MonacoTextModelService } from '@theia/monaco/lib/browser/monaco-text-model-service';
 import { MonacoEditorModel } from '@theia/monaco/lib/browser/monaco-editor-model';
 import { IReference } from '@theia/monaco-editor-core/esm/vs/base/common/lifecycle';
@@ -50,6 +48,18 @@ const REFRESH_DEBOUNCE_MS = 300;
  * across page navigation so the edit history survives forward/back.
  */
 const PROOFREADING_EDIT_SCHEME = 'afe-proofreading-edit';
+
+/**
+ * Context key set to `true` on the embedded editor's own (DOM-scoped) context
+ * key service. Theia renders every Monaco context menu through its
+ * `MonacoContextMenuService`, which IGNORES the editor's locally computed
+ * actions and re-renders Theia's `EDITOR_CONTEXT_MENU` menu path instead — so
+ * the scoped AI actions are contributed as Theia menu items whose `when` clause
+ * is this key. Because Theia evaluates `when` against the right-click TARGET
+ * element's scoped context, the items appear exactly (and only) in this
+ * widget's embedded editor.
+ */
+export const PROOFREADING_EDITOR_CONTEXT_KEY = 'afeProofreadingEditor';
 
 /** Session-persisted pane-visibility toggles. */
 interface ProofreadingViewOptions {
@@ -122,6 +132,18 @@ function bytesToBase64(bytes: Uint8Array): string {
 export class ProofreadingWidget extends ReactWidget implements Navigatable, Saveable, StatefulWidget {
   static readonly FACTORY_ID = 'ai-focused-editor.proofreading-editor';
 
+  /**
+   * The widget whose embedded editor was focused most recently. Right-clicking
+   * the editor focuses it before the context menu opens, so the Theia menu
+   * commands (see {@link PROOFREADING_EDITOR_CONTEXT_KEY}) dispatch here.
+   */
+  protected static activeEditorWidget: ProofreadingWidget | undefined;
+
+  /** The proofreading widget whose embedded editor holds (or last held) focus. */
+  static getActiveEditorWidget(): ProofreadingWidget | undefined {
+    return ProofreadingWidget.activeEditorWidget;
+  }
+
   @inject(FileService)
   protected readonly fileService!: FileService;
 
@@ -136,9 +158,6 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
 
   @inject(ProofreadingAiService)
   protected readonly aiService!: ProofreadingAiService;
-
-  @inject(MonacoEditorProvider)
-  protected readonly editorProvider!: MonacoEditorProvider;
 
   @inject(MonacoTextModelService)
   protected readonly monacoModels!: MonacoTextModelService;
@@ -186,15 +205,24 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
   // --- embedded Monaco text editor (the editable text pane) ---
 
   /**
-   * The single embedded Monaco editor. Its DOM host node ({@link editorHostNode})
-   * is widget-owned and reparented across React re-renders, so the editor DOM is
-   * never wiped by React's reconciliation.
+   * The single embedded Monaco editor — a RAW standalone code editor
+   * ({@link https://microsoft.github.io/monaco-editor/ monaco.editor.create}, the
+   * exact engine ScanCheck uses). It is used instead of Theia's
+   * `MonacoEditorProvider.createInline` because that path (a) strips the gutter
+   * (`lineDecorationsWidth: 0`, `glyphMargin/folding: false` → line numbers glued
+   * to the text) and (b) overrides `IContextMenuService.showContextMenu` with a
+   * no-op, suppressing the right-click menu the scoped AI actions attach to. The
+   * standalone editor keeps Monaco's native gutter AND native context menu. Its
+   * DOM host node ({@link editorHostNode}) is widget-owned and reparented across
+   * React re-renders, so the editor DOM is never wiped by React's reconciliation.
    */
-  protected monacoEditor: MonacoEditor | undefined;
+  protected editorControl: monaco.editor.IStandaloneCodeEditor | undefined;
   /** Widget-owned, created-once DOM host the editor lives in (see the ref callback). */
   protected editorHostNode: HTMLDivElement | undefined;
   /** Guards against creating the editor twice while its async creation is in flight. */
   protected editorCreating = false;
+  /** Guards the scoped-AI-action registration so it runs at most once per editor. */
+  protected scopedActionsRegistered = false;
   /** Base whose model is currently shown in the editor. */
   protected currentEditorBase: string | undefined;
   /**
@@ -311,8 +339,8 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
 
   protected override onActivateRequest(msg: Message): void {
     super.onActivateRequest(msg);
-    if (this.monacoEditor) {
-      this.monacoEditor.focus();
+    if (this.editorControl) {
+      this.editorControl.focus();
     } else {
       this.node.focus();
     }
@@ -657,7 +685,7 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
 
   /** Create the embedded editor once, over the current page's model. */
   protected async ensureEditor(): Promise<void> {
-    if (this.monacoEditor || this.editorCreating || !this.editorHostNode) {
+    if (this.editorControl || this.editorCreating || !this.editorHostNode) {
       return;
     }
     const base = this.currentPair?.base;
@@ -666,31 +694,53 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
     }
     this.editorCreating = true;
     try {
-      await this.ensureModelRef(base);
-      // Gutter fix (Unit C): the stray "numbers on the right" were the OLD adjacent
-      // strip overlapping the editor (removed by Unit A's per-column relayout), NOT
-      // this option set. `lineNumbers: 'on'` is kept explicit because Theia's inline
-      // editor default is OFF; no glyphMargin/folding overrides so the gutter stays
-      // Monaco-default and is themed via scoped CSS. `contextmenu: true` enables the
-      // native right-click menu the scoped AI actions attach to.
-      const editor = await this.editorProvider.createInline(this.editModelUri(base), this.editorHostNode, {
-        readOnly: false,
-        lineNumbers: 'on',
-        wordWrap: 'on',
+      const reference = await this.ensureModelRef(base);
+      if (this.isDisposed) {
+        return;
+      }
+      // Raw standalone editor (ScanCheck parity): the DEFAULT gutter — glyphMargin,
+      // folding and Monaco's ~10px lineDecorationsWidth — gives the line-number/text
+      // GAP, and the NATIVE context menu (contextmenu: true, no suppressing override)
+      // is what the scoped AI actions attach to. No `theme` is set: Theia keeps the
+      // global Monaco standalone theme in sync with the app theme
+      // (MonacoTextmateService.updateTheme → monaco.editor.setTheme), so the editor
+      // inherits it; passing a builtin here would clobber that GLOBAL theme.
+      const editor = monaco.editor.create(this.editorHostNode, {
         automaticLayout: true,
-        scrollBeyondLastLine: false,
+        wordWrap: 'on',
+        lineNumbers: 'on',
         minimap: { enabled: false },
-        contextmenu: true
+        scrollBeyondLastLine: false,
+        contextmenu: true,
+        fontSize: 14,
+        renderLineHighlight: 'line',
+        readOnly: false
       });
       if (this.isDisposed) {
         editor.dispose();
         return;
       }
-      this.monacoEditor = editor;
+      // Seed the first page's model AFTER create (options carry no `model`), so the
+      // per-base model — and thus its undo stack — is the one the editor drives.
+      editor.setModel(reference.object.textEditorModel);
+      this.editorControl = editor;
       this.currentEditorBase = base;
-      this.toDispose.push(editor);
+      this.toDispose.push(Disposable.create(() => editor.dispose()));
+      // Scope the Theia EDITOR_CONTEXT_MENU items to THIS editor: the key lives on
+      // the editor's DOM-scoped context key service, so the `when` clause on the
+      // scoped-AI menu items matches only right-clicks inside this editor.
+      editor.createContextKey(PROOFREADING_EDITOR_CONTEXT_KEY, true);
+      // Focus tracking so the menu commands know which widget to dispatch to
+      // (the listener is owned by the editor and dies with editor.dispose()).
+      ProofreadingWidget.activeEditorWidget = this;
+      editor.onDidFocusEditorText(() => { ProofreadingWidget.activeEditorWidget = this; });
+      this.toDispose.push(Disposable.create(() => {
+        if (ProofreadingWidget.activeEditorWidget === this) {
+          ProofreadingWidget.activeEditorWidget = undefined;
+        }
+      }));
       this.registerScopedAiActions(editor);
-      editor.getControl().layout();
+      editor.layout();
     } finally {
       this.editorCreating = false;
     }
@@ -699,11 +749,11 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
   /** Swap the editor to show a base's model (keeps that model's undo history). */
   protected async showModel(base: string): Promise<void> {
     const reference = await this.ensureModelRef(base);
-    if (!this.monacoEditor) {
+    const control = this.editorControl;
+    if (!control) {
       return;
     }
     const model = reference.object.textEditorModel;
-    const control = this.monacoEditor.getControl();
     if (this.currentEditorBase !== base || control.getModel() !== model) {
       control.setModel(model);
       this.currentEditorBase = base;
@@ -898,8 +948,11 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
    * `contextMenuOrder 2 + i/10` sits them next to Monaco's built-ins. Idempotent
    * per editor (the editor is created once).
    */
-  protected registerScopedAiActions(editor: MonacoEditor): void {
-    const control = editor.getControl();
+  protected registerScopedAiActions(control: monaco.editor.IStandaloneCodeEditor): void {
+    if (this.scopedActionsRegistered) {
+      return;
+    }
+    this.scopedActionsRegistered = true;
     const actions: Array<{ id: string; label: string; run: () => void }> = [
       {
         id: 'ai-focused-editor.proofreading.proofreadSelection',
@@ -943,9 +996,37 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
     });
   }
 
+  /**
+   * Public dispatch for the Theia context-menu commands (see
+   * `ProofreadingCommandContribution`): runs the scoped AI action with the given
+   * id on THIS widget. Ids mirror the {@link registerScopedAiActions} ids.
+   */
+  runScopedAiAction(actionId: string): void {
+    switch (actionId) {
+      case 'ai-focused-editor.proofreading.proofreadSelection':
+        void this.runScopedProofread('selection');
+        break;
+      case 'ai-focused-editor.proofreading.proofreadParagraph':
+        void this.runScopedProofread('paragraph');
+        break;
+      case 'ai-focused-editor.proofreading.proofreadSentence':
+        void this.runScopedProofread('sentence');
+        break;
+      case 'ai-focused-editor.proofreading.proofreadWord':
+        void this.runScopedProofread('word');
+        break;
+      case 'ai-focused-editor.proofreading.customSelectionCommand':
+        void this.runCustomSelectionCommand();
+        break;
+      case 'ai-focused-editor.proofreading.undoLastAiApplication':
+        void this.undoLastAiApplication();
+        break;
+    }
+  }
+
   /** The live control + model for the current page, or undefined when unavailable. */
   protected activeControlModel(): { control: monaco.editor.IStandaloneCodeEditor; model: monaco.editor.ITextModel } | undefined {
-    const control = this.monacoEditor?.getControl();
+    const control = this.editorControl;
     const model = control?.getModel();
     if (!control || !model) {
       return undefined;
