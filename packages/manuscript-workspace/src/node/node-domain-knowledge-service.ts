@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import { createRequire } from 'module';
 import { homedir } from 'os';
 import { isAllowedMaterialFile } from '../common/author-materials';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path';
@@ -189,10 +190,33 @@ interface UnpdfModule {
  * ships a CommonJS entry (`./dist/index.cjs`) so a plain `require` resolves it in
  * the tsc-CJS backend and under the bun test runner alike.
  */
+/**
+ * Lazily require a runtime-assembled module specifier, with a bundled-backend
+ * fallback. A plain `require(name)` resolves when this module runs UNBUNDLED
+ * (dev backend from the package's own `lib/`, and the bun test runner) because
+ * node walks up into this package's `node_modules`. In the BUNDLED backend
+ * (the app's `lib/backend/main.js`) the bundle's `require` starts at the app,
+ * which under bun's isolated install layout does not hoist these parser deps —
+ * so `require('mammoth')`/`require('unpdf')` throw MODULE_NOT_FOUND. The
+ * fallback resolves relative to THIS installed package (the apps depend on it
+ * directly, so it and its `node_modules` are always reachable from the bundle),
+ * mirroring the document-preview-theia loader. The `@ai-focused-editor/…` name
+ * is split so esbuild never turns the fallback into a static bundle edge.
+ */
+function lazyRequire<T>(...parts: string[]): T {
+  const moduleName = parts.join('');
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require(moduleName) as T;
+  } catch {
+    const selfName = ['@ai-focused-editor/', 'manuscript-workspace'].join('');
+    const packageRequire = createRequire(require.resolve(selfName + '/package.json'));
+    return packageRequire(moduleName) as T;
+  }
+}
+
 async function extractPdfText(absolutePath: string): Promise<string> {
-  const moduleName = ['un', 'pdf'].join('');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const unpdf = require(moduleName) as UnpdfModule;
+  const unpdf = lazyRequire<UnpdfModule>('un', 'pdf');
   const buffer = await fs.readFile(absolutePath);
   const pdf = await unpdf.getDocumentProxy(new Uint8Array(buffer));
   const { text } = await unpdf.extractText(pdf, { mergePages: true });
@@ -211,9 +235,7 @@ interface MammothRawTextModule {
  * `unpdf` guard above) so the esbuild backend bundler never pulls it in.
  */
 async function extractDocxText(absolutePath: string): Promise<string> {
-  const moduleName = ['mam', 'moth'].join('');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const mammoth = require(moduleName) as MammothRawTextModule;
+  const mammoth = lazyRequire<MammothRawTextModule>('mam', 'moth');
   const buffer = await fs.readFile(absolutePath);
   const { value } = await mammoth.extractRawText({ buffer });
   return value;
