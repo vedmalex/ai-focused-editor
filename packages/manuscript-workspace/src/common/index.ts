@@ -28,8 +28,10 @@ export * from './obsidian-plugin-protocol';
 // extension; re-exported here (incl. the historical Office* aliases) so
 // existing `../common` imports keep resolving.
 export * from '@ai-focused-editor/document-preview-theia/lib/common';
+export * from './audio-conversion-protocol';
 export * from './audio-segment-wav';
 export * from './audio-transcription-protocol';
+export * from './media-transcription-model';
 export * from './proofreading-model';
 export * from './proofreading-prompts';
 export * from './proofreading-scaffold';
