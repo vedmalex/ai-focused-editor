@@ -21,7 +21,7 @@ import { EDITOR_CONTEXT_MENU } from '@theia/editor/lib/browser';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { isProofsetPath } from '../common';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
-import { ProofreadingWidget } from './proofreading-widget';
+import { PROOFREADING_EDITOR_CONTEXT_KEY, ProofreadingWidget } from './proofreading-widget';
 
 /**
  * Priority returned for a `proofreading/**\/proofset.yaml` sidecar. The text
@@ -53,7 +53,46 @@ export namespace ProofreadingCommands {
     },
     'ai-focused-editor/proofreading/open-raw-yaml'
   );
+
+  /**
+   * The six scoped AI actions of the embedded proofreading editor, surfaced as
+   * Theia commands. Theia's `MonacoContextMenuService` renders every Monaco
+   * context menu from Theia's `EDITOR_CONTEXT_MENU` menu path (ignoring
+   * `editor.addAction` items), so these are what actually appears on
+   * right-click; a `when: PROOFREADING_EDITOR_CONTEXT_KEY` clause keeps them
+   * out of regular file editors. Ids/labels mirror the widget's
+   * `registerScopedAiActions`.
+   */
+  export const SCOPED_AI: Command[] = [
+    Command.toLocalizedCommand(
+      { id: 'ai-focused-editor.proofreading.proofreadSelection', label: 'AI: proofread selection' },
+      'ai-focused-editor/proofreading/scope-proofread-selection'
+    ),
+    Command.toLocalizedCommand(
+      { id: 'ai-focused-editor.proofreading.proofreadParagraph', label: 'AI: proofread paragraph' },
+      'ai-focused-editor/proofreading/scope-proofread-paragraph'
+    ),
+    Command.toLocalizedCommand(
+      { id: 'ai-focused-editor.proofreading.proofreadSentence', label: 'AI: proofread sentence' },
+      'ai-focused-editor/proofreading/scope-proofread-sentence'
+    ),
+    Command.toLocalizedCommand(
+      { id: 'ai-focused-editor.proofreading.proofreadWord', label: 'AI: proofread word' },
+      'ai-focused-editor/proofreading/scope-proofread-word'
+    ),
+    Command.toLocalizedCommand(
+      { id: 'ai-focused-editor.proofreading.customSelectionCommand', label: 'AI: custom command for selection' },
+      'ai-focused-editor/proofreading/scope-custom-command'
+    ),
+    Command.toLocalizedCommand(
+      { id: 'ai-focused-editor.proofreading.undoLastAiApplication', label: 'AI: undo last AI application on this page' },
+      'ai-focused-editor/proofreading/scope-undo-last'
+    )
+  ];
 }
+
+/** Own group right below the modification group, so the AI items cluster together. */
+const PROOFREADING_AI_MENU_GROUP = [...EDITOR_CONTEXT_MENU, '2_afe_proofreading_ai'];
 
 @injectable()
 export class ProofreadingCommandContribution implements CommandContribution, MenuContribution {
@@ -87,6 +126,17 @@ export class ProofreadingCommandContribution implements CommandContribution, Men
         await this.editorManager.open(uri);
       }
     });
+
+    // Scoped AI actions of the embedded proofreading editor. Handlers ignore the
+    // context-menu anchor argument and dispatch to the widget whose editor holds
+    // focus (right-click focuses the editor before the menu opens).
+    for (const command of ProofreadingCommands.SCOPED_AI) {
+      commands.registerCommand(command, {
+        isEnabled: () => this.proofreadingTarget() !== undefined,
+        isVisible: () => this.proofreadingTarget() !== undefined,
+        execute: () => this.proofreadingTarget()?.runScopedAiAction(command.id)
+      });
+    }
   }
 
   registerMenus(menus: MenuModelRegistry): void {
@@ -96,6 +146,26 @@ export class ProofreadingCommandContribution implements CommandContribution, Men
     menus.registerMenuAction([...EDITOR_CONTEXT_MENU, 'navigation'], {
       commandId: ProofreadingCommands.OPEN_RAW_YAML.id
     });
+    // The right-click menu of the embedded proofreading editor: Theia renders
+    // EDITOR_CONTEXT_MENU for every Monaco editor, and the `when` clause (matched
+    // against the DOM-scoped context of the right-click target) limits these
+    // items to the proofreading widget's own editor.
+    ProofreadingCommands.SCOPED_AI.forEach((command, index) => {
+      menus.registerMenuAction(PROOFREADING_AI_MENU_GROUP, {
+        commandId: command.id,
+        order: String(index),
+        when: PROOFREADING_EDITOR_CONTEXT_KEY
+      });
+    });
+  }
+
+  /** The proofreading widget the scoped AI menu commands should act on. */
+  protected proofreadingTarget(): ProofreadingWidget | undefined {
+    const current = this.shell.currentWidget ?? this.shell.activeWidget;
+    if (current instanceof ProofreadingWidget) {
+      return current;
+    }
+    return ProofreadingWidget.getActiveEditorWidget();
   }
 
   protected canResolveProofset(arg?: unknown): boolean {

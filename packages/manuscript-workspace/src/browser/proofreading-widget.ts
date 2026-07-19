@@ -5,21 +5,23 @@ import { Saveable, SaveOptions } from '@theia/core/lib/browser/saveable';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/shared/@lumino/messaging';
 import { nls } from '@theia/core/lib/common/nls';
-import { MonacoEditorProvider } from '@theia/monaco/lib/browser/monaco-editor-provider';
-import { MonacoEditor } from '@theia/monaco/lib/browser/monaco-editor';
 import { MonacoTextModelService } from '@theia/monaco/lib/browser/monaco-text-model-service';
 import { MonacoEditorModel } from '@theia/monaco/lib/browser/monaco-editor-model';
 import { IReference } from '@theia/monaco-editor-core/esm/vs/base/common/lifecycle';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { FileChangesEvent } from '@theia/filesystem/lib/common/files';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
+import { QuickInputService } from '@theia/core/lib/browser/quick-input/quick-input-service';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
+import * as monaco from '@theia/monaco-editor-core';
 import {
   computeProgress,
   isTranslationMode,
   matchPairs,
   pairHasImage,
+  paragraphOffsetRange,
+  sentenceOffsetRange,
   ProofreadingActionKind,
   ProofreadingPair,
   ProofreadingSet,
@@ -47,8 +49,17 @@ const REFRESH_DEBOUNCE_MS = 300;
  */
 const PROOFREADING_EDIT_SCHEME = 'afe-proofreading-edit';
 
-/** Character budget for an adjacent-page text preview. */
-const ADJACENT_TEXT_PREVIEW_CHARS = 200;
+/**
+ * Context key set to `true` on the embedded editor's own (DOM-scoped) context
+ * key service. Theia renders every Monaco context menu through its
+ * `MonacoContextMenuService`, which IGNORES the editor's locally computed
+ * actions and re-renders Theia's `EDITOR_CONTEXT_MENU` menu path instead — so
+ * the scoped AI actions are contributed as Theia menu items whose `when` clause
+ * is this key. Because Theia evaluates `when` against the right-click TARGET
+ * element's scoped context, the items appear exactly (and only) in this
+ * widget's embedded editor.
+ */
+export const PROOFREADING_EDITOR_CONTEXT_KEY = 'afeProofreadingEditor';
 
 /** Session-persisted pane-visibility toggles. */
 interface ProofreadingViewOptions {
@@ -57,10 +68,40 @@ interface ProofreadingViewOptions {
   showAdjacentPages: boolean;
 }
 
-/** A lazily-loaded preview of an adjacent page (thumbnail or text snippet). */
-type AdjacentPreview =
-  | { kind: 'image'; dataUri: string }
-  | { kind: 'text'; snippet: string };
+/**
+ * A lazily-loaded preview of an adjacent page, rendered PER COLUMN as a
+ * scroll-crop (ScanCheck's `updateAdjacentContext`): `dataUri` (when the
+ * neighbor has a loadable scan) feeds the image column's context crop, and
+ * `text` (the neighbor's FULL page text — the editable target, i.e. the
+ * translation in translation mode) feeds the text column's context card.
+ */
+interface AdjacentPreview {
+  dataUri?: string;
+  text: string;
+}
+
+/** The scope kinds a granular AI action operates on. */
+type ProofreadingScopeKind = 'selection' | 'paragraph' | 'sentence' | 'word';
+
+/** A resolved editor scope: the Monaco range + the exact text it covers. */
+interface ProofreadingScope {
+  kind: ProofreadingScopeKind;
+  range: monaco.IRange;
+  text: string;
+  label: string;
+}
+
+/**
+ * One applied scoped/custom AI edit, recorded per page so the "undo last AI
+ * application" action can restore it (a discrete AI-undo layered on Ctrl+Z,
+ * mirroring ScanCheck's applied-artifact stack). `range` is where the applied
+ * text now sits; `previousText` is what it replaced.
+ */
+interface AppliedAiEdit {
+  range: monaco.IRange;
+  previousText: string;
+  appliedText: string;
+}
 
 /** Encode raw bytes as base64 without blowing the call stack (preview-widget copy). */
 function bytesToBase64(bytes: Uint8Array): string {
@@ -91,6 +132,18 @@ function bytesToBase64(bytes: Uint8Array): string {
 export class ProofreadingWidget extends ReactWidget implements Navigatable, Saveable, StatefulWidget {
   static readonly FACTORY_ID = 'ai-focused-editor.proofreading-editor';
 
+  /**
+   * The widget whose embedded editor was focused most recently. Right-clicking
+   * the editor focuses it before the context menu opens, so the Theia menu
+   * commands (see {@link PROOFREADING_EDITOR_CONTEXT_KEY}) dispatch here.
+   */
+  protected static activeEditorWidget: ProofreadingWidget | undefined;
+
+  /** The proofreading widget whose embedded editor holds (or last held) focus. */
+  static getActiveEditorWidget(): ProofreadingWidget | undefined {
+    return ProofreadingWidget.activeEditorWidget;
+  }
+
   @inject(FileService)
   protected readonly fileService!: FileService;
 
@@ -106,14 +159,14 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
   @inject(ProofreadingAiService)
   protected readonly aiService!: ProofreadingAiService;
 
-  @inject(MonacoEditorProvider)
-  protected readonly editorProvider!: MonacoEditorProvider;
-
   @inject(MonacoTextModelService)
   protected readonly monacoModels!: MonacoTextModelService;
 
   @inject(InMemoryResources)
   protected readonly inMemoryResources!: InMemoryResources;
+
+  @inject(QuickInputService)
+  protected readonly quickInput!: QuickInputService;
 
   protected uri!: URI;
   protected rootUri: URI | undefined;
@@ -152,15 +205,24 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
   // --- embedded Monaco text editor (the editable text pane) ---
 
   /**
-   * The single embedded Monaco editor. Its DOM host node ({@link editorHostNode})
-   * is widget-owned and reparented across React re-renders, so the editor DOM is
-   * never wiped by React's reconciliation.
+   * The single embedded Monaco editor — a RAW standalone code editor
+   * ({@link https://microsoft.github.io/monaco-editor/ monaco.editor.create}, the
+   * exact engine ScanCheck uses). It is used instead of Theia's
+   * `MonacoEditorProvider.createInline` because that path (a) strips the gutter
+   * (`lineDecorationsWidth: 0`, `glyphMargin/folding: false` → line numbers glued
+   * to the text) and (b) overrides `IContextMenuService.showContextMenu` with a
+   * no-op, suppressing the right-click menu the scoped AI actions attach to. The
+   * standalone editor keeps Monaco's native gutter AND native context menu. Its
+   * DOM host node ({@link editorHostNode}) is widget-owned and reparented across
+   * React re-renders, so the editor DOM is never wiped by React's reconciliation.
    */
-  protected monacoEditor: MonacoEditor | undefined;
+  protected editorControl: monaco.editor.IStandaloneCodeEditor | undefined;
   /** Widget-owned, created-once DOM host the editor lives in (see the ref callback). */
   protected editorHostNode: HTMLDivElement | undefined;
   /** Guards against creating the editor twice while its async creation is in flight. */
   protected editorCreating = false;
+  /** Guards the scoped-AI-action registration so it runs at most once per editor. */
+  protected scopedActionsRegistered = false;
   /** Base whose model is currently shown in the editor. */
   protected currentEditorBase: string | undefined;
   /**
@@ -178,9 +240,12 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
    */
   protected readonly seedingBases = new Set<string>();
 
-  /** Lazily-loaded previews for the adjacent-page strip (Unit 2). */
+  /** Lazily-loaded per-column previews for the adjacent pages (Unit A). */
   protected prevPreview: AdjacentPreview | undefined;
   protected nextPreview: AdjacentPreview | undefined;
+
+  /** Per-page stack of applied scoped/custom AI edits (the AI-undo layer, Unit B). */
+  protected readonly aiEditStacks = new Map<string, AppliedAiEdit[]>();
 
   /** Pending folder-watch refresh timer; cleared on dispose. */
   protected refreshHandle: ReturnType<typeof setTimeout> | undefined;
@@ -274,8 +339,8 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
 
   protected override onActivateRequest(msg: Message): void {
     super.onActivateRequest(msg);
-    if (this.monacoEditor) {
-      this.monacoEditor.focus();
+    if (this.editorControl) {
+      this.editorControl.focus();
     } else {
       this.node.focus();
     }
@@ -620,7 +685,7 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
 
   /** Create the embedded editor once, over the current page's model. */
   protected async ensureEditor(): Promise<void> {
-    if (this.monacoEditor || this.editorCreating || !this.editorHostNode) {
+    if (this.editorControl || this.editorCreating || !this.editorHostNode) {
       return;
     }
     const base = this.currentPair?.base;
@@ -629,23 +694,53 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
     }
     this.editorCreating = true;
     try {
-      await this.ensureModelRef(base);
-      const editor = await this.editorProvider.createInline(this.editModelUri(base), this.editorHostNode, {
-        readOnly: false,
-        lineNumbers: 'on',
-        wordWrap: 'on',
+      const reference = await this.ensureModelRef(base);
+      if (this.isDisposed) {
+        return;
+      }
+      // Raw standalone editor (ScanCheck parity): the DEFAULT gutter — glyphMargin,
+      // folding and Monaco's ~10px lineDecorationsWidth — gives the line-number/text
+      // GAP, and the NATIVE context menu (contextmenu: true, no suppressing override)
+      // is what the scoped AI actions attach to. No `theme` is set: Theia keeps the
+      // global Monaco standalone theme in sync with the app theme
+      // (MonacoTextmateService.updateTheme → monaco.editor.setTheme), so the editor
+      // inherits it; passing a builtin here would clobber that GLOBAL theme.
+      const editor = monaco.editor.create(this.editorHostNode, {
         automaticLayout: true,
+        wordWrap: 'on',
+        lineNumbers: 'on',
+        minimap: { enabled: false },
         scrollBeyondLastLine: false,
-        minimap: { enabled: false }
+        contextmenu: true,
+        fontSize: 14,
+        renderLineHighlight: 'line',
+        readOnly: false
       });
       if (this.isDisposed) {
         editor.dispose();
         return;
       }
-      this.monacoEditor = editor;
+      // Seed the first page's model AFTER create (options carry no `model`), so the
+      // per-base model — and thus its undo stack — is the one the editor drives.
+      editor.setModel(reference.object.textEditorModel);
+      this.editorControl = editor;
       this.currentEditorBase = base;
-      this.toDispose.push(editor);
-      editor.getControl().layout();
+      this.toDispose.push(Disposable.create(() => editor.dispose()));
+      // Scope the Theia EDITOR_CONTEXT_MENU items to THIS editor: the key lives on
+      // the editor's DOM-scoped context key service, so the `when` clause on the
+      // scoped-AI menu items matches only right-clicks inside this editor.
+      editor.createContextKey(PROOFREADING_EDITOR_CONTEXT_KEY, true);
+      // Focus tracking so the menu commands know which widget to dispatch to
+      // (the listener is owned by the editor and dies with editor.dispose()).
+      ProofreadingWidget.activeEditorWidget = this;
+      editor.onDidFocusEditorText(() => { ProofreadingWidget.activeEditorWidget = this; });
+      this.toDispose.push(Disposable.create(() => {
+        if (ProofreadingWidget.activeEditorWidget === this) {
+          ProofreadingWidget.activeEditorWidget = undefined;
+        }
+      }));
+      this.registerScopedAiActions(editor);
+      editor.layout();
     } finally {
       this.editorCreating = false;
     }
@@ -654,11 +749,11 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
   /** Swap the editor to show a base's model (keeps that model's undo history). */
   protected async showModel(base: string): Promise<void> {
     const reference = await this.ensureModelRef(base);
-    if (!this.monacoEditor) {
+    const control = this.editorControl;
+    if (!control) {
       return;
     }
     const model = reference.object.textEditorModel;
-    const control = this.monacoEditor.getControl();
     if (this.currentEditorBase !== base || control.getModel() !== model) {
       control.setModel(model);
       this.currentEditorBase = base;
@@ -845,6 +940,409 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
     }
   }
 
+  // --- granular scoped AI actions (editor context menu, Unit B) ---
+
+  /**
+   * Register the scoped AI actions on the editor's context menu (ScanCheck's
+   * `registerScopedAiActions`): `contextMenuGroupId: 'navigation'` +
+   * `contextMenuOrder 2 + i/10` sits them next to Monaco's built-ins. Idempotent
+   * per editor (the editor is created once).
+   */
+  protected registerScopedAiActions(control: monaco.editor.IStandaloneCodeEditor): void {
+    if (this.scopedActionsRegistered) {
+      return;
+    }
+    this.scopedActionsRegistered = true;
+    const actions: Array<{ id: string; label: string; run: () => void }> = [
+      {
+        id: 'ai-focused-editor.proofreading.proofreadSelection',
+        label: nls.localize('ai-focused-editor/proofreading/scope-proofread-selection', 'AI: proofread selection'),
+        run: () => { void this.runScopedProofread('selection'); }
+      },
+      {
+        id: 'ai-focused-editor.proofreading.proofreadParagraph',
+        label: nls.localize('ai-focused-editor/proofreading/scope-proofread-paragraph', 'AI: proofread paragraph'),
+        run: () => { void this.runScopedProofread('paragraph'); }
+      },
+      {
+        id: 'ai-focused-editor.proofreading.proofreadSentence',
+        label: nls.localize('ai-focused-editor/proofreading/scope-proofread-sentence', 'AI: proofread sentence'),
+        run: () => { void this.runScopedProofread('sentence'); }
+      },
+      {
+        id: 'ai-focused-editor.proofreading.proofreadWord',
+        label: nls.localize('ai-focused-editor/proofreading/scope-proofread-word', 'AI: proofread word'),
+        run: () => { void this.runScopedProofread('word'); }
+      },
+      {
+        id: 'ai-focused-editor.proofreading.customSelectionCommand',
+        label: nls.localize('ai-focused-editor/proofreading/scope-custom-command', 'AI: custom command for selection'),
+        run: () => { void this.runCustomSelectionCommand(); }
+      },
+      {
+        id: 'ai-focused-editor.proofreading.undoLastAiApplication',
+        label: nls.localize('ai-focused-editor/proofreading/scope-undo-last', 'AI: undo last AI application on this page'),
+        run: () => { void this.undoLastAiApplication(); }
+      }
+    ];
+    actions.forEach((action, index) => {
+      control.addAction({
+        id: action.id,
+        label: action.label,
+        contextMenuGroupId: 'navigation',
+        contextMenuOrder: 2 + index / 10,
+        run: () => { action.run(); }
+      });
+    });
+  }
+
+  /**
+   * Public dispatch for the Theia context-menu commands (see
+   * `ProofreadingCommandContribution`): runs the scoped AI action with the given
+   * id on THIS widget. Ids mirror the {@link registerScopedAiActions} ids.
+   */
+  runScopedAiAction(actionId: string): void {
+    switch (actionId) {
+      case 'ai-focused-editor.proofreading.proofreadSelection':
+        void this.runScopedProofread('selection');
+        break;
+      case 'ai-focused-editor.proofreading.proofreadParagraph':
+        void this.runScopedProofread('paragraph');
+        break;
+      case 'ai-focused-editor.proofreading.proofreadSentence':
+        void this.runScopedProofread('sentence');
+        break;
+      case 'ai-focused-editor.proofreading.proofreadWord':
+        void this.runScopedProofread('word');
+        break;
+      case 'ai-focused-editor.proofreading.customSelectionCommand':
+        void this.runCustomSelectionCommand();
+        break;
+      case 'ai-focused-editor.proofreading.undoLastAiApplication':
+        void this.undoLastAiApplication();
+        break;
+    }
+  }
+
+  /** The live control + model for the current page, or undefined when unavailable. */
+  protected activeControlModel(): { control: monaco.editor.IStandaloneCodeEditor; model: monaco.editor.ITextModel } | undefined {
+    const control = this.editorControl;
+    const model = control?.getModel();
+    if (!control || !model) {
+      return undefined;
+    }
+    return { control, model };
+  }
+
+  /** Convert a `[startOffset, endOffset)` text range into a Monaco range. */
+  protected offsetsToRange(model: monaco.editor.ITextModel, startOffset: number, endOffset: number): monaco.IRange {
+    const start = model.getPositionAt(startOffset);
+    const end = model.getPositionAt(endOffset);
+    return {
+      startLineNumber: start.lineNumber,
+      startColumn: start.column,
+      endLineNumber: end.lineNumber,
+      endColumn: end.column
+    };
+  }
+
+  /** Resolve the editor scope for an action kind (undefined when empty/unavailable). */
+  protected resolveScope(kind: ProofreadingScopeKind): ProofreadingScope | undefined {
+    switch (kind) {
+      case 'selection':
+        return this.getSelectionScope();
+      case 'paragraph':
+        return this.getParagraphScope();
+      case 'sentence':
+        return this.getSentenceScope();
+      case 'word':
+        return this.getWordScope();
+    }
+  }
+
+  /** The current non-empty selection as a scope, or undefined. */
+  protected getSelectionScope(): ProofreadingScope | undefined {
+    const cm = this.activeControlModel();
+    if (!cm) {
+      return undefined;
+    }
+    const selection = cm.control.getSelection();
+    if (!selection || selection.isEmpty()) {
+      return undefined;
+    }
+    const range: monaco.IRange = {
+      startLineNumber: selection.startLineNumber,
+      startColumn: selection.startColumn,
+      endLineNumber: selection.endLineNumber,
+      endColumn: selection.endColumn
+    };
+    return {
+      kind: 'selection',
+      range,
+      text: cm.model.getValueInRange(range),
+      label: nls.localize('ai-focused-editor/proofreading/scope-label-selection', 'Selected fragment')
+    };
+  }
+
+  /** The blank-line-delimited paragraph around the cursor as a scope. */
+  protected getParagraphScope(): ProofreadingScope | undefined {
+    const cm = this.activeControlModel();
+    const position = cm?.control.getPosition();
+    if (!cm || !position) {
+      return undefined;
+    }
+    const { startOffset, endOffset } = paragraphOffsetRange(cm.model.getValue(), cm.model.getOffsetAt(position));
+    const range = this.offsetsToRange(cm.model, startOffset, endOffset);
+    const text = cm.model.getValueInRange(range);
+    if (!text.trim()) {
+      return undefined;
+    }
+    return {
+      kind: 'paragraph',
+      range,
+      text,
+      label: nls.localize('ai-focused-editor/proofreading/scope-label-paragraph', 'Current paragraph')
+    };
+  }
+
+  /** The sentence around the cursor as a scope. */
+  protected getSentenceScope(): ProofreadingScope | undefined {
+    const cm = this.activeControlModel();
+    const position = cm?.control.getPosition();
+    if (!cm || !position) {
+      return undefined;
+    }
+    const { startOffset, endOffset } = sentenceOffsetRange(cm.model.getValue(), cm.model.getOffsetAt(position));
+    const range = this.offsetsToRange(cm.model, startOffset, endOffset);
+    const text = cm.model.getValueInRange(range);
+    if (!text.trim()) {
+      return undefined;
+    }
+    return {
+      kind: 'sentence',
+      range,
+      text,
+      label: nls.localize('ai-focused-editor/proofreading/scope-label-sentence', 'Current sentence')
+    };
+  }
+
+  /** The word under the cursor as a scope (Monaco's word boundaries, ScanCheck parity). */
+  protected getWordScope(): ProofreadingScope | undefined {
+    const cm = this.activeControlModel();
+    const position = cm?.control.getPosition();
+    if (!cm || !position) {
+      return undefined;
+    }
+    const word = cm.model.getWordAtPosition(position);
+    if (!word) {
+      return undefined;
+    }
+    const range: monaco.IRange = {
+      startLineNumber: position.lineNumber,
+      startColumn: word.startColumn,
+      endLineNumber: position.lineNumber,
+      endColumn: word.endColumn
+    };
+    return {
+      kind: 'word',
+      range,
+      text: cm.model.getValueInRange(range),
+      label: nls.localize('ai-focused-editor/proofreading/scope-label-word', 'Current word')
+    };
+  }
+
+  /**
+   * Proofread a scoped fragment (selection/paragraph/sentence/word) and offer the
+   * corrected fragment as a Diff → Apply. Reuses the existing text-only proofread
+   * flow; the guarded scoped edit updates OUR in-memory model directly.
+   */
+  protected async runScopedProofread(kind: ProofreadingScopeKind): Promise<void> {
+    const base = this.currentPair?.base;
+    if (base === undefined) {
+      return;
+    }
+    if (this.aiRunning) {
+      await this.messageService.info(nls.localize('ai-focused-editor/proofreading/ai-busy', 'An AI action is already running.'));
+      return;
+    }
+    const scope = this.resolveScope(kind);
+    if (!scope || !scope.text.trim()) {
+      await this.messageService.info(nls.localize('ai-focused-editor/proofreading/scope-empty', 'Nothing to proofread — place the cursor in the text (or select a fragment) and try again.'));
+      return;
+    }
+    this.aiRunning = true;
+    this.update();
+    try {
+      const result = await this.aiService.proofread({ currentText: scope.text, sourceText: undefined });
+      if (result.error) {
+        await this.messageService.error(nls.localize('ai-focused-editor/proofreading/ai-failed', '{0} failed: {1}', scope.label, result.error));
+        return;
+      }
+      if (result.warnings.length > 0) {
+        await this.messageService.warn(result.warnings.join('\n'));
+      }
+      const corrected = result.text ?? '';
+      if (!corrected || corrected === scope.text) {
+        await this.messageService.info(nls.localize('ai-focused-editor/proofreading/scope-no-change', '{0}: no changes proposed.', scope.label));
+        return;
+      }
+      const title = nls.localize('ai-focused-editor/proofreading/scope-proofread-title', 'Proofread — {0}', scope.label);
+      this.notifyScopedReady(base, scope, corrected, title);
+    } finally {
+      this.aiRunning = false;
+      this.update();
+    }
+  }
+
+  /** Prompt for a free-form instruction and run it against the current selection. */
+  protected async runCustomSelectionCommand(): Promise<void> {
+    const base = this.currentPair?.base;
+    if (base === undefined) {
+      return;
+    }
+    if (this.aiRunning) {
+      await this.messageService.info(nls.localize('ai-focused-editor/proofreading/ai-busy', 'An AI action is already running.'));
+      return;
+    }
+    const scope = this.getSelectionScope();
+    if (!scope || !scope.text.trim()) {
+      await this.messageService.info(nls.localize('ai-focused-editor/proofreading/scope-need-selection', 'Select a fragment first, then run the custom command.'));
+      return;
+    }
+    const instruction = await this.quickInput.input({
+      prompt: nls.localize('ai-focused-editor/proofreading/custom-command-prompt', 'Instruction for the selected fragment'),
+      placeHolder: nls.localize('ai-focused-editor/proofreading/custom-command-placeholder', 'e.g. make it more formal')
+    });
+    if (!instruction || !instruction.trim()) {
+      return;
+    }
+    this.aiRunning = true;
+    this.update();
+    try {
+      const result = await this.aiService.customCommand(scope.text, instruction);
+      if (result.error) {
+        await this.messageService.error(nls.localize('ai-focused-editor/proofreading/ai-failed', '{0} failed: {1}', scope.label, result.error));
+        return;
+      }
+      if (result.warnings.length > 0) {
+        await this.messageService.warn(result.warnings.join('\n'));
+      }
+      const out = result.text ?? '';
+      if (!out || out === scope.text) {
+        await this.messageService.info(nls.localize('ai-focused-editor/proofreading/scope-no-change', '{0}: no changes proposed.', scope.label));
+        return;
+      }
+      const title = nls.localize('ai-focused-editor/proofreading/custom-command-title', 'Custom command — {0}', scope.label);
+      this.notifyScopedReady(base, scope, out, title);
+    } finally {
+      this.aiRunning = false;
+      this.update();
+    }
+  }
+
+  /**
+   * Diff → Apply notification for a ready scoped result: Apply performs the
+   * guarded scoped edit into our in-memory model; Open Diff previews the fragment
+   * change and re-offers so the user can Apply after reviewing.
+   */
+  protected notifyScopedReady(base: string, scope: ProofreadingScope, corrected: string, title: string): void {
+    const applyAction = nls.localize('ai-focused-editor/workspace/proposal-apply', 'Apply');
+    const openDiffAction = nls.localize('ai-focused-editor/workspace/proposal-open-diff', 'Open Diff');
+    const proposal: ChangeProposal = {
+      uri: this.editModelUri(base).toString(),
+      originalText: scope.text,
+      targetText: corrected,
+      title
+    };
+    const message = nls.localize('ai-focused-editor/proofreading/scope-ready', '{0} is ready — review the diff, then Apply.', title);
+    void this.messageService.info(message, applyAction, openDiffAction).then(async answer => {
+      try {
+        if (answer === applyAction) {
+          if (this.applyScopedEdit(base, scope.range, scope.text, corrected)) {
+            await this.messageService.info(nls.localize('ai-focused-editor/proofreading/scope-applied', '"{0}" applied.', title));
+          }
+        } else if (answer === openDiffAction) {
+          await this.changeProposals.openDiff(proposal);
+          this.notifyScopedReady(base, scope, corrected, title);
+        }
+      } catch (error) {
+        await this.messageService.error(nls.localize(
+          'ai-focused-editor/proofreading/scope-apply-failed',
+          'Could not apply the change: {0}',
+          error instanceof Error ? error.message : String(error)
+        ));
+      }
+    });
+  }
+
+  /**
+   * Guarded scoped edit (ScanCheck's `replaceRangeIfUnchangedDetailed`): only
+   * writes if the range still holds `expectedText`, wraps the edit in
+   * `pushStackElement` so it is a discrete Ctrl+Z step, and records it on the
+   * per-page AI-undo stack. Returns false (with a drift warning) when the text
+   * changed since generation.
+   */
+  protected applyScopedEdit(base: string, range: monaco.IRange, expectedText: string, replacement: string): boolean {
+    const reference = this.editorModels.get(base);
+    if (!reference) {
+      return false;
+    }
+    const model = reference.object.textEditorModel;
+    if (model.getValueInRange(range) !== expectedText) {
+      void this.messageService.warn(nls.localize(
+        'ai-focused-editor/proofreading/scope-drifted',
+        'The text changed since this result was generated — re-run the action.'
+      ));
+      return false;
+    }
+    const startOffset = model.getOffsetAt({ lineNumber: range.startLineNumber, column: range.startColumn });
+    model.pushStackElement();
+    model.pushEditOperations([], [{ range, text: replacement }], () => null);
+    model.pushStackElement();
+    const endPosition = model.getPositionAt(startOffset + replacement.length);
+    const appliedRange: monaco.IRange = {
+      startLineNumber: range.startLineNumber,
+      startColumn: range.startColumn,
+      endLineNumber: endPosition.lineNumber,
+      endColumn: endPosition.column
+    };
+    const stack = this.aiEditStacks.get(base) ?? [];
+    stack.push({ range: appliedRange, previousText: expectedText, appliedText: replacement });
+    this.aiEditStacks.set(base, stack);
+    return true;
+  }
+
+  /** Pop and restore the most recent AI application on the current page (guarded). */
+  protected async undoLastAiApplication(): Promise<void> {
+    const base = this.currentPair?.base;
+    if (base === undefined) {
+      return;
+    }
+    const stack = this.aiEditStacks.get(base);
+    if (!stack || stack.length === 0) {
+      await this.messageService.info(nls.localize('ai-focused-editor/proofreading/scope-undo-empty', 'No AI application to undo on this page.'));
+      return;
+    }
+    const reference = this.editorModels.get(base);
+    if (!reference) {
+      return;
+    }
+    const entry = stack[stack.length - 1];
+    const model = reference.object.textEditorModel;
+    if (model.getValueInRange(entry.range) !== entry.appliedText) {
+      await this.messageService.warn(nls.localize(
+        'ai-focused-editor/proofreading/scope-undo-drifted',
+        'The applied text changed since it was written — undo skipped.'
+      ));
+      return;
+    }
+    model.pushStackElement();
+    model.pushEditOperations([], [{ range: entry.range, text: entry.previousText }], () => null);
+    model.pushStackElement();
+    stack.pop();
+    await this.messageService.info(nls.localize('ai-focused-editor/proofreading/scope-undone', 'Last AI application undone.'));
+  }
+
   // --- Saveable ---
 
   async save(_options?: SaveOptions): Promise<void> {
@@ -915,9 +1413,7 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
       { className: 'afe-proofreading-shell', tabIndex: 0, onKeyDown: (event: React.KeyboardEvent) => this.handleKeyDown(event) },
       this.renderHeader(),
       this.renderProblems(),
-      this.renderAdjacent('prev'),
-      this.renderPanes(),
-      this.renderAdjacent('next')
+      this.renderPanes()
     );
   }
 
@@ -1184,7 +1680,55 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
       'div',
       { key: 'image', className: 'afe-proofreading-pane afe-proofreading-image-pane' },
       React.createElement('div', { className: 'afe-proofreading-pane-label' }, label),
-      React.createElement('div', { className: 'afe-proofreading-image-frame' }, body)
+      this.renderImageContext('prev'),
+      React.createElement('div', { className: 'afe-proofreading-image-frame' }, body),
+      this.renderImageContext('next')
+    );
+  }
+
+  /**
+   * A scroll-crop card of the adjacent page's scan (ScanCheck's per-column
+   * `updateAdjacentContext`): a label row + a fixed-height scroll viewport holding
+   * the FULL-WIDTH scan, scrolled to the BOTTOM for the previous page (its end)
+   * and the TOP for the next page (its start). Shown only when the adjacent-pages
+   * toggle is on and that neighbor has a loadable scan. Clicking navigates there.
+   */
+  protected renderImageContext(side: 'prev' | 'next'): React.ReactNode {
+    if (!this.showAdjacentPages) {
+      return undefined;
+    }
+    const index = side === 'prev' ? this.currentIndex - 1 : this.currentIndex + 1;
+    const pair = this.pairs[index];
+    const preview = side === 'prev' ? this.prevPreview : this.nextPreview;
+    if (!pair || !preview?.dataUri) {
+      return undefined;
+    }
+    const label = side === 'prev'
+      ? nls.localize('ai-focused-editor/proofreading/context-prev-image', 'End of previous page')
+      : nls.localize('ai-focused-editor/proofreading/context-next-image', 'Start of next page');
+    const position = side === 'prev' ? 'end' : 'start';
+    return React.createElement(
+      'div',
+      {
+        key: `image-context-${side}`,
+        className: `afe-proofreading-context afe-proofreading-context-image ${side}`,
+        role: 'button',
+        tabIndex: 0,
+        title: label,
+        onClick: () => { void this.goToPage(index); },
+        onKeyDown: (event: React.KeyboardEvent) => this.onContextKeyDown(event, index)
+      },
+      React.createElement('div', { className: 'afe-proofreading-context-label' }, label),
+      React.createElement(
+        'div',
+        { className: 'afe-proofreading-context-scroll' },
+        React.createElement('img', {
+          className: 'afe-proofreading-context-image-img',
+          src: preview.dataUri,
+          alt: label,
+          ref: this.contextImageRef(position)
+        })
+      )
     );
   }
 
@@ -1225,6 +1769,7 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
           )
           : undefined
       ),
+      this.renderTextContext('prev', translation),
       // Stable-key placeholder; the widget-owned Monaco host node is appended into
       // it via the ref (a DOM move React never reconciles), so the editor — and its
       // per-page undo/redo history — survives every re-render and page navigation.
@@ -1232,11 +1777,100 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
         key: 'editor-host',
         className: 'afe-proofreading-editor-host',
         ref: this.attachEditorHost
-      })
+      }),
+      this.renderTextContext('next', translation)
     );
   }
 
-  // --- adjacent-pages preview strip (Unit 2) ---
+  /**
+   * A fixed-height context card of the adjacent page's FULL text (the editable
+   * target — the translation in translation mode), scrolled to the END for the
+   * previous page and the START for the next. Shown only when the adjacent-pages
+   * toggle is on and that neighbor exists. Clicking navigates there.
+   */
+  protected renderTextContext(side: 'prev' | 'next', translation: boolean): React.ReactNode {
+    if (!this.showAdjacentPages) {
+      return undefined;
+    }
+    const index = side === 'prev' ? this.currentIndex - 1 : this.currentIndex + 1;
+    const pair = this.pairs[index];
+    const preview = side === 'prev' ? this.prevPreview : this.nextPreview;
+    if (!pair) {
+      return undefined;
+    }
+    const label = side === 'prev'
+      ? (translation
+        ? nls.localize('ai-focused-editor/proofreading/context-prev-translation', 'Previous page translation')
+        : nls.localize('ai-focused-editor/proofreading/context-prev-text', 'Previous page text'))
+      : (translation
+        ? nls.localize('ai-focused-editor/proofreading/context-next-translation', 'Next page translation')
+        : nls.localize('ai-focused-editor/proofreading/context-next-text', 'Next page text'));
+    const position = side === 'prev' ? 'end' : 'start';
+    const text = preview
+      ? (preview.text.length > 0 ? preview.text : nls.localize('ai-focused-editor/proofreading/context-empty', 'Page is empty.'))
+      : nls.localize('ai-focused-editor/proofreading/adjacent-loading', 'Loading preview...');
+    return React.createElement(
+      'div',
+      {
+        key: `text-context-${side}`,
+        className: `afe-proofreading-context afe-proofreading-context-text ${side}`,
+        role: 'button',
+        tabIndex: 0,
+        title: label,
+        onClick: () => { void this.goToPage(index); },
+        onKeyDown: (event: React.KeyboardEvent) => this.onContextKeyDown(event, index)
+      },
+      React.createElement('div', { className: 'afe-proofreading-context-label' }, label),
+      React.createElement('pre', {
+        className: 'afe-proofreading-context-text-body',
+        ref: this.contextPreRef(position)
+      }, text)
+    );
+  }
+
+  /** Shared Enter/Space handler for a clickable context card. */
+  protected onContextKeyDown(event: React.KeyboardEvent, index: number): void {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      void this.goToPage(index);
+    }
+  }
+
+  /**
+   * Ref factory for a context scan image: sync the scroll viewport to the crop
+   * position once the image is laid out — `end` reveals the bottom of the previous
+   * page, `start` the top of the next (ScanCheck's `syncContextScroll`). Handles
+   * both the load event and the already-cached (`complete`) case.
+   */
+  protected contextImageRef(position: 'start' | 'end'): (img: HTMLImageElement | null) => void {
+    return (img: HTMLImageElement | null): void => {
+      if (!img) {
+        return;
+      }
+      const apply = (): void => {
+        const scroll = img.closest('.afe-proofreading-context-scroll') as HTMLElement | null;
+        if (scroll) {
+          scroll.scrollTop = position === 'end' ? scroll.scrollHeight : 0;
+        }
+      };
+      img.onload = apply;
+      if (img.complete) {
+        apply();
+      }
+    };
+  }
+
+  /** Ref factory for a context text `<pre>`: scroll to its end (prev) or start (next). */
+  protected contextPreRef(position: 'start' | 'end'): (pre: HTMLPreElement | null) => void {
+    return (pre: HTMLPreElement | null): void => {
+      if (!pre) {
+        return;
+      }
+      pre.scrollTop = position === 'end' ? pre.scrollHeight : 0;
+    };
+  }
+
+  // --- adjacent-pages per-column context previews (Unit A) ---
 
   protected toggleAdjacentPages(): void {
     this.showAdjacentPages = !this.showAdjacentPages;
@@ -1249,9 +1883,11 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
   }
 
   /**
-   * Load previews for the pages immediately before/after the current one (thumbnail
-   * when the adjacent page has a scan, else a short text snippet). Never blocks the
-   * main page load; race-guarded so a stale async read cannot clobber a newer page.
+   * Load per-column previews for the pages immediately before/after the current
+   * one: the scan data URI (when that neighbor has a loadable scan) for the image
+   * column's crop, and the neighbor's FULL page text for the text column's card.
+   * Never blocks the main page load; race-guarded so a stale async read cannot
+   * clobber a newer page.
    */
   protected async loadAdjacentPreviews(): Promise<void> {
     if (!this.showAdjacentPages) {
@@ -1270,77 +1906,26 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
     this.update();
   }
 
-  /** Build one adjacent-page preview (image thumbnail or clamped text snippet). */
+  /**
+   * Build one adjacent-page preview carrying BOTH the scan data URI (when the page
+   * has a loadable scan, for the image column crop) and the FULL page text (for the
+   * text column card). The text prefers the live edit buffer (the editable target —
+   * the translation in translation mode); it falls back to reading the file.
+   */
   protected async buildAdjacentPreview(pair: ProofreadingPair | undefined): Promise<AdjacentPreview | undefined> {
     if (!pair) {
       return undefined;
     }
+    let dataUri: string | undefined;
     if (pairHasImage(pair) && pair.imageRelPath) {
       const imageUri = this.toUri(pair.imageRelPath);
-      const dataUri = imageUri ? await this.readImageDataUri(imageUri) : undefined;
-      if (dataUri) {
-        return { kind: 'image', dataUri };
-      }
+      dataUri = imageUri ? await this.readImageDataUri(imageUri) : undefined;
     }
-    // Prefer the live edit buffer (the editable target — in translation mode this is
-    // the translation, the most useful linkage); fall back to reading the file.
     let text = this.editBuffers.get(pair.base);
     if (text === undefined && !pair.missing) {
       const textUri = this.toUri(pair.textRelPath);
       text = textUri ? await this.readTextIfExists(textUri) : undefined;
     }
-    const snippet = (text ?? '').replace(/\s+/g, ' ').trim().slice(0, ADJACENT_TEXT_PREVIEW_CHARS);
-    return { kind: 'text', snippet };
-  }
-
-  /**
-   * Render the adjacent-page block for one side, or nothing when there is no page
-   * on that side. Clicking (or Enter/Space) navigates to that page.
-   */
-  protected renderAdjacent(side: 'prev' | 'next'): React.ReactNode {
-    if (!this.showAdjacentPages || this.pairs.length === 0) {
-      return undefined;
-    }
-    const index = side === 'prev' ? this.currentIndex - 1 : this.currentIndex + 1;
-    const pair = this.pairs[index];
-    if (!pair) {
-      return undefined;
-    }
-    const preview = side === 'prev' ? this.prevPreview : this.nextPreview;
-    const label = side === 'prev'
-      ? `◀ ${nls.localize('ai-focused-editor/proofreading/adjacent-page', 'page {0}', index + 1)}`
-      : `${nls.localize('ai-focused-editor/proofreading/adjacent-page', 'page {0}', index + 1)} ▶`;
-    let body: React.ReactNode;
-    if (preview?.kind === 'image') {
-      body = React.createElement('img', {
-        className: 'afe-proofreading-adjacent-thumb',
-        src: preview.dataUri,
-        alt: label
-      });
-    } else if (preview?.kind === 'text') {
-      body = React.createElement('div', { className: 'afe-proofreading-adjacent-text' }, preview.snippet);
-    } else {
-      body = React.createElement('div', { className: 'afe-proofreading-adjacent-text' },
-        nls.localize('ai-focused-editor/proofreading/adjacent-loading', 'Loading preview...'));
-    }
-    return React.createElement(
-      'div',
-      {
-        key: `adjacent-${side}`,
-        className: `afe-proofreading-adjacent ${side}`,
-        role: 'button',
-        tabIndex: 0,
-        title: label,
-        onClick: () => { void this.goToPage(index); },
-        onKeyDown: (event: React.KeyboardEvent) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            void this.goToPage(index);
-          }
-        }
-      },
-      React.createElement('span', { className: 'afe-proofreading-adjacent-label' }, label, ` · ${pair.base}`),
-      body
-    );
+    return { dataUri, text: text ?? '' };
   }
 }
