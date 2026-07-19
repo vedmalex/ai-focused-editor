@@ -1,10 +1,11 @@
 import URI from '@theia/core/lib/common/uri';
-import { Emitter, Event, MessageService } from '@theia/core/lib/common';
-import { Navigatable } from '@theia/core/lib/browser';
+import { Disposable, Emitter, Event, MessageService } from '@theia/core/lib/common';
+import { Navigatable, StatefulWidget } from '@theia/core/lib/browser';
 import { Saveable, SaveOptions } from '@theia/core/lib/browser/saveable';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { nls } from '@theia/core/lib/common/nls';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
+import { FileChangesEvent } from '@theia/filesystem/lib/common/files';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
@@ -12,6 +13,7 @@ import {
   computeProgress,
   isTranslationMode,
   matchPairs,
+  pairHasImage,
   ProofreadingActionKind,
   ProofreadingPair,
   ProofreadingSet,
@@ -28,6 +30,15 @@ import { imageMimeForPath } from '../common/image-mime';
 
 /** Skip inlining any single scan whose bytes exceed this (preview-widget parity). */
 const MAX_SINGLE_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** Debounce for the folder-watch auto-refresh (mirrors ManuscriptTreeModel). */
+const REFRESH_DEBOUNCE_MS = 300;
+
+/** Session-persisted pane-visibility toggles. */
+interface ProofreadingViewOptions {
+  showScanPane: boolean;
+  showSourcePane: boolean;
+}
 
 /** Encode raw bytes as base64 without blowing the call stack (preview-widget copy). */
 function bytesToBase64(bytes: Uint8Array): string {
@@ -55,7 +66,7 @@ function bytesToBase64(bytes: Uint8Array): string {
  * trick) keeps the initial load from marking a freshly-opened set dirty.
  */
 @injectable()
-export class ProofreadingWidget extends ReactWidget implements Navigatable, Saveable {
+export class ProofreadingWidget extends ReactWidget implements Navigatable, Saveable, StatefulWidget {
   static readonly FACTORY_ID = 'ai-focused-editor.proofreading-editor';
 
   @inject(FileService)
@@ -101,6 +112,13 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
   /** True while an AI action is in flight (disables the action buttons). */
   protected aiRunning = false;
 
+  /** Pane-visibility toggles (session state); the editable text pane is always shown. */
+  protected showScanPane = true;
+  protected showSourcePane = true;
+
+  /** Pending folder-watch refresh timer; cleared on dispose. */
+  protected refreshHandle: ReturnType<typeof setTimeout> | undefined;
+
   /**
    * Set false during {@link load}; mutation handlers no-op until it flips true so
    * the initial paint never marks a clean set dirty (excalidraw baseline trick).
@@ -128,7 +146,32 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
     this.addClass('afe-proofreading-widget');
     this.toDispose.push(this.onDirtyChangedEmitter);
     this.toDispose.push(this.onContentChangedEmitter);
+    // Auto-refresh: re-resolve pairs when the set's folders change on disk.
+    this.toDispose.push(this.fileService.onDidFilesChange(event => this.onFilesChanged(event)));
+    this.toDispose.push(Disposable.create(() => {
+      if (this.refreshHandle !== undefined) {
+        clearTimeout(this.refreshHandle);
+        this.refreshHandle = undefined;
+      }
+    }));
     void this.load();
+  }
+
+  // --- StatefulWidget (session-persist the pane toggles) ---
+
+  storeState(): ProofreadingViewOptions {
+    return { showScanPane: this.showScanPane, showSourcePane: this.showSourcePane };
+  }
+
+  restoreState(state: object | undefined): void {
+    const options = state as Partial<ProofreadingViewOptions> | undefined;
+    if (options && typeof options.showScanPane === 'boolean') {
+      this.showScanPane = options.showScanPane;
+    }
+    if (options && typeof options.showSourcePane === 'boolean') {
+      this.showSourcePane = options.showSourcePane;
+    }
+    this.update();
   }
 
   getResourceUri(): URI | undefined {
@@ -233,6 +276,91 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
     return this.pairs[this.currentIndex];
   }
 
+  /** True when ANY page in the set has a matched scan (gates the scan pane + its toggle). */
+  protected get hasAnyScans(): boolean {
+    return this.pairs.some(pairHasImage);
+  }
+
+  // --- auto-refresh (folder watch) ---
+
+  /** Absolute URI strings of the set's page-defining folders. */
+  protected watchedFolderUris(): string[] {
+    const set = this.set;
+    if (!set) {
+      return [];
+    }
+    const rel = [set.imagesFolder, set.textFolder, set.sourceTextFolder];
+    const uris: string[] = [];
+    for (const folder of rel) {
+      if (!folder) {
+        continue;
+      }
+      const uri = this.toUri(folder);
+      if (uri) {
+        uris.push(uri.toString());
+      }
+    }
+    return uris;
+  }
+
+  /** Debounced re-resolve when a file changes under one of the watched folders. */
+  protected onFilesChanged(event: FileChangesEvent): void {
+    if (!this.ready || !this.set || !this.rootUri) {
+      return;
+    }
+    const folders = this.watchedFolderUris();
+    if (folders.length === 0) {
+      return;
+    }
+    const affects = event.changes.some(change => {
+      const path = change.resource.toString();
+      return folders.some(folder => path === folder || path.startsWith(`${folder}/`));
+    });
+    if (affects) {
+      this.scheduleRefresh();
+    }
+  }
+
+  protected scheduleRefresh(): void {
+    if (this.refreshHandle !== undefined) {
+      clearTimeout(this.refreshHandle);
+    }
+    this.refreshHandle = setTimeout(() => {
+      this.refreshHandle = undefined;
+      void this.refreshPairs();
+    }, REFRESH_DEBOUNCE_MS);
+  }
+
+  /**
+   * Re-resolve the pairs from the current folder contents and re-render, WITHOUT
+   * touching dirty state: unsaved edits survive (the `editBuffers`/`dirtyBases`
+   * are keyed by base and {@link loadPage} keeps dirty pages), and the selection
+   * is preserved by base where the page still exists.
+   */
+  protected async refreshPairs(): Promise<void> {
+    if (!this.set || !this.rootUri) {
+      return;
+    }
+    const previousBase = this.currentPair?.base;
+    this.pairs = await this.resolvePairs(this.set);
+    let index = 0;
+    if (previousBase !== undefined) {
+      const found = this.pairs.findIndex(pair => pair.base === previousBase);
+      if (found >= 0) {
+        index = found;
+      }
+    }
+    this.currentIndex = this.pairs.length === 0 ? 0 : Math.min(index, this.pairs.length - 1);
+    if (this.pairs.length > 0) {
+      await this.loadPage(this.currentIndex);
+    } else {
+      this.currentImageDataUri = undefined;
+      this.currentImageError = undefined;
+      this.currentSourceText = undefined;
+    }
+    this.update();
+  }
+
   /** Load the image, editable text (into the buffer), and source text for a page. */
   protected async loadPage(index: number): Promise<void> {
     const pair = this.pairs[index];
@@ -258,8 +386,8 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
       this.currentSourceText = sourceUri ? await this.readTextIfExists(sourceUri) : undefined;
     }
 
-    // Left scan image as a base64 data URI.
-    const imageUri = this.toUri(pair.imageRelPath);
+    // Left scan image as a base64 data URI — only when this page has a matched scan.
+    const imageUri = pair.imageRelPath ? this.toUri(pair.imageRelPath) : undefined;
     if (imageUri) {
       const resolved = await this.readImageDataUri(imageUri);
       if (resolved) {
@@ -639,8 +767,71 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
           progress.percent
         )
       ),
+      this.renderViewControls(translation),
       this.renderAiActions(translation, !!pair)
     );
+  }
+
+  /**
+   * Pane-visibility toggles + a manual Refresh button. The scan toggle is offered
+   * only when the set has any scans; the source toggle only in translation mode.
+   * The editable text pane is always visible, so it has no toggle.
+   */
+  protected renderViewControls(translation: boolean): React.ReactNode {
+    const controls: React.ReactNode[] = [];
+    if (this.hasAnyScans) {
+      controls.push(React.createElement(
+        'button',
+        {
+          key: 'toggle-scan',
+          className: `theia-button secondary afe-proofreading-toggle${this.showScanPane ? ' active' : ''}`,
+          type: 'button',
+          title: nls.localize('ai-focused-editor/proofreading/toggle-scan-tooltip', 'Show or hide the scan pane'),
+          onClick: () => this.togglePane('scan')
+        },
+        React.createElement('span', { className: 'codicon codicon-file-media' }),
+        ' ',
+        nls.localize('ai-focused-editor/proofreading/toggle-scan', 'Scan')
+      ));
+    }
+    if (translation) {
+      controls.push(React.createElement(
+        'button',
+        {
+          key: 'toggle-source',
+          className: `theia-button secondary afe-proofreading-toggle${this.showSourcePane ? ' active' : ''}`,
+          type: 'button',
+          title: nls.localize('ai-focused-editor/proofreading/toggle-source-tooltip', 'Show or hide the source-text pane'),
+          onClick: () => this.togglePane('source')
+        },
+        React.createElement('span', { className: 'codicon codicon-book' }),
+        ' ',
+        nls.localize('ai-focused-editor/proofreading/toggle-source', 'Source')
+      ));
+    }
+    controls.push(React.createElement(
+      'button',
+      {
+        key: 'refresh',
+        className: 'theia-button secondary afe-proofreading-refresh',
+        type: 'button',
+        title: nls.localize('ai-focused-editor/proofreading/refresh-tooltip', 'Re-scan the folders for added or removed files'),
+        onClick: () => { void this.refreshPairs(); }
+      },
+      React.createElement('span', { className: 'codicon codicon-refresh' }),
+      ' ',
+      nls.localize('ai-focused-editor/proofreading/refresh', 'Refresh')
+    ));
+    return React.createElement('div', { className: 'afe-proofreading-view-controls' }, ...controls);
+  }
+
+  protected togglePane(pane: 'scan' | 'source'): void {
+    if (pane === 'scan') {
+      this.showScanPane = !this.showScanPane;
+    } else {
+      this.showSourcePane = !this.showSourcePane;
+    }
+    this.update();
   }
 
   /**
@@ -692,8 +883,15 @@ export class ProofreadingWidget extends ReactWidget implements Navigatable, Save
       );
     }
 
-    const panes: React.ReactNode[] = [this.renderImagePane(translation)];
-    if (translation) {
+    // Adaptive panes: render the scan pane only when THIS page has a matched scan
+    // and the scan toggle is on; the source pane only in translation mode with the
+    // source toggle on; the editable text pane always. So a translation set with no
+    // scans shows two panes (source + translation); with scans, three.
+    const panes: React.ReactNode[] = [];
+    if (pairHasImage(pair) && this.showScanPane) {
+      panes.push(this.renderImagePane(translation));
+    }
+    if (translation && this.showSourcePane) {
       panes.push(this.renderSourcePane());
     }
     panes.push(this.renderTextPane(translation, pair));

@@ -53,14 +53,20 @@ export interface ProofreadingSet {
 }
 
 /**
- * One resolved image↔text pairing. There is exactly ONE pair per image file
- * (images drive the list); `missing` is true when no text file matched the
- * image's base. All paths are workspace-relative (`<folder>/<name>`).
+ * One resolved page pairing, keyed by BASE name. The driving basename set is the
+ * UNION of the page-defining folders (see {@link matchPairs}), NOT strictly the
+ * images — so a translation set with an empty scans folder still yields one pair
+ * per source/text basename. Each pair carries whatever files actually exist for
+ * its base. All paths are workspace-relative (`<folder>/<name>`).
  */
 export interface ProofreadingPair {
   base: string;
-  /** Workspace-relative path to the scan image. */
-  imageRelPath: string;
+  /**
+   * Workspace-relative path to the scan image — present ONLY when a scan file
+   * matched this base (absent for a text/source-only page, e.g. a translation set
+   * with no scans, or an individual page whose scan is missing).
+   */
+  imageRelPath?: string;
   /**
    * Workspace-relative path to the editable text file. When a matching text file
    * exists it is that file's real path; when `missing`, it is the EXPECTED path
@@ -68,13 +74,23 @@ export interface ProofreadingPair {
    */
   textRelPath: string;
   /**
-   * Translation mode only (present iff `sourceTextFolder` was supplied):
-   * workspace-relative path to the read-only source text (matched file's real
-   * path, or the expected path when no source file matched).
+   * Translation mode only: workspace-relative path to the read-only source text —
+   * present ONLY when a source file matched this base (absent when the source is
+   * missing for this page, so no empty source pane is implied).
    */
   sourceTextRelPath?: string;
-  /** True when no text file matched the image's base name. */
+  /** True when no editable text file matched this base (the target text is absent). */
   missing: boolean;
+}
+
+/** True when a scan image matched this page (drives the optional scan pane). */
+export function pairHasImage(pair: Pick<ProofreadingPair, 'imageRelPath'>): boolean {
+  return pair.imageRelPath !== undefined;
+}
+
+/** True when a read-only source text matched this page (translation mode). */
+export function pairHasSource(pair: Pick<ProofreadingPair, 'sourceTextRelPath'>): boolean {
+  return pair.sourceTextRelPath !== undefined;
 }
 
 /** Folder context {@link matchPairs} threads in to build workspace-relative paths. */
@@ -140,20 +156,29 @@ function hasExtension(name: string, extensions: readonly string[]): boolean {
 }
 
 /**
- * Pair image files against text files by BASE name — the port of ScanCheck
- * `matchFiles` (`utils.js:59-92`). Semantics:
- *  - ONE entry per image file (images drive the list); non-image names filtered out.
- *  - Text (and optional source-text) files are looked up in a base→name Map;
- *    the FIRST file per base wins (deterministic on duplicate bases).
- *  - A missing text match sets `missing: true` and points `textRelPath` at the
- *    EXPECTED `<textFolder>/<base><preferred-ext>` location.
+ * Pair page files by BASE name — a generalization of ScanCheck `matchFiles`
+ * (`utils.js:59-92`) whose driver is no longer strictly the images. Semantics:
+ *  - The DRIVING basename set is the UNION of the page-defining folders: the
+ *    editable TEXT folder ALWAYS; the SOURCE folder in translation mode
+ *    (`sourceTextNames` supplied); the IMAGE folder WHEN it has any matching
+ *    files. So OCR ⇒ union(images, text); translation ⇒ union(source, text,
+ *    images). A translation set with an empty scans folder therefore still
+ *    yields one pair per source/text basename (the bug this fixes).
+ *  - Each folder is indexed base→name (FIRST file per base wins, deterministic on
+ *    duplicates); images filter by `imageExts`, text/source by `textExts`.
+ *  - `imageRelPath` is set ONLY when a scan matched; `sourceTextRelPath` ONLY in
+ *    translation mode when a source matched — so no pane is implied for a file
+ *    that does not exist. `textRelPath` is always present: the matched file's real
+ *    path, or the EXPECTED `<textFolder>/<base><preferred-ext>` when `missing`.
+ *  - `missing` is true when no editable text file matched the base.
  *  - Result sorted by base with a numeric-aware `localeCompare` (so `page.2`
  *    sorts before `page.10`).
  *
  * Folders are threaded in via {@link ProofreadingFolders} so the returned pairs
- * carry ready-to-use workspace-relative paths (the design note's "pass folders
- * in to build imageRelPath" choice). The preferred text extension is the first
- * of `textExts` (falling back to {@link DEFAULT_TEXT_EXTENSIONS}[0]).
+ * carry ready-to-use workspace-relative paths. The preferred text extension is
+ * the first of `textExts` (falling back to {@link DEFAULT_TEXT_EXTENSIONS}[0]).
+ * Translation mode is keyed off `sourceTextNames !== undefined` (parity with the
+ * `sourceTextFolder`-drives-the-mode convention).
  */
 export function matchPairs(
   imageNames: string[],
@@ -165,10 +190,10 @@ export function matchPairs(
 ): ProofreadingPair[] {
   const preferredTextExt = textExts[0] ?? DEFAULT_TEXT_EXTENSIONS[0];
 
-  const firstByBase = (names: readonly string[]): Map<string, string> => {
+  const firstByBase = (names: readonly string[], exts: readonly string[]): Map<string, string> => {
     const map = new Map<string, string>();
     for (const name of names) {
-      if (!hasExtension(name, textExts)) {
+      if (!hasExtension(name, exts)) {
         continue;
       }
       const base = getBaseName(name);
@@ -179,25 +204,45 @@ export function matchPairs(
     return map;
   };
 
-  const textByBase = firstByBase(textNames);
-  const sourceByBase = sourceTextNames ? firstByBase(sourceTextNames) : undefined;
+  const translation = sourceTextNames !== undefined;
+  const imageByBase = firstByBase(imageNames, imageExts);
+  const textByBase = firstByBase(textNames, textExts);
+  const sourceByBase = sourceTextNames ? firstByBase(sourceTextNames, textExts) : undefined;
+
+  // Driver = union of the page-defining folders: text always; source in
+  // translation mode; images only when the scans folder actually has files.
+  const driverBases = new Set<string>();
+  for (const base of textByBase.keys()) {
+    driverBases.add(base);
+  }
+  if (sourceByBase) {
+    for (const base of sourceByBase.keys()) {
+      driverBases.add(base);
+    }
+  }
+  if (imageByBase.size > 0) {
+    for (const base of imageByBase.keys()) {
+      driverBases.add(base);
+    }
+  }
 
   const pairs: ProofreadingPair[] = [];
-  for (const imageName of imageNames) {
-    if (!hasExtension(imageName, imageExts)) {
-      continue;
-    }
-    const base = getBaseName(imageName);
+  for (const base of driverBases) {
     const textName = textByBase.get(base);
+    const imageName = imageByBase.get(base);
     const pair: ProofreadingPair = {
       base,
-      imageRelPath: `${folders.imagesFolder}/${imageName}`,
       textRelPath: `${folders.textFolder}/${textName ?? `${base}${preferredTextExt}`}`,
       missing: textName === undefined
     };
-    if (folders.sourceTextFolder !== undefined) {
+    if (imageName !== undefined) {
+      pair.imageRelPath = `${folders.imagesFolder}/${imageName}`;
+    }
+    if (translation && folders.sourceTextFolder !== undefined) {
       const sourceName = sourceByBase?.get(base);
-      pair.sourceTextRelPath = `${folders.sourceTextFolder}/${sourceName ?? `${base}${preferredTextExt}`}`;
+      if (sourceName !== undefined) {
+        pair.sourceTextRelPath = `${folders.sourceTextFolder}/${sourceName}`;
+      }
     }
     pairs.push(pair);
   }
