@@ -16,6 +16,11 @@ import {
   WidgetFactory
 } from '@theia/core/lib/browser';
 import { ServiceConnectionProvider } from '@theia/core/lib/browser/messaging/service-connection-provider';
+import {
+  OpenFileDialogFactory,
+  OpenFileDialogProps,
+  createOpenFileDialogContainer
+} from '@theia/filesystem/lib/browser/file-dialog';
 import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
 import { bindViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { createTreeContainer } from '@theia/core/lib/browser/tree';
@@ -95,6 +100,7 @@ import {
 } from './manuscript-workspace-contribution';
 import { WritingModeContribution } from './writing-mode-contribution';
 import { DeviceThemeContribution } from './device-theme-contribution';
+import { NewFolderOpenFileDialog } from './new-folder-open-file-dialog';
 
 function createManuscriptTreeContainer(parent: interfaces.Container): Container {
   return createTreeContainer(parent, {
@@ -108,7 +114,29 @@ function createManuscriptTreeContainer(parent: interfaces.Container): Container 
   });
 }
 
-export default new ContainerModule(bind => {
+export default new ContainerModule((bind, _unbind, isBound, rebind) => {
+  // Replace Theia's Open (file/folder) dialog with a subclass that adds a
+  // "New Folder" button to the navigation panel. Mirrors the original
+  // binding in @theia/workspace's workspace-frontend-module:
+  //   bind(OpenFileDialogFactory).toFactory(ctx => props =>
+  //     createOpenFileDialogContainer(ctx.container, props).get(OpenFileDialog));
+  // The child container created by createOpenFileDialogContainer already
+  // binds OpenFileDialogProps toConstantValue(props) plus the dialog widget/
+  // model/tree; we only add our subclass binding and resolve it instead.
+  // SaveFileDialogFactory is intentionally left untouched.
+  const newFolderOpenFileDialogFactory: interfaces.FactoryCreator<NewFolderOpenFileDialog, [OpenFileDialogProps]> =
+    ctx => (props: OpenFileDialogProps) => {
+      const container = createOpenFileDialogContainer(ctx.container, props);
+      container.bind(NewFolderOpenFileDialog).toSelf();
+      return container.get(NewFolderOpenFileDialog);
+    };
+  if (isBound(OpenFileDialogFactory)) {
+    rebind(OpenFileDialogFactory).toFactory(newFolderOpenFileDialogFactory);
+  } else {
+    // Defensive: module load order puts @theia/workspace first, but if that
+    // ever changes we still want the enhanced dialog bound exactly once.
+    bind(OpenFileDialogFactory).toFactory(newFolderOpenFileDialogFactory);
+  }
   bind(BookBuildService).toDynamicValue(ctx =>
     ServiceConnectionProvider.createProxy(ctx.container, BookBuildServicePath)
   ).inSingletonScope();
