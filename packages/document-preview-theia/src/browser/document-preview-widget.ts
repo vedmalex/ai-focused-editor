@@ -15,15 +15,16 @@ import {
 } from '../common';
 
 /**
- * Read-only form-style preview for office documents (docx/xlsx/xls/ods/pptx and
- * the legacy binary .doc/.ppt, which render a friendly "unsupported" card
- * instead of binary garbage in Monaco).
+ * Read-only form-style preview for office documents (docx/odt/rtf/xlsx/xls/ods/
+ * pptx/odp/epub and the legacy binary .doc/.ppt, which render a friendly
+ * "unsupported" card instead of binary garbage in Monaco).
  *
  * The heavy parsing happens in the node {@link DocumentPreviewService}; the widget
  * only renders the returned payload. All HTML the backend produces (mammoth's
- * docx output, assembled sheet tables, slide run lists) is sanitized with
- * DOMPurify before it is injected — the office parsers are third-party and their
- * output is never trusted verbatim.
+ * docx output, odf-kit/rtf fragments, assembled sheet tables, slide run lists,
+ * epub chapter bodies) is sanitized with DOMPurify before it is injected — the
+ * office parsers are third-party (and epub XHTML can carry scripts/remote refs),
+ * so their output is never trusted verbatim.
  */
 @injectable()
 export class DocumentPreviewWidget extends ReactWidget implements Navigatable {
@@ -184,6 +185,8 @@ export class DocumentPreviewWidget extends ReactWidget implements Navigatable {
         return this.renderSheets(result);
       case 'slides':
         return this.renderSlides(result);
+      case 'epub':
+        return this.renderEpub(result);
       case 'unsupported':
       default:
         return this.renderUnsupported();
@@ -254,6 +257,53 @@ export class DocumentPreviewWidget extends ReactWidget implements Navigatable {
           dangerouslySetInnerHTML: { __html: this.sanitize(slide.html) }
         })
       ))
+    );
+  }
+
+  /** E-book: title, chapter list (TOC), and the first chapter's sanitized HTML. */
+  protected renderEpub(result: DocumentPreviewResult): React.ReactNode {
+    const epub = result.epub;
+    const chapters = epub?.chapters ?? [];
+    if (chapters.length === 0) {
+      return React.createElement('div', { className: 'afe-office-preview-empty' },
+        nls.localize('ai-focused-editor/office/no-chapters', 'No chapters were found in this e-book.'));
+    }
+    const rendered = chapters.find(chapter => chapter.html !== undefined);
+    return React.createElement(
+      'div',
+      { className: 'afe-office-epub' },
+      epub?.title
+        ? React.createElement('h2', { className: 'afe-office-epub-title' }, epub.title)
+        : undefined,
+      React.createElement(
+        'section',
+        { className: 'afe-office-epub-toc' },
+        React.createElement('h3', { className: 'afe-office-epub-toc-heading' },
+          nls.localize('ai-focused-editor/office/epub-contents', 'Contents')),
+        React.createElement(
+          'ol',
+          { className: 'afe-office-epub-toc-list' },
+          ...chapters.map((chapter, index) => React.createElement(
+            'li',
+            {
+              key: `${chapter.id}:${index}`,
+              className: `afe-office-epub-toc-item${chapter === rendered ? ' active' : ''}`
+            },
+            chapter.label
+          ))
+        )
+      ),
+      rendered
+        ? React.createElement(
+          'section',
+          { className: 'afe-office-epub-chapter' },
+          React.createElement('h3', { className: 'afe-office-epub-chapter-heading' }, rendered.label),
+          React.createElement('div', {
+            className: 'afe-office-epub-chapter-body',
+            dangerouslySetInnerHTML: { __html: this.sanitize(rendered.html ?? '') }
+          })
+        )
+        : undefined
     );
   }
 

@@ -65,6 +65,7 @@
 .afe-office-preview-doc,
 .afe-office-sheets,
 .afe-office-slides,
+.afe-office-epub,
 .afe-office-preview-empty,
 .afe-office-preview-unsupported {
   flex: 1 1 auto;
@@ -194,6 +195,51 @@
   color: var(--theia-descriptionForeground);
   font-style: italic;
   margin: 0;
+}
+
+/* E-book (epub) chapter list + first chapter. */
+.afe-office-epub {
+  max-width: 820px;
+  line-height: 1.5;
+}
+
+.afe-office-epub-title {
+  margin: 0 0 10px;
+  font-size: var(--theia-ui-font-size3);
+}
+
+.afe-office-epub-toc {
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.3));
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  background: var(--theia-editorWidget-background, transparent);
+}
+
+.afe-office-epub-toc-heading,
+.afe-office-epub-chapter-heading {
+  margin: 0 0 6px;
+  font-size: var(--theia-ui-font-size2);
+}
+
+.afe-office-epub-toc-list {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.afe-office-epub-toc-item {
+  margin: 2px 0;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-office-epub-toc-item.active {
+  color: var(--theia-foreground);
+  font-weight: 600;
+}
+
+.afe-office-epub-chapter-body img {
+  max-width: 100%;
+  height: auto;
 }
 
 /* Unsupported / empty states. */

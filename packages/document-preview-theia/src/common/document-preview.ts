@@ -15,21 +15,28 @@ export const DOCUMENT_SHEET_MAX_COLS = 50;
 export const DOCUMENT_PREVIEW_MAX_FILE_BYTES = 50 * 1024 * 1024;
 /** Total embedded-media budget for a single presentation (bytes). */
 export const DOCUMENT_PPTX_MEDIA_BUDGET_BYTES = 20 * 1024 * 1024;
+/** Per-chapter HTML budget for e-book previews (bytes); larger chapters are
+ *  truncated with an explicit warning so the RPC payload stays bounded. */
+export const DOCUMENT_EPUB_CHAPTER_HTML_MAX_BYTES = 1024 * 1024;
+/** Chapter-list cap for e-book previews; longer TOCs are clipped with a warning. */
+export const DOCUMENT_EPUB_MAX_CHAPTERS = 500;
 
 /** Extensions routed to each preview strategy. */
-const HTML_EXTENSIONS = ['.docx'];
+const HTML_EXTENSIONS = ['.docx', '.odt', '.rtf'];
 const SHEET_EXTENSIONS = ['.xlsx', '.xls', '.ods'];
-const SLIDE_EXTENSIONS = ['.pptx'];
+const SLIDE_EXTENSIONS = ['.pptx', '.odp'];
+const EPUB_EXTENSIONS = ['.epub'];
 /** Legacy binary formats we can only surface as a friendly "unsupported" view. */
 const LEGACY_BINARY_EXTENSIONS = ['.doc', '.ppt'];
 
-export type DocumentPreviewStrategy = 'html' | 'sheets' | 'slides' | 'legacy' | 'unknown';
+export type DocumentPreviewStrategy = 'html' | 'sheets' | 'slides' | 'epub' | 'legacy' | 'unknown';
 
 /** All extensions the document preview claims (drives the open-handler + tree). */
 export const DOCUMENT_PREVIEW_EXTENSIONS: readonly string[] = [
   ...HTML_EXTENSIONS,
   ...SHEET_EXTENSIONS,
   ...SLIDE_EXTENSIONS,
+  ...EPUB_EXTENSIONS,
   ...LEGACY_BINARY_EXTENSIONS
 ];
 
@@ -57,6 +64,9 @@ export function documentPreviewStrategyForExtension(ext: string): DocumentPrevie
   if (SLIDE_EXTENSIONS.includes(lower)) {
     return 'slides';
   }
+  if (EPUB_EXTENSIONS.includes(lower)) {
+    return 'epub';
+  }
   if (LEGACY_BINARY_EXTENSIONS.includes(lower)) {
     return 'legacy';
   }
@@ -72,6 +82,8 @@ export function kindForStrategy(strategy: DocumentPreviewStrategy): DocumentPrev
       return 'sheets';
     case 'slides':
       return 'slides';
+    case 'epub':
+      return 'epub';
     default:
       return 'unsupported';
   }
@@ -211,6 +223,228 @@ export function buildSlidePreview(
 export function slideNumberFromName(name: string): number {
   const match = /slide(\d+)\.xml$/i.exec(name);
   return match ? parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER;
+}
+
+// ---------------------------------------------------------------------------
+// ODF Impress (.odp) — pure content.xml parsing
+// ---------------------------------------------------------------------------
+
+/** Strip markup tags, decode XML entities, and collapse whitespace. */
+export function stripXmlMarkup(value: string): string {
+  return decodeXmlEntities(value.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Extract per-slide text runs from an ODF Impress `content.xml`. Each
+ * `<draw:page>` is one slide; every non-empty `<text:p>` (which contains the
+ * page's `<text:span>` runs) inside the page becomes one text run, in document
+ * order. Purely regex-based and namespace-prefix tolerant on purpose — same
+ * trade-off as {@link extractSlideText} for pptx.
+ */
+export function extractOdpSlideTexts(contentXml: string): string[][] {
+  const pages: string[][] = [];
+  const pageRe = /<draw:page\b[^>]*>([\s\S]*?)<\/draw:page>/g;
+  let pageMatch: RegExpExecArray | null;
+  while ((pageMatch = pageRe.exec(contentXml)) !== null) {
+    const runs: string[] = [];
+    const paraRe = /<text:(p|h)\b[^>]*>([\s\S]*?)<\/text:\1>/g;
+    let paraMatch: RegExpExecArray | null;
+    while ((paraMatch = paraRe.exec(pageMatch[1])) !== null) {
+      const text = stripXmlMarkup(paraMatch[2]);
+      if (text.length > 0) {
+        runs.push(text);
+      }
+    }
+    pages.push(runs);
+  }
+  return pages;
+}
+
+// ---------------------------------------------------------------------------
+// EPUB — pure container.xml / OPF / TOC parsing (custom jszip spine reader)
+// ---------------------------------------------------------------------------
+
+/** One `<item>` of the OPF manifest. */
+export interface EpubManifestItem {
+  id: string;
+  href: string;
+  mediaType: string;
+  properties?: string;
+}
+
+/** Parsed skeleton of an OPF package document. */
+export interface EpubOpf {
+  /** `<dc:title>` content, when present. */
+  title?: string;
+  /** Manifest items in document order. */
+  manifest: EpubManifestItem[];
+  /** Spine `idref`s in reading order (entries with `linear="no"` excluded). */
+  spine: string[];
+}
+
+/** One TOC row extracted from a nav document or NCX. */
+export interface EpubTocEntry {
+  label: string;
+  href: string;
+}
+
+/** Value of an XML attribute inside a single tag string, or undefined. */
+function xmlAttr(tag: string, name: string): string | undefined {
+  const match = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`).exec(tag);
+  return match ? decodeXmlEntities(match[1] ?? match[2] ?? '') : undefined;
+}
+
+/** OPF package-document path from `META-INF/container.xml`, or undefined. */
+export function epubRootFileFromContainer(containerXml: string): string | undefined {
+  const rootfileRe = /<rootfile\b[^>]*>/g;
+  let match: RegExpExecArray | null;
+  while ((match = rootfileRe.exec(containerXml)) !== null) {
+    const mediaType = xmlAttr(match[0], 'media-type');
+    const fullPath = xmlAttr(match[0], 'full-path');
+    if (fullPath && (!mediaType || mediaType === 'application/oebps-package+xml')) {
+      return fullPath;
+    }
+  }
+  return undefined;
+}
+
+/** Parse the OPF package document into title + manifest + spine. */
+export function parseEpubOpf(opfXml: string): EpubOpf {
+  const titleMatch = /<dc:title\b[^>]*>([\s\S]*?)<\/dc:title>/i.exec(opfXml);
+  const title = titleMatch ? stripXmlMarkup(titleMatch[1]) || undefined : undefined;
+
+  const manifest: EpubManifestItem[] = [];
+  const manifestSection = /<manifest\b[^>]*>([\s\S]*?)<\/manifest>/i.exec(opfXml)?.[1] ?? '';
+  const itemRe = /<item\b[^>]*\/?>/g;
+  let itemMatch: RegExpExecArray | null;
+  while ((itemMatch = itemRe.exec(manifestSection)) !== null) {
+    const id = xmlAttr(itemMatch[0], 'id');
+    const href = xmlAttr(itemMatch[0], 'href');
+    const mediaType = xmlAttr(itemMatch[0], 'media-type');
+    if (id && href) {
+      manifest.push({ id, href, mediaType: mediaType ?? '', properties: xmlAttr(itemMatch[0], 'properties') });
+    }
+  }
+
+  const spine: string[] = [];
+  const spineSection = /<spine\b[^>]*>([\s\S]*?)<\/spine>/i.exec(opfXml)?.[1] ?? '';
+  const itemrefRe = /<itemref\b[^>]*\/?>/g;
+  let itemrefMatch: RegExpExecArray | null;
+  while ((itemrefMatch = itemrefRe.exec(spineSection)) !== null) {
+    const idref = xmlAttr(itemrefMatch[0], 'idref');
+    const linear = xmlAttr(itemrefMatch[0], 'linear');
+    if (idref && linear?.toLowerCase() !== 'no') {
+      spine.push(idref);
+    }
+  }
+
+  return { title, manifest, spine };
+}
+
+/**
+ * TOC entries from an EPUB 3 nav document. Prefers the `<nav epub:type="toc">`
+ * element; falls back to the first `<nav>` when no epub:type is declared.
+ * Hrefs are as-authored (relative to the nav document itself).
+ */
+export function epubTocFromNav(navXhtml: string): EpubTocEntry[] {
+  const navRe = /<nav\b[^>]*>([\s\S]*?)<\/nav>/gi;
+  let tocSection: string | undefined;
+  let firstNav: string | undefined;
+  let navMatch: RegExpExecArray | null;
+  while ((navMatch = navRe.exec(navXhtml)) !== null) {
+    firstNav = firstNav ?? navMatch[1];
+    const typeAttr = /\bepub:type\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(navMatch[0].slice(0, navMatch[0].indexOf('>') + 1));
+    if ((typeAttr?.[1] ?? typeAttr?.[2] ?? '').split(/\s+/).includes('toc')) {
+      tocSection = navMatch[1];
+      break;
+    }
+  }
+  const section = tocSection ?? firstNav ?? '';
+  const entries: EpubTocEntry[] = [];
+  const anchorRe = /<a\b[^>]*>([\s\S]*?)<\/a>/gi;
+  let anchorMatch: RegExpExecArray | null;
+  while ((anchorMatch = anchorRe.exec(section)) !== null) {
+    const href = xmlAttr(anchorMatch[0].slice(0, anchorMatch[0].indexOf('>') + 1), 'href');
+    const label = stripXmlMarkup(anchorMatch[1]);
+    if (href && label) {
+      entries.push({ label, href });
+    }
+  }
+  return entries;
+}
+
+/**
+ * TOC entries from an EPUB 2 `toc.ncx`. Nested navPoints are flattened in
+ * document order. Hrefs are as-authored (relative to the NCX document).
+ */
+export function epubTocFromNcx(ncxXml: string): EpubTocEntry[] {
+  const entries: EpubTocEntry[] = [];
+  const navPointRe = /<navPoint\b[^>]*>[\s\S]*?<text\b[^>]*>([\s\S]*?)<\/text>[\s\S]*?<content\b[^>]*\/?>/g;
+  let match: RegExpExecArray | null;
+  while ((match = navPointRe.exec(ncxXml)) !== null) {
+    const contentTag = /<content\b[^>]*\/?>/.exec(match[0].slice(match[0].lastIndexOf('<content')));
+    const href = contentTag ? xmlAttr(contentTag[0], 'src') : undefined;
+    const label = stripXmlMarkup(match[1]);
+    if (href && label) {
+      entries.push({ label, href });
+    }
+  }
+  return entries;
+}
+
+/** Inner HTML of `<body>` from an (X)HTML chapter, or the whole input. */
+export function extractXhtmlBody(xhtml: string): string {
+  const match = /<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(xhtml);
+  return (match ? match[1] : xhtml).trim();
+}
+
+/**
+ * Resolve an OPF/TOC href against the directory of the referencing document to
+ * a normalized zip-internal path: strips fragment/query, URI-decodes, and
+ * collapses `.`/`..` segments (never above the archive root).
+ */
+export function resolveEpubHref(baseDir: string, href: string): string {
+  const clean = href.split('#')[0].split('?')[0];
+  let decoded = clean;
+  try {
+    decoded = decodeURIComponent(clean);
+  } catch {
+    // Keep the raw href when it is not valid percent-encoding.
+  }
+  const joined = decoded.startsWith('/') ? decoded.slice(1) : (baseDir ? `${baseDir}/${decoded}` : decoded);
+  const segments: string[] = [];
+  for (const segment of joined.split('/')) {
+    if (segment === '' || segment === '.') {
+      continue;
+    }
+    if (segment === '..') {
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments.join('/');
+}
+
+/** Zip-internal directory of a path ('' for root-level files). */
+export function epubDirName(path: string): string {
+  const slash = path.lastIndexOf('/');
+  return slash >= 0 ? path.slice(0, slash) : '';
+}
+
+/**
+ * Cap an HTML fragment at `maxBytes` (UTF-16 code-unit approximation is fine
+ * here — the cap is a payload guard, not an exact byte budget). A truncated
+ * fragment may end mid-tag; the frontend's DOMPurify pass repairs the markup.
+ */
+export function capHtmlFragment(html: string, maxBytes: number = DOCUMENT_EPUB_CHAPTER_HTML_MAX_BYTES): {
+  html: string;
+  truncated: boolean;
+} {
+  if (html.length <= maxBytes) {
+    return { html, truncated: false };
+  }
+  return { html: html.slice(0, maxBytes), truncated: true };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,19 +1,32 @@
 import { promises as fs } from 'fs';
 import { createRequire } from 'module';
 import { extname, isAbsolute, relative, resolve } from 'path';
+import { pathToFileURL } from 'url';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import { injectable } from '@theia/core/shared/inversify';
 import {
   assembleSheetTable,
   buildSlidePreview,
+  capHtmlFragment,
   capSheetGrid,
+  epubDirName,
+  epubRootFileFromContainer,
+  epubTocFromNav,
+  epubTocFromNcx,
+  extractOdpSlideTexts,
   extractSlideText,
+  extractXhtmlBody,
   kindForStrategy,
+  parseEpubOpf,
   documentPreviewStrategyForExtension,
+  resolveEpubHref,
+  DOCUMENT_EPUB_MAX_CHAPTERS,
   DOCUMENT_PREVIEW_MAX_FILE_BYTES,
-  slideNumberFromName
+  slideNumberFromName,
+  EpubTocEntry
 } from '../common/document-preview';
 import {
+  DocumentEpubChapter,
   DocumentPreviewResult,
   DocumentPreviewService,
   DocumentSheetPreview,
@@ -96,6 +109,56 @@ function loadXlsx(): XlsxModule {
 function loadJsZip(): JsZipModule {
   return lazyRequire<{ default?: JsZipModule } & JsZipModule>('js', 'zip') as unknown as JsZipModule;
 }
+function loadRtfToHtml(): RtfToHtmlModule {
+  return lazyRequire<RtfToHtmlModule>('@iarna/', 'rtf-to-html');
+}
+
+/** Minimal structural surface of `odf-kit/reader` (`odtToHtml`). */
+interface OdfKitReaderModule {
+  odtToHtml(bytes: Uint8Array, options?: { fragment?: boolean }): string;
+}
+
+/** Minimal structural surface of `@iarna/rtf-to-html` (`fromString`). */
+interface RtfToHtmlModule {
+  fromString(
+    rtf: string,
+    options: { template(doc: unknown, defaults: unknown, content: string): string },
+    cb: (error: Error | null, html?: string) => void
+  ): void;
+}
+
+/**
+ * Runtime-preserved dynamic import: assembled via `Function` so neither tsc's
+ * CJS down-leveling (which would rewrite `import()` into `require()`) nor the
+ * esbuild backend bundler can see or transform it.
+ */
+const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
+
+/**
+ * `odf-kit` is ESM-only. Its exports carry `import`/`module-sync` conditions
+ * (no `require`), so the plain node backend resolves it through `require`
+ * (Node >= 22 require-esm honors `module-sync`) while the bun test runner needs
+ * a true dynamic import. The final rung resolves the reader entry file relative
+ * to this package for runtimes where the bare specifier resolves from neither
+ * basis (e.g. bun's isolated install layout with a repo-root cwd).
+ */
+async function loadOdfKitReader(): Promise<OdfKitReaderModule> {
+  const name = ['odf-', 'kit/reader'].join('');
+  try {
+    return lazyRequire<OdfKitReaderModule>(name);
+  } catch {
+    // ESM-only package without a `require` exports condition on this runtime.
+  }
+  try {
+    return await dynamicImport(name) as OdfKitReaderModule;
+  } catch {
+    // Bare-specifier resolution basis mismatch; fall through to the file path.
+  }
+  const selfName = ['@ai-focused-editor/', 'document-preview-theia'].join('');
+  const packageJsonPath = require.resolve(selfName + '/package.json');
+  const entry = resolve(packageJsonPath, '..', 'node_modules', ['odf-', 'kit'].join(''), 'dist', 'reader', 'index.js');
+  return await dynamicImport(pathToFileURL(entry).href) as OdfKitReaderModule;
+}
 
 const PPTX_MEDIA_CONTENT_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -159,11 +222,22 @@ export class NodeDocumentPreviewService implements DocumentPreviewService {
       const buffer = await fs.readFile(absolutePath);
       switch (strategy) {
         case 'html':
+          if (ext === '.odt') {
+            return await this.convertOdt(buffer, warnings);
+          }
+          if (ext === '.rtf') {
+            return await this.convertRtf(buffer, warnings);
+          }
           return await this.convertDocx(buffer, warnings);
         case 'sheets':
           return this.convertSpreadsheet(buffer, warnings);
         case 'slides':
+          if (ext === '.odp') {
+            return await this.convertOdp(buffer, warnings);
+          }
           return await this.convertPresentation(buffer, warnings);
+        case 'epub':
+          return await this.convertEpub(buffer, warnings);
       }
     } catch (error) {
       return {
@@ -251,6 +325,175 @@ export class NodeDocumentPreviewService implements DocumentPreviewService {
     }
 
     return { kind: 'slides', slides, warnings };
+  }
+
+  /** ODF text documents (.odt) → an HTML fragment via `odf-kit/reader`. */
+  protected async convertOdt(buffer: Buffer, warnings: string[]): Promise<DocumentPreviewResult> {
+    const reader = await loadOdfKitReader();
+    const html = reader.odtToHtml(new Uint8Array(buffer), { fragment: true });
+    if (html.trim().length === 0) {
+      warnings.push('The document has no extractable content.');
+    }
+    return { kind: 'html', html, warnings };
+  }
+
+  /**
+   * RTF documents → an HTML fragment via `@iarna/rtf-to-html`. The custom
+   * `template` returns only the rendered paragraphs, so no `<html>`/`<body>`
+   * wrapper needs stripping. RTF is 7-bit ASCII with escape sequences, so the
+   * buffer is decoded as latin1 (byte-preserving for stray 8-bit codepage
+   * characters the parser resolves itself).
+   */
+  protected async convertRtf(buffer: Buffer, warnings: string[]): Promise<DocumentPreviewResult> {
+    const rtfToHtml = loadRtfToHtml();
+    const rtf = buffer.toString('latin1');
+    const html = await new Promise<string>((resolvePromise, rejectPromise) => {
+      rtfToHtml.fromString(
+        rtf,
+        { template: (_doc, _defaults, content) => content },
+        (error, value) => (error ? rejectPromise(error) : resolvePromise(value ?? ''))
+      );
+    });
+    if (html.trim().length === 0) {
+      warnings.push('The document has no extractable content.');
+    }
+    return { kind: 'html', html, warnings };
+  }
+
+  /**
+   * ODF presentations (.odp) → per-slide text runs extracted from the single
+   * `content.xml` (one `<draw:page>` per slide), reusing the same slide-card
+   * shape as the pptx path.
+   */
+  protected async convertOdp(buffer: Buffer, warnings: string[]): Promise<DocumentPreviewResult> {
+    const JSZip = loadJsZip();
+    const zip = await JSZip.loadAsync(buffer);
+    const content = Object.values(zip.files).find(entry => !entry.dir && entry.name === 'content.xml');
+    if (!content) {
+      return { kind: 'unsupported', warnings: [...warnings, 'The presentation has no content.xml — not a valid ODF file.'] };
+    }
+    const pages = extractOdpSlideTexts(await content.async('string'));
+    if (pages.length === 0) {
+      warnings.push('No slides were found in the presentation.');
+      return { kind: 'slides', slides: [], warnings };
+    }
+    const slides = pages.map((runs, index) => buildSlidePreview(index + 1, runs, 'This slide has no extractable text.'));
+    return { kind: 'slides', slides, warnings };
+  }
+
+  /**
+   * E-books (.epub) → book title + chapter list (TOC) + the FIRST spine
+   * chapter's HTML (bounded payload; further chapters are listed but not
+   * inlined). Custom jszip spine reader: `META-INF/container.xml` → OPF
+   * manifest/spine → EPUB 3 nav document (fallback: EPUB 2 NCX) → first spine
+   * XHTML body. The chapter HTML is sanitized on the frontend.
+   */
+  protected async convertEpub(buffer: Buffer, warnings: string[]): Promise<DocumentPreviewResult> {
+    const JSZip = loadJsZip();
+    const zip = await JSZip.loadAsync(buffer);
+    const entryByName = new Map<string, JsZipEntry>();
+    for (const entry of Object.values(zip.files)) {
+      if (!entry.dir) {
+        entryByName.set(entry.name, entry);
+      }
+    }
+
+    const container = entryByName.get('META-INF/container.xml');
+    let opfPath = container ? epubRootFileFromContainer(await container.async('string')) : undefined;
+    if (!opfPath || !entryByName.has(opfPath)) {
+      // Tolerate books without a (valid) container: fall back to the first OPF.
+      opfPath = [...entryByName.keys()].find(name => name.toLowerCase().endsWith('.opf'));
+    }
+    const opfEntry = opfPath ? entryByName.get(opfPath) : undefined;
+    if (!opfPath || !opfEntry) {
+      return { kind: 'unsupported', warnings: [...warnings, 'The e-book has no OPF package document — not a valid EPUB file.'] };
+    }
+
+    const opf = parseEpubOpf(await opfEntry.async('string'));
+    const opfDir = epubDirName(opfPath);
+    const manifestById = new Map(opf.manifest.map(item => [item.id, item]));
+
+    // TOC: EPUB 3 nav document first, then the EPUB 2 NCX.
+    let toc: { entries: EpubTocEntry[]; baseDir: string } | undefined;
+    const navItem = opf.manifest.find(item => item.properties?.split(/\s+/).includes('nav'));
+    if (navItem) {
+      const navPath = resolveEpubHref(opfDir, navItem.href);
+      const navEntry = entryByName.get(navPath);
+      if (navEntry) {
+        toc = { entries: epubTocFromNav(await navEntry.async('string')), baseDir: epubDirName(navPath) };
+      }
+    }
+    if (!toc || toc.entries.length === 0) {
+      const ncxItem = opf.manifest.find(item => item.mediaType === 'application/x-dtbncx+xml');
+      if (ncxItem) {
+        const ncxPath = resolveEpubHref(opfDir, ncxItem.href);
+        const ncxEntry = entryByName.get(ncxPath);
+        if (ncxEntry) {
+          toc = { entries: epubTocFromNcx(await ncxEntry.async('string')), baseDir: epubDirName(ncxPath) };
+        }
+      }
+    }
+
+    const chapters: DocumentEpubChapter[] = [];
+    const seen = new Set<string>();
+    if (toc && toc.entries.length > 0) {
+      for (const entry of toc.entries) {
+        const id = resolveEpubHref(toc.baseDir, entry.href);
+        if (!seen.has(id)) {
+          seen.add(id);
+          chapters.push({ id, label: entry.label });
+        }
+      }
+    } else {
+      warnings.push('The e-book has no table of contents — listing spine entries instead.');
+      for (const idref of opf.spine) {
+        const item = manifestById.get(idref);
+        if (item) {
+          const id = resolveEpubHref(opfDir, item.href);
+          if (!seen.has(id)) {
+            seen.add(id);
+            chapters.push({ id, label: id.split('/').pop() ?? id });
+          }
+        }
+      }
+    }
+    if (chapters.length > DOCUMENT_EPUB_MAX_CHAPTERS) {
+      warnings.push(`The chapter list was truncated to the first ${DOCUMENT_EPUB_MAX_CHAPTERS} entries.`);
+      chapters.length = DOCUMENT_EPUB_MAX_CHAPTERS;
+    }
+
+    // First spine chapter: the first itemref resolving to an (X)HTML resource.
+    let firstChapterPath: string | undefined;
+    for (const idref of opf.spine) {
+      const item = manifestById.get(idref);
+      if (item && /x?html/i.test(item.mediaType)) {
+        const path = resolveEpubHref(opfDir, item.href);
+        if (entryByName.has(path)) {
+          firstChapterPath = path;
+          break;
+        }
+      }
+    }
+    if (firstChapterPath) {
+      const body = extractXhtmlBody(await entryByName.get(firstChapterPath)!.async('string'));
+      const { html, truncated } = capHtmlFragment(body);
+      if (truncated) {
+        warnings.push('The first chapter was truncated to fit the preview limit.');
+      }
+      const target = chapters.find(chapter => chapter.id === firstChapterPath);
+      if (target) {
+        target.html = html;
+      } else {
+        chapters.unshift({ id: firstChapterPath, label: opf.title ?? firstChapterPath.split('/').pop() ?? firstChapterPath, html });
+      }
+    } else {
+      warnings.push('The e-book has no readable chapter in its spine.');
+    }
+    if (chapters.length === 0) {
+      warnings.push('No chapters were found in the e-book.');
+    }
+
+    return { kind: 'epub', epub: { title: opf.title, chapters }, warnings };
   }
 }
 

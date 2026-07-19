@@ -9,13 +9,14 @@ export const DocumentPreviewServicePath = '/services/ai-focused-editor/office-pr
 /**
  * The kind of rendered payload {@link DocumentPreviewService.convertOfficeDocument}
  * produced for a given office document:
- * - `html`    — a single HTML fragment (Word documents);
+ * - `html`    — a single HTML fragment (Word documents, ODF text, RTF);
  * - `sheets`  — one HTML table per worksheet (spreadsheets);
- * - `slides`  — one structured card per slide (presentations);
+ * - `slides`  — one structured card per slide (presentations, ODF Impress);
+ * - `epub`    — chapter list (TOC) plus the first spine chapter's HTML (e-books);
  * - `unsupported` — the format cannot be previewed (legacy binary .doc/.ppt,
  *   oversized files, parser failure). `warnings` carries the human reason.
  */
-export type DocumentPreviewKind = 'html' | 'sheets' | 'slides' | 'unsupported';
+export type DocumentPreviewKind = 'html' | 'sheets' | 'slides' | 'epub' | 'unsupported';
 
 /** One worksheet rendered as an HTML table. */
 export interface DocumentSheetPreview {
@@ -37,6 +38,27 @@ export interface DocumentSlidePreview {
   html: string;
 }
 
+/** One e-book chapter entry (TOC row); `html` is populated only for the
+ *  chapter(s) actually rendered — the MVP loads just the first spine chapter
+ *  so the payload stays bounded for large books. */
+export interface DocumentEpubChapter {
+  /** Stable identifier — the chapter's zip-internal resource path. */
+  id: string;
+  /** Human-readable TOC label (falls back to the spine item's file name). */
+  label: string;
+  /** Chapter body HTML. Present only for rendered chapters. MUST be sanitized
+   *  on the frontend before injection (epub XHTML can carry scripts/refs). */
+  html?: string;
+}
+
+/** E-book payload: book title + chapter list with the first chapter rendered. */
+export interface DocumentEpubPreview {
+  /** Book title from the OPF metadata, when present. */
+  title?: string;
+  /** TOC (or spine fallback) in reading order. */
+  chapters: DocumentEpubChapter[];
+}
+
 /**
  * Result of converting an office document to a previewable payload. Conversion
  * never throws across the RPC boundary: every failure mode (unsupported format,
@@ -45,13 +67,15 @@ export interface DocumentSlidePreview {
  */
 export interface DocumentPreviewResult {
   kind: DocumentPreviewKind;
-  /** Present for `kind === 'html'` (Word documents). Already server-trusted but
-   *  MUST still be sanitized on the frontend before injection. */
+  /** Present for `kind === 'html'` (Word/ODF text/RTF documents). Already
+   *  server-trusted but MUST still be sanitized on the frontend before injection. */
   html?: string;
   /** Present for `kind === 'sheets'` (spreadsheets), in workbook order. */
   sheets?: DocumentSheetPreview[];
   /** Present for `kind === 'slides'` (presentations), in document order. */
   slides?: DocumentSlidePreview[];
+  /** Present for `kind === 'epub'` (e-books). */
+  epub?: DocumentEpubPreview;
   /** Non-fatal notices: mammoth conversion messages, truncation notes, the
    *  unsupported-format reason, size-guard refusals, etc. */
   warnings: string[];

@@ -98,7 +98,7 @@ export class DocumentPreviewCommandContribution implements CommandContribution, 
         if (!uri || !isPreviewableDocument(uri)) {
           await this.messageService.warn(nls.localize(
             'ai-focused-editor/office/only-office',
-            'Preview is only available for office documents (.docx, .xlsx, .xls, .ods, .pptx, .doc, .ppt).'
+            'Preview is only available for office documents (.docx, .odt, .rtf, .xlsx, .xls, .ods, .pptx, .odp, .epub, .doc, .ppt).'
           ));
           return;
         }
