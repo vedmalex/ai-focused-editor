@@ -7,6 +7,8 @@ import {
   TRANSLATE_PROMPT,
   TRANSLATION_QA_PROMPT,
   buildProofreadingMessages,
+  buildCustomCommandMessages,
+  CUSTOM_COMMAND_SYSTEM,
   splitDataUri
 } from './proofreading-prompts';
 
@@ -85,6 +87,25 @@ describe('buildProofreadingMessages', () => {
     expect(user).toContain('the translation');
     // Original must appear before the translation in the assembled message.
     expect(user.indexOf('the original')).toBeLessThan(user.indexOf('the translation'));
+  });
+});
+
+describe('buildCustomCommandMessages', () => {
+  test('uses the custom-command system prompt', () => {
+    const { system } = buildCustomCommandMessages('Make it formal', 'hey there');
+    expect(system).toBe(CUSTOM_COMMAND_SYSTEM);
+  });
+
+  test('carries the instruction and the fragment, instruction first', () => {
+    const { user } = buildCustomCommandMessages('  Make it formal  ', 'hey there');
+    expect(user).toContain('Make it formal');
+    expect(user).toContain('hey there');
+    expect(user.indexOf('Make it formal')).toBeLessThan(user.indexOf('hey there'));
+  });
+
+  test('trims surrounding whitespace off the instruction', () => {
+    const { user } = buildCustomCommandMessages('  Make it formal  ', 'x');
+    expect(user).not.toContain('  Make it formal  ');
   });
 });
 

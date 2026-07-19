@@ -3132,3 +3132,107 @@ body.afe-proofreading-mode .lm-TabBar-toolbar .item {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Embedded Monaco editor host (the editable text pane). The placeholder is
+   React-managed; the inner node is widget-owned and appended imperatively, so a
+   real flex height is required for Monaco to lay out. */
+.afe-proofreading-editor-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  position: relative;
+}
+
+.afe-proofreading-editor-host-node {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Per-column adjacent-page context crop (ScanCheck's page-context-fragment /
+   text-context-fragment): a fixed-height card stacked above (prev) / below
+   (next) the main image or editor, so it never steals the main pane's height. */
+.afe-proofreading-context {
+  flex: 0 0 150px;
+  min-height: 150px;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  cursor: pointer;
+  outline: none;
+  background: var(--theia-editor-background);
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  border-radius: 4px;
+  margin: 6px 10px;
+}
+
+.afe-proofreading-context:hover,
+.afe-proofreading-context:focus {
+  border-color: var(--theia-focusBorder, var(--theia-button-background));
+  box-shadow: 0 0 0 1px var(--theia-focusBorder, var(--theia-button-background));
+}
+
+.afe-proofreading-context-label {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  font-weight: 600;
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+  background: var(--theia-editorWidget-background, var(--theia-editor-background));
+  border-bottom: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The scroll viewport: fixed height, holds the full-width scan; the widget sets
+   scrollTop to reveal the end (prev) / start (next) of the neighbor scan. */
+.afe-proofreading-context-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--theia-editor-background);
+}
+
+.afe-proofreading-context-image-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.afe-proofreading-context-text-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--theia-editor-font-family, monospace);
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-foreground);
+  background: var(--theia-editor-background);
+}
+
+/* Gutter chrome for the embedded editor (Unit C): scoped under the widget so it
+   never leaks to other Monaco instances. Relies on Monaco defaults for the line
+   numbers themselves; this only aligns the margin/line-number colors to theme. */
+.afe-proofreading-widget .monaco-editor .margin {
+  background-color: var(--theia-editorGutter-background, var(--theia-editor-background));
+}
+
+.afe-proofreading-widget .monaco-editor .line-numbers {
+  color: var(--theia-editorLineNumber-foreground, var(--theia-descriptionForeground));
+}
+
+.afe-proofreading-widget .monaco-editor .current-line ~ .line-numbers,
+.afe-proofreading-widget .monaco-editor .line-numbers.active-line-number {
+  color: var(--theia-editorLineNumber-activeForeground, var(--theia-foreground));
+}

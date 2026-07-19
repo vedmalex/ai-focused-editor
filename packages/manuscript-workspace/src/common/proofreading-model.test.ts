@@ -8,7 +8,9 @@ import {
   getEditableRelativePath,
   isProofsetPath,
   isTranslationMode,
-  matchPairs
+  matchPairs,
+  pairHasImage,
+  pairHasSource
 } from './proofreading-model';
 
 describe('isProofsetPath', () => {
@@ -141,6 +143,141 @@ describe('matchPairs', () => {
       DEFAULT_TEXT_EXTENSIONS
     );
     expect(pairs[0].textRelPath).toBe('proofreading/set/text/page.01.txt');
+  });
+});
+
+const TRANSLATION_FOLDERS = {
+  imagesFolder: 'proofreading/set/images',
+  textFolder: 'proofreading/set/translation',
+  sourceTextFolder: 'proofreading/set/source'
+};
+
+describe('matchPairs — adaptive driver (scans optional)', () => {
+  test('translation with ZERO images: source↔text pairs, no imageRelPath', () => {
+    const pairs = matchPairs(
+      [],
+      ['chapter-01.md', 'chapter-02.md'],
+      ['chapter-01.md', 'chapter-02.md'],
+      TRANSLATION_FOLDERS,
+      DEFAULT_IMAGE_EXTENSIONS,
+      DEFAULT_TEXT_EXTENSIONS
+    );
+    expect(pairs.map(pair => pair.base)).toEqual(['chapter-01', 'chapter-02']);
+    for (const pair of pairs) {
+      expect('imageRelPath' in pair).toBe(false);
+      expect(pairHasImage(pair)).toBe(false);
+      expect(pair.missing).toBe(false);
+    }
+    expect(pairs[0].sourceTextRelPath).toBe('proofreading/set/source/chapter-01.md');
+    expect(pairs[0].textRelPath).toBe('proofreading/set/translation/chapter-01.md');
+    expect(pairHasSource(pairs[0])).toBe(true);
+  });
+
+  test('translation WITH images: 3-way pair carries image + source + text', () => {
+    const pairs = matchPairs(
+      ['chapter-01.jpg'],
+      ['chapter-01.md'],
+      ['chapter-01.md'],
+      TRANSLATION_FOLDERS,
+      DEFAULT_IMAGE_EXTENSIONS,
+      DEFAULT_TEXT_EXTENSIONS
+    );
+    expect(pairs).toHaveLength(1);
+    expect(pairHasImage(pairs[0])).toBe(true);
+    expect(pairHasSource(pairs[0])).toBe(true);
+    expect(pairs[0].imageRelPath).toBe('proofreading/set/images/chapter-01.jpg');
+    expect(pairs[0].sourceTextRelPath).toBe('proofreading/set/source/chapter-01.md');
+    expect(pairs[0].textRelPath).toBe('proofreading/set/translation/chapter-01.md');
+  });
+
+  test('translation: source present but translation text missing ⇒ pair with missing:true, no image', () => {
+    const pairs = matchPairs(
+      [],
+      [],
+      ['chapter-01.md'],
+      TRANSLATION_FOLDERS,
+      DEFAULT_IMAGE_EXTENSIONS,
+      DEFAULT_TEXT_EXTENSIONS
+    );
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].missing).toBe(true);
+    // no matching text file ⇒ expected path uses the preferred (first) text ext
+    expect(pairs[0].textRelPath).toBe('proofreading/set/translation/chapter-01.txt');
+    expect(pairs[0].sourceTextRelPath).toBe('proofreading/set/source/chapter-01.md');
+    expect('imageRelPath' in pairs[0]).toBe(false);
+  });
+
+  test('translation: a source with no matching translation gets NO sourceTextRelPath on the reverse-missing side', () => {
+    // text-only base (no source) still shows, without a source pane path
+    const pairs = matchPairs(
+      [],
+      ['chapter-99.md'],
+      [],
+      TRANSLATION_FOLDERS,
+      DEFAULT_IMAGE_EXTENSIONS,
+      DEFAULT_TEXT_EXTENSIONS
+    );
+    expect(pairs).toHaveLength(1);
+    expect(pairHasSource(pairs[0])).toBe(false);
+    expect('sourceTextRelPath' in pairs[0]).toBe(false);
+    expect(pairs[0].missing).toBe(false);
+  });
+
+  test('translation mismatched counts (19 source vs 20 text) ⇒ union = 20 pairs', () => {
+    const sourceNames = Array.from({ length: 19 }, (_, i) => `chapter-${String(i + 1).padStart(2, '0')}.md`);
+    const textNames = Array.from({ length: 20 }, (_, i) => `chapter-${String(i + 1).padStart(2, '0')}.md`);
+    const pairs = matchPairs([], textNames, sourceNames, TRANSLATION_FOLDERS, DEFAULT_IMAGE_EXTENSIONS, DEFAULT_TEXT_EXTENSIONS);
+    expect(pairs).toHaveLength(20);
+    // chapter-20 has text but no source
+    const last = pairs[pairs.length - 1];
+    expect(last.base).toBe('chapter-20');
+    expect(pairHasSource(last)).toBe(false);
+    expect(last.missing).toBe(false);
+    // sorted numeric-aware, no image anywhere
+    expect(pairs.every(pair => !pairHasImage(pair))).toBe(true);
+    expect(pairs[9].base).toBe('chapter-10');
+  });
+
+  test('OCR: union(images, text) — a scan without text and a text without scan both show', () => {
+    const pairs = matchPairs(
+      ['page.01.jpg', 'page.03.jpg'],
+      ['page.01.txt', 'page.02.txt'],
+      undefined,
+      OCR_FOLDERS,
+      DEFAULT_IMAGE_EXTENSIONS,
+      DEFAULT_TEXT_EXTENSIONS
+    );
+    expect(pairs.map(pair => pair.base)).toEqual(['page.01', 'page.02', 'page.03']);
+    // page.02: text only, no image
+    const p2 = pairs.find(pair => pair.base === 'page.02')!;
+    expect(pairHasImage(p2)).toBe(false);
+    expect(p2.missing).toBe(false);
+    // page.03: image only, text missing
+    const p3 = pairs.find(pair => pair.base === 'page.03')!;
+    expect(pairHasImage(p3)).toBe(true);
+    expect(p3.missing).toBe(true);
+  });
+
+  test('dotted names survive the union driver', () => {
+    const pairs = matchPairs(
+      [],
+      ['part.1.chapter.01.md'],
+      ['part.1.chapter.01.md'],
+      TRANSLATION_FOLDERS,
+      DEFAULT_IMAGE_EXTENSIONS,
+      DEFAULT_TEXT_EXTENSIONS
+    );
+    expect(pairs[0].base).toBe('part.1.chapter.01');
+    expect(pairs[0].sourceTextRelPath).toBe('proofreading/set/source/part.1.chapter.01.md');
+  });
+});
+
+describe('pairHasImage / pairHasSource', () => {
+  test('reflect the presence of the optional paths', () => {
+    expect(pairHasImage({ imageRelPath: 'a/b.jpg' })).toBe(true);
+    expect(pairHasImage({ imageRelPath: undefined })).toBe(false);
+    expect(pairHasSource({ sourceTextRelPath: 'a/b.md' })).toBe(true);
+    expect(pairHasSource({ sourceTextRelPath: undefined })).toBe(false);
   });
 });
 
