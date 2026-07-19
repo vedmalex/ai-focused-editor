@@ -1,4 +1,7 @@
 import '../../src/browser/style/index.css';
+// Cropper.js stylesheet for the image editor's crop UI — bundled by the app's
+// esbuild frontend build ('.css' loader), same pipeline as index.css above.
+import 'cropperjs/dist/cropper.css';
 import URI from '@theia/core/lib/common/uri';
 import {
   CommandContribution,
