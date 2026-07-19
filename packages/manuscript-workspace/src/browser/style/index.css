@@ -941,6 +941,7 @@
 .afe-ico-knowledge { color: var(--theia-charts-yellow, #cca700); }
 .afe-ico-skills { color: var(--theia-charts-purple, #b180d7); }
 .afe-ico-proofreading { color: var(--theia-charts-green, #89d185); }
+.afe-ico-transcription { color: var(--theia-charts-blue, #3794ff); }
 
 /* codicon icons in the tree need a small alignment nudge next to labels */
 .theia-TreeNode .codicon[class*='afe-ico-'] {
@@ -3020,4 +3021,806 @@ body.afe-proofreading-mode .lm-TabBar-toolbar .item {
 .afe-proofreading-widget .monaco-editor .current-line ~ .line-numbers,
 .afe-proofreading-widget .monaco-editor .line-numbers.active-line-number {
   color: var(--theia-editorLineNumber-activeForeground, var(--theia-foreground));
+}
+
+/* --- Transcript Check editor (audio transcript proof-listening) ---------- */
+
+.afe-transcript-widget,
+.afe-transcript-shell {
+  display: flex;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size1);
+  outline: none;
+}
+
+.afe-transcript-widget {
+  flex-direction: column;
+}
+
+.afe-transcript-shell {
+  flex-direction: row;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.afe-transcript-status {
+  padding: 14px;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-transcript-status.error,
+.afe-transcript-problem.error {
+  color: var(--theia-errorForeground);
+}
+
+.afe-transcript-problems {
+  margin: 6px 14px;
+  padding-left: 18px;
+}
+
+/* LEFT: file list */
+.afe-transcript-files {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  background: var(--theia-sideBar-background, transparent);
+}
+
+.afe-transcript-files-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+}
+
+.afe-transcript-files-progress {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-transcript-files-list {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.afe-transcript-file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  overflow: hidden;
+}
+
+.afe-transcript-file-item:hover {
+  background: var(--theia-list-hoverBackground);
+}
+
+.afe-transcript-file-item.is-active {
+  background: var(--theia-list-activeSelectionBackground);
+  color: var(--theia-list-activeSelectionForeground);
+  border-left-color: var(--theia-focusBorder);
+}
+
+.afe-transcript-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.afe-transcript-file-chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.afe-transcript-file-chip {
+  font-size: var(--theia-ui-font-size0);
+  padding: 0 5px;
+  border-radius: 8px;
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.35));
+  color: var(--theia-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
+
+.afe-transcript-file-chip.missing {
+  color: var(--theia-errorForeground);
+  border-color: var(--theia-errorForeground);
+}
+
+.afe-transcript-file-chip.verified {
+  color: var(--theia-charts-green, #89d185);
+  border-color: var(--theia-charts-green, #89d185);
+}
+
+.afe-transcript-file-chip.rework {
+  color: var(--theia-charts-yellow, #e2c08d);
+  border-color: var(--theia-charts-yellow, #e2c08d);
+}
+
+/* CENTER: player + segments */
+.afe-transcript-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.afe-transcript-player {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--theia-editor-background);
+  border-bottom: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
+}
+
+.afe-transcript-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.afe-transcript-title {
+  margin: 0;
+  font-size: 1.05em;
+  font-weight: 700;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.afe-transcript-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.afe-transcript-toggle.active {
+  background: var(--theia-button-background);
+  color: var(--theia-button-foreground);
+}
+
+.afe-transcript-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.afe-transcript-search-input {
+  min-width: 220px;
+}
+
+.afe-transcript-search-counter,
+.afe-transcript-chip {
+  font-family: var(--theia-code-font-family, monospace);
+  font-size: var(--theia-ui-font-size0);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.35));
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-transcript-chip.empty {
+  color: var(--theia-errorForeground);
+  border-color: var(--theia-errorForeground);
+}
+
+.afe-transcript-chip.merge {
+  color: var(--theia-charts-green, #89d185);
+  border-color: var(--theia-charts-green, #89d185);
+}
+
+.afe-transcript-transport {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.afe-transcript-play-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: #059669;
+  color: #ffffff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.afe-transcript-play-button:hover {
+  background: #047857;
+}
+
+.afe-transcript-rates {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.afe-transcript-rates-label {
+  color: var(--theia-descriptionForeground);
+  flex: 0 0 auto;
+}
+
+.afe-transcript-rate-btn {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: var(--theia-ui-font-size0);
+  border: 1px solid transparent;
+  background: var(--theia-button-secondaryBackground, rgba(128, 128, 128, 0.2));
+  color: var(--theia-button-secondaryForeground, var(--theia-foreground));
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.afe-transcript-rate-btn.is-whole {
+  border-color: var(--theia-editorWidget-border, rgba(128, 128, 128, 0.5));
+  font-weight: 600;
+}
+
+.afe-transcript-rate-btn.is-active {
+  background: #059669;
+  color: #ffffff;
+  font-weight: 600;
+  border-color: #065f46;
+}
+
+/* Speakers panel + per-segment speaker editor */
+.afe-transcript-speakers,
+.afe-transcript-speaker-editor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+}
+
+.afe-transcript-speaker-editor {
+  margin: 6px 0;
+}
+
+.afe-transcript-speakers-label {
+  font-size: var(--theia-ui-font-size0);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-transcript-speakers-empty {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-transcript-speaker-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.afe-transcript-badge {
+  font-size: var(--theia-ui-font-size0);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.afe-transcript-badge.speaker {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.6);
+  color: var(--theia-charts-green, #16a34a);
+}
+
+.afe-transcript-badge.turn {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(129, 140, 248, 0.6);
+  color: var(--theia-charts-purple, #6366f1);
+}
+
+.afe-transcript-badge.empty {
+  background: rgba(239, 68, 68, 0.14);
+  border-color: rgba(248, 113, 113, 0.7);
+  color: var(--theia-errorForeground, #b91c1c);
+}
+
+.afe-transcript-speaker-chip,
+.afe-transcript-turn-btn {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: var(--theia-ui-font-size0);
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.4));
+  background: var(--theia-button-secondaryBackground, rgba(128, 128, 128, 0.15));
+  color: var(--theia-button-secondaryForeground, var(--theia-foreground));
+  cursor: pointer;
+  transition: all 160ms ease;
+}
+
+.afe-transcript-speaker-chip.is-active,
+.afe-transcript-turn-btn.is-active {
+  background: rgba(34, 197, 94, 0.25);
+  border-color: #16a34a;
+  color: var(--theia-foreground);
+}
+
+.afe-transcript-speaker-chip.is-explicit {
+  box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.55);
+}
+
+.afe-transcript-turn-buttons {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* Waveform */
+.afe-transcript-waveform-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.afe-transcript-waveform {
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.3));
+  background: var(--theia-editorWidget-background, rgba(128, 128, 128, 0.08));
+  min-height: 72px;
+}
+
+.afe-transcript-waveform-host-node {
+  width: 100%;
+}
+
+.afe-transcript-wave-times {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
+
+.afe-transcript-wave-hint {
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+}
+
+/* Segment cards */
+.afe-transcript-segments {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  flex: 1 1 auto;
+}
+
+.afe-transcript-segment-card {
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.2));
+  border-left-width: 1px;
+  background: var(--theia-editor-background);
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+  min-width: 0;
+  outline: none;
+}
+
+.afe-transcript-segment-card:hover {
+  border-color: var(--theia-focusBorder, rgba(128, 128, 128, 0.5));
+}
+
+.afe-transcript-segment-card.is-current {
+  border-left: 4px solid #16a34a;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  transform: scale(1.005);
+}
+
+.afe-transcript-segment-card.is-current.is-editing {
+  transform: none;
+}
+
+.afe-transcript-segment-card.is-editing {
+  border-left: 4px solid #16a34a;
+  cursor: default;
+}
+
+.afe-transcript-segment-card.is-empty {
+  background: rgba(239, 68, 68, 0.07);
+  border-color: rgba(248, 113, 113, 0.55);
+}
+
+.afe-transcript-segment-card.is-search-match {
+  border-color: rgba(245, 158, 11, 0.55);
+}
+
+.afe-transcript-segment-card.is-current-search-match {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.8);
+}
+
+.afe-transcript-segment-card.is-merge-selected {
+  border: 3px solid #22c55e;
+  background: rgba(34, 197, 94, 0.12);
+  box-shadow:
+    0 0 0 1px rgba(34, 197, 94, 0.9),
+    0 0 0 4px rgba(34, 197, 94, 0.18),
+    0 8px 20px rgba(16, 185, 129, 0.22);
+}
+
+/* Merge/split pulse feedback (ported keyframes) */
+.afe-transcript-segment-card.op-merge {
+  animation: afe-transcript-op-merge 760ms ease-out;
+}
+
+.afe-transcript-segment-card.op-split {
+  animation: afe-transcript-op-split 760ms ease-out;
+}
+
+@keyframes afe-transcript-op-merge {
+  0% {
+    outline: 0 solid rgba(34, 197, 94, 0);
+    outline-offset: 0;
+  }
+  30% {
+    outline: 3px solid rgba(34, 197, 94, 0.85);
+    outline-offset: 2px;
+    box-shadow:
+      0 0 0 5px rgba(34, 197, 94, 0.2),
+      0 10px 24px rgba(16, 185, 129, 0.28);
+  }
+  100% {
+    outline: 0 solid rgba(34, 197, 94, 0);
+    outline-offset: 0;
+  }
+}
+
+@keyframes afe-transcript-op-split {
+  0% {
+    outline: 0 solid rgba(14, 165, 233, 0);
+    outline-offset: 0;
+  }
+  30% {
+    outline: 3px solid rgba(14, 165, 233, 0.9);
+    outline-offset: 2px;
+    box-shadow:
+      0 0 0 5px rgba(14, 165, 233, 0.2),
+      0 10px 24px rgba(14, 116, 144, 0.24);
+  }
+  100% {
+    outline: 0 solid rgba(14, 165, 233, 0);
+    outline-offset: 0;
+  }
+}
+
+.afe-transcript-seg-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-family: var(--theia-code-font-family, monospace);
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+  flex-wrap: wrap;
+}
+
+.afe-transcript-seg-text {
+  margin: 0;
+  font-size: 1.06em;
+  line-height: 1.6;
+  color: var(--theia-foreground);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.afe-transcript-empty-hint {
+  font-style: italic;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-transcript-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 1.02em;
+  line-height: 1.5;
+}
+
+/* Per-segment mini waveform */
+.afe-transcript-segwave-block {
+  margin: 6px 0;
+}
+
+.afe-transcript-segwave {
+  position: relative;
+  width: 100%;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.3));
+  background: var(--theia-editorWidget-background, rgba(128, 128, 128, 0.08));
+  cursor: pointer;
+}
+
+.afe-transcript-segwave canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.afe-transcript-segwave-times {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Editing controls */
+.afe-transcript-edit-controls {
+  margin-bottom: 6px;
+}
+
+.afe-transcript-edit-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.afe-transcript-seg-play {
+  background: #059669;
+}
+
+.afe-transcript-split-hint {
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-charts-green, #16a34a);
+  margin-bottom: 4px;
+}
+
+/* AI panels + history */
+.afe-transcript-ai-panel,
+.afe-transcript-history {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.3));
+  background: var(--theia-editorWidget-background, rgba(128, 128, 128, 0.06));
+  font-size: var(--theia-ui-font-size1);
+  cursor: default;
+}
+
+.afe-transcript-ai-panel.proofread {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.07);
+}
+
+.afe-transcript-ai-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.afe-transcript-ai-panel-title {
+  font-weight: 600;
+}
+
+.afe-transcript-ai-pill {
+  font-size: var(--theia-ui-font-size0);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.4));
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-transcript-ai-summary {
+  margin: 6px 0 0;
+  line-height: 1.5;
+}
+
+.afe-transcript-ai-issues {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.afe-transcript-ai-issue {
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--theia-editor-background);
+}
+
+.afe-transcript-ai-issue-message {
+  font-weight: 500;
+}
+
+.afe-transcript-ai-issue-detail {
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+  margin-top: 2px;
+}
+
+.afe-transcript-ai-result {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.afe-transcript-ai-corrected {
+  border: 1px solid rgba(34, 197, 94, 0.5);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--theia-editor-background);
+  white-space: pre-wrap;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.afe-transcript-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.afe-transcript-history-count {
+  font-size: var(--theia-ui-font-size0);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-transcript-history-entry {
+  margin-top: 8px;
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--theia-editor-background);
+}
+
+.afe-transcript-history-entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.afe-transcript-history-source {
+  font-size: var(--theia-ui-font-size0);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-transcript-history-date,
+.afe-transcript-history-note {
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+  margin-top: 2px;
+}
+
+.afe-transcript-history-text {
+  margin-top: 4px;
+  white-space: pre-wrap;
+}
+
+/* RIGHT: outline */
+.afe-transcript-outline {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  background: var(--theia-sideBar-background, transparent);
+}
+
+.afe-transcript-outline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+}
+
+.afe-transcript-outline-count {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+  font-weight: 400;
+}
+
+.afe-transcript-outline-list {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.afe-transcript-outline-item {
+  text-align: left;
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.25));
+  border-radius: 10px;
+  background: var(--theia-editor-background);
+  color: var(--theia-foreground);
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.afe-transcript-outline-item:hover {
+  border-color: var(--theia-focusBorder, rgba(128, 128, 128, 0.6));
+  background: var(--theia-list-hoverBackground);
+}
+
+.afe-transcript-outline-item.is-active {
+  border-color: #22c55e;
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.afe-transcript-outline-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: var(--theia-ui-font-size0);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--theia-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
+
+.afe-transcript-outline-item-text {
+  margin-top: 2px;
+  font-size: var(--theia-ui-font-size1);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }

@@ -58,6 +58,10 @@
       "problem-legacy-ai-settings-malformed-detail": ".theia/settings.json не является корректным JSON, поэтому диагностика не смогла проверить его на устаревшие AI-настройки. Исправьте синтаксис JSON и запустите диагностику снова, чтобы перенести ключи aiFocusedEditor.ai.*.",
       "ai-settings-migrated": "Перенесено устаревших AI-настроек в .theia/settings.json на aiConnect.* — {0}.",
       "ai-settings-malformed": "Не удалось перенести AI-настройки: .theia/settings.json не является корректным JSON. Исправьте синтаксис и запустите снова.",
+      "problem-transcription-audio-not-ignored-label": "Медиа транскриптов не добавлены в .gitignore",
+      "problem-transcription-audio-not-ignored-detail": "В книге есть наборы транскриптов ({0}), но папка медиа {1} не указана в .gitignore. Аудио- и видеофайлы тяжёлые — добавьте «{1}» в .gitignore, чтобы они не попадали в git.",
+      "problem-transcription-toolchain-label": "Инструменты транскрибации: {0} недоступен",
+      "problem-transcription-toolchain-detail": "{1} {2} Эти инструменты необязательны — они нужны только для конвертации и распознавания медиа в наборах транскриптов.",
       "report-more-files": "…и ещё {0}"
     }
   }

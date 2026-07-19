@@ -38,7 +38,8 @@ const SECTION_ICONS: Record<string, string> = {
   sources: 'codicon codicon-library afe-ico-sources',
   knowledge: 'codicon codicon-lightbulb afe-ico-knowledge',
   skills: 'codicon codicon-mortar-board afe-ico-skills',
-  proofreading: 'codicon codicon-checklist afe-ico-proofreading'
+  proofreading: 'codicon codicon-checklist afe-ico-proofreading',
+  transcription: 'codicon codicon-mic afe-ico-transcription'
 };
 
 /**
@@ -54,7 +55,8 @@ const MATERIAL_ICONS: Record<string, string> = {
   sources: 'codicon codicon-file afe-ico-sources',
   knowledge: 'codicon codicon-note afe-ico-knowledge',
   skills: 'codicon codicon-mortar-board afe-ico-skills',
-  proofreading: 'codicon codicon-checklist afe-ico-proofreading'
+  proofreading: 'codicon codicon-checklist afe-ico-proofreading',
+  transcription: 'codicon codicon-mic afe-ico-transcription'
 };
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.tif', '.tiff', '.bmp'];

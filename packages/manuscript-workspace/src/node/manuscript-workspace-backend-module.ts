@@ -12,6 +12,8 @@ import { ManuscriptRuLocalizationContribution } from './i18n/manuscript-ru-local
 import {
   AiModeRegistryBackendService,
   AiModeRegistryBackendServicePath,
+  AudioConversionService,
+  AudioConversionServicePath,
   BookBuildService,
   BookBuildServicePath,
   GitStatusService,
@@ -28,6 +30,7 @@ import {
   SourceLibraryBackendServicePath,
   YamlSchemaValidator
 } from '../common';
+import { NodeAudioConversionService } from './node-audio-conversion-service';
 import { NodeBookBuildService } from './node-book-build-service';
 import { NodeNarrativeGraphService } from './node-narrative-graph-service';
 import { NodeGitStatusService } from './node-git-status-service';
@@ -53,6 +56,8 @@ export default new ContainerModule(bind => {
   bind(GitStatusService).toService(NodeGitStatusService);
   bind(NodeBookBuildService).toSelf().inSingletonScope();
   bind(BookBuildService).toService(NodeBookBuildService);
+  bind(NodeAudioConversionService).toSelf().inSingletonScope();
+  bind(AudioConversionService).toService(NodeAudioConversionService);
   bind(NodeBookBuildTaskRunner).toSelf().inSingletonScope();
   bind(NodeBookBuildTaskRunnerContribution).toSelf().inSingletonScope();
   bind(TaskRunnerContribution).toService(NodeBookBuildTaskRunnerContribution);
@@ -72,6 +77,11 @@ export default new ContainerModule(bind => {
   bind(ConnectionHandler).toDynamicValue(ctx =>
     new RpcConnectionHandler(BookBuildServicePath, () =>
       ctx.container.get(BookBuildService)
+    )
+  ).inSingletonScope();
+  bind(ConnectionHandler).toDynamicValue(ctx =>
+    new RpcConnectionHandler(AudioConversionServicePath, () =>
+      ctx.container.get(AudioConversionService)
     )
   ).inSingletonScope();
   bind(ConnectionHandler).toDynamicValue(ctx =>

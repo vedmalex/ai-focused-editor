@@ -30,6 +30,7 @@ import officeRu from './ru/office.json';
 import excalidrawRu from './ru/excalidraw.json';
 import imageViewerRu from './ru/image-viewer.json';
 import proofreadingRu from './ru/proofreading.json';
+import transcriptCheckRu from './ru/transcript-check.json';
 import mcpRu from './ru/mcp.json';
 import authRu from './ru/auth.json';
 import mobileRu from './ru/mobile.json';
@@ -61,7 +62,7 @@ const AREA_BUNDLES: unknown[] = [
   createRu, buildRu, bookConfigRu, sourcesRu, entitiesRu, entityTypesRu,
   aiConfigRu, aiModesRu, editorRu, doctorRu, welcomeRu,
   workspaceRu, knowledgeRu, gitRu, chatCapabilitiesRu, chatContextRu, officeRu,
-  excalidrawRu, imageViewerRu, proofreadingRu, mobileRu, mcpRu, authRu,
+  excalidrawRu, imageViewerRu, proofreadingRu, transcriptCheckRu, mobileRu, mcpRu, authRu,
   fileDialogRu
 ];
 

@@ -46,7 +46,9 @@ const EXPECTED_PATHS = [
   '.prompts/skills',
   '.prompts/skills/style-guide',
   '.prompts/skills/style-guide/SKILL.md',
-  'proofreading'
+  'proofreading',
+  'sources/audio',
+  'transcription'
 ];
 
 describe('bookScaffoldEntries — structure', () => {
@@ -145,7 +147,9 @@ describe('bookScaffoldEntries — kind/level/seed invariants', () => {
       '.prompts/skills',
       '.prompts/skills/style-guide',
       '.prompts/skills/style-guide/SKILL.md',
-      'proofreading'
+      'proofreading',
+      'sources/audio',
+      'transcription'
     ]);
   });
 
@@ -319,10 +323,10 @@ describe('missingScaffoldEntries', () => {
 });
 
 describe('isNewBookOnlyEntry', () => {
-  test('true for the starter chapter and the proofreading area', () => {
+  test('true for the starter chapter and the proofreading/transcription areas', () => {
     const entries = bookScaffoldEntries();
     const flagged = entries.filter(isNewBookOnlyEntry).map(entry => entry.path);
-    expect(flagged).toEqual(['content/chapter-01.md', 'proofreading']);
+    expect(flagged).toEqual(['content/chapter-01.md', 'proofreading', 'sources/audio', 'transcription']);
   });
 
   test('false for an arbitrary non-scaffold entry', () => {

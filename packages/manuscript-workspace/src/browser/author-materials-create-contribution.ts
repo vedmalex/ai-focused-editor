@@ -42,11 +42,19 @@ import {
   uniqueRelativePath
 } from '../common/entity-creation';
 import {
+  AUDIO_SOURCES_AREA,
+  TRANSCRIPTION_AREA,
+  appendGitignoreEntry,
   buildProofreadingSetSkeleton,
+  buildTranscriptsetSkeleton,
   proofreadingSetFolder,
   proofreadingSetFolders,
   proofsetRelPath,
+  transcriptSetFolder,
+  transcriptSetFolders,
+  transcriptsetRelPath,
   writeProofsetYaml,
+  writeTranscriptsetYaml,
   type ProofreadingMode
 } from '../common';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
@@ -130,6 +138,11 @@ export namespace AuthorMaterialsCommands {
   export const NEW_PROOFREADING_SET: Command = Command.toLocalizedCommand(
     { id: 'ai-focused-editor.proofreading.newSet', category: CATEGORY, label: 'New Proofreading Set...' },
     'ai-focused-editor/proofreading/new-set',
+    CATEGORY_KEY
+  );
+  export const NEW_TRANSCRIPT_SET: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.transcript.newSet', category: CATEGORY, label: 'New Transcript Set...' },
+    'ai-focused-editor/transcript/new-set',
     CATEGORY_KEY
   );
 }
@@ -398,6 +411,13 @@ export class AuthorMaterialsCreateContribution
       execute: () => this.createProofreadingSet(),
       isEnabled: () => this.hasWorkspace()
     });
+    commands.registerCommand(AuthorMaterialsCommands.NEW_TRANSCRIPT_SET, {
+      // An optional string argument skips the name prompt (programmatic/testing
+      // callers can pass the set name directly).
+      execute: (name?: unknown) =>
+        this.createTranscriptSet(typeof name === 'string' ? name : undefined),
+      isEnabled: () => this.hasWorkspace()
+    });
   }
 
   registerMenus(menus: MenuModelRegistry): void {
@@ -448,7 +468,8 @@ export class AuthorMaterialsCreateContribution
       { command: AuthorMaterialsCommands.ADD_SOURCE_FILE, section: 'sources' },
       { command: AuthorMaterialsCommands.NEW_DIAGRAM, section: 'sources' },
       { command: AuthorMaterialsCommands.NEW_SKILL, section: 'skills' },
-      { command: AuthorMaterialsCommands.NEW_PROOFREADING_SET, section: 'proofreading' }
+      { command: AuthorMaterialsCommands.NEW_PROOFREADING_SET, section: 'proofreading' },
+      { command: AuthorMaterialsCommands.NEW_TRANSCRIPT_SET, section: 'transcription' }
     ];
   }
 
@@ -1021,6 +1042,121 @@ export class AuthorMaterialsCreateContribution
       placeholder: nls.localize('ai-focused-editor/proofreading/mode-placeholder', 'Choose a proofreading mode')
     });
     return picked?.mode;
+  }
+
+  /**
+   * Create a transcript set (the transcript twin of
+   * {@link createProofreadingSet}): prompt for a name (skipped when `presetName`
+   * is provided), slug it, then scaffold the book-native folders —
+   * `sources/audio/<slug>/` for the media and `transcription/<slug>/transcripts/`
+   * for the working copy — and write `transcription/<slug>/transcriptset.yaml`.
+   * When media has already been dropped into the audio folder, `files[]` is
+   * seeded from it (verified:false); otherwise it starts empty and the widget
+   * populates on open. The sidecar opens in the priority-500 Transcript editor.
+   *
+   * OWNER DECISION: the `sources/audio/` media area is appended to the book's
+   * `.gitignore` (idempotently; the file is created when absent) — audio/video
+   * files are heavy and stay out of git by default, user-managed afterwards.
+   */
+  protected async createTranscriptSet(presetName?: string): Promise<void> {
+    const root = await this.getRoot();
+    if (!root) {
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/transcript/new-set-no-workspace',
+        'Open a manuscript workspace before creating a transcript set.'
+      ));
+      return;
+    }
+
+    let trimmed = presetName?.trim();
+    if (!trimmed) {
+      const name = await this.quickInput.input({
+        title: nls.localize('ai-focused-editor/transcript/new-set-title', 'New Transcript Set'),
+        prompt: nls.localize('ai-focused-editor/transcript/new-set-prompt', 'Transcript set name'),
+        placeHolder: nls.localize('ai-focused-editor/transcript/new-set-placeholder', 'e.g. Lecture 1'),
+        validateInput: async value => (value.trim()
+          ? undefined
+          : nls.localize('ai-focused-editor/transcript/new-set-empty', 'Transcript set name cannot be empty.'))
+      });
+      trimmed = name?.trim();
+    }
+    if (!trimmed) {
+      return;
+    }
+
+    const slug = createSemanticEntityId('transcriptset', trimmed);
+    const existing = await this.collectExistingRelPaths(root, TRANSCRIPTION_AREA);
+    const relFolder = uniqueRelativePath(transcriptSetFolder(slug), candidate => existing.has(candidate));
+    const finalSlug = relFolder.slice(relFolder.lastIndexOf('/') + 1);
+    const folders = transcriptSetFolders(finalSlug);
+
+    // Media usually arrives first: seed files[] from any audio already dropped.
+    const mediaNames = await this.listFolderFileNames(root, folders.audioFolder);
+    const set = buildTranscriptsetSkeleton({ slug: finalSlug, mediaNames });
+
+    await this.ensureFolder(root.resolve(TRANSCRIPTION_AREA));
+    await this.ensureFolder(root.resolve('sources'));
+    await this.ensureFolder(root.resolve(AUDIO_SOURCES_AREA));
+    await this.ensureFolder(root.resolve(folders.audioFolder));
+    await this.ensureFolder(root.resolve(relFolder));
+    await this.ensureFolder(root.resolve(folders.transcriptFolder));
+
+    const fileUri = root.resolve(transcriptsetRelPath(finalSlug));
+    try {
+      await this.fileService.create(fileUri, writeTranscriptsetYaml(undefined, set), { overwrite: false });
+    } catch (error) {
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/transcript/new-set-failed',
+        'Could not create transcript set: {0}',
+        this.detail(error)
+      ));
+      return;
+    }
+
+    // Keep the heavy media out of git (idempotent; a failure never blocks the set).
+    await this.ensureAudioAreaGitignored(root);
+
+    await this.openAndRefresh(fileUri);
+    this.messages.info(nls.localize(
+      'ai-focused-editor/transcript/new-set-created',
+      'Created transcript set "{0}". Drop audio/video into {1}/ — transcripts land in {2}/.',
+      trimmed,
+      folders.audioFolder,
+      folders.transcriptFolder
+    ));
+  }
+
+  /**
+   * Idempotently append the `sources/audio/` media area to the workspace-root
+   * `.gitignore` (creating the file when absent), via the pure
+   * {@link appendGitignoreEntry} helper. Errors degrade to a warning toast —
+   * a read-only filesystem must never block set creation.
+   */
+  protected async ensureAudioAreaGitignored(root: URI): Promise<void> {
+    const gitignoreUri = root.resolve('.gitignore');
+    try {
+      const existing = await this.readTextIfExists(gitignoreUri);
+      const result = appendGitignoreEntry(
+        existing,
+        `${AUDIO_SOURCES_AREA}/`,
+        'Transcript media (audio/video) — heavy files, kept out of git'
+      );
+      if (!result.added) {
+        return;
+      }
+      await this.fileService.write(gitignoreUri, result.text);
+      this.messages.info(nls.localize(
+        'ai-focused-editor/transcript/gitignore-added',
+        'Added {0}/ to .gitignore so heavy media stays out of git.',
+        AUDIO_SOURCES_AREA
+      ));
+    } catch (error) {
+      this.messages.warn(nls.localize(
+        'ai-focused-editor/transcript/gitignore-failed',
+        'Could not update .gitignore: {0}',
+        this.detail(error)
+      ));
+    }
   }
 
   /** Base file names (non-directory) directly under a workspace-relative folder ([] when absent). */

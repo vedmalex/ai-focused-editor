@@ -21,8 +21,11 @@ import {
   obsidianPluginFindings,
   preferredEntityLabel,
   scaffoldFixes,
+  transcriptionGitignoreFindings,
+  transcriptionToolchainFindings,
   type EntityCardRef,
-  type EntityTagOccurrence
+  type EntityTagOccurrence,
+  type TranscriptionCheckInput
 } from './book-doctor';
 import {
   BASE_ENTITY_TYPES,
@@ -688,6 +691,99 @@ describe('assembleBookDoctorReport', () => {
     expect(fix?.path).toBe('.theia/settings.json');
     expect(fix?.aiSettings?.legacyKeys).toEqual(['aiFocusedEditor.ai.activeAlias']);
     expect(report.findings.some(f => f.code === 'legacy-ai-settings' && f.severity === 'warning')).toBe(true);
+  });
+});
+
+describe('transcription checks', () => {
+  const toolchainReport = (checks: Array<{ id: string; ok: boolean; label?: string; detail?: string; advice?: string }>) => ({
+    ok: checks.every(check => check.ok),
+    checks: checks.map(check => ({
+      id: check.id as never,
+      label: check.label ?? check.id,
+      ok: check.ok,
+      detail: check.detail ?? `probed ${check.id}`,
+      advice: check.advice
+    }))
+  });
+
+  test('gitignore advice appears when sets exist and the media area is not ignored', () => {
+    const findings = transcriptionGitignoreFindings({ setCount: 2, gitignoreContent: 'node_modules/\n' });
+    expect(findings).toHaveLength(1);
+    expect(findings[0].kind).toBe('transcription');
+    expect(findings[0].code).toBe('transcription-audio-not-ignored');
+    expect(findings[0].params).toEqual([2, 'sources/audio/']);
+  });
+
+  test('gitignore advice also fires when the .gitignore is absent', () => {
+    const findings = transcriptionGitignoreFindings({ setCount: 1 });
+    expect(findings).toHaveLength(1);
+  });
+
+  test('no gitignore advice when the media area is already ignored (slash variants count)', () => {
+    expect(transcriptionGitignoreFindings({ setCount: 1, gitignoreContent: 'sources/audio/\n' })).toEqual([]);
+    expect(transcriptionGitignoreFindings({ setCount: 1, gitignoreContent: '/sources/audio\n' })).toEqual([]);
+  });
+
+  test('no gitignore advice for a book without transcript sets (opt-in)', () => {
+    expect(transcriptionGitignoreFindings({ setCount: 0 })).toEqual([]);
+  });
+
+  test('toolchain findings surface only FAILED checks, as warnings with the advice', () => {
+    const input: TranscriptionCheckInput = {
+      setCount: 1,
+      toolchain: toolchainReport([
+        { id: 'ffmpeg', ok: true },
+        {
+          id: 'whisper-cli',
+          ok: false,
+          label: 'whisper-cli',
+          detail: 'mediaTranscription.whisperCliPath is not set.',
+          advice: 'Build whisper.cpp and point mediaTranscription.whisperCliPath at build/bin/whisper-cli.'
+        }
+      ])
+    };
+    const findings = transcriptionToolchainFindings(input);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].kind).toBe('transcription');
+    expect(findings[0].severity).toBe('warning');
+    expect(findings[0].code).toBe('transcription-toolchain');
+    expect(findings[0].params?.[0]).toBe('whisper-cli');
+    expect(findings[0].detail).toContain('optional');
+  });
+
+  test('toolchain findings are skipped without sets or without a report', () => {
+    expect(transcriptionToolchainFindings({ setCount: 0, toolchain: toolchainReport([{ id: 'ffmpeg', ok: false }]) })).toEqual([]);
+    expect(transcriptionToolchainFindings({ setCount: 3 })).toEqual([]);
+  });
+
+  test('assembleBookDoctorReport folds the transcription findings in after the others', () => {
+    const entries = bookScaffoldEntries();
+    const report = assembleBookDoctorReport({
+      scaffoldEntries: entries,
+      exists: () => true,
+      contentHasMarkdown: true,
+      manifestExists: false,
+      manifestRows: [],
+      transcription: {
+        setCount: 1,
+        gitignoreContent: 'build/\n',
+        toolchain: toolchainReport([{ id: 'ffmpeg', ok: false, label: 'ffmpeg', detail: 'ffmpeg not found on PATH.', advice: 'Install ffmpeg (brew install ffmpeg).' }])
+      }
+    });
+    const codes = report.findings.map(finding => finding.code);
+    expect(codes).toContain('transcription-audio-not-ignored');
+    expect(codes).toContain('transcription-toolchain');
+  });
+
+  test('assembleBookDoctorReport emits no transcription findings without the input', () => {
+    const report = assembleBookDoctorReport({
+      scaffoldEntries: bookScaffoldEntries(),
+      exists: () => true,
+      contentHasMarkdown: true,
+      manifestExists: false,
+      manifestRows: []
+    });
+    expect(report.findings.some(finding => finding.kind === 'transcription')).toBe(false);
   });
 });
 

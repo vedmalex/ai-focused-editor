@@ -39,6 +39,7 @@
     "mammoth": "^1.12.0",
     "markdown-it": "^14.3.0",
     "unpdf": "1.6.2",
+    "wavesurfer.js": "^7.12.5",
     "yaml": "2.9.0"
   },
   "devDependencies": {
@@ -71,6 +72,9 @@
     },
     {
       "frontend": "lib/browser/proofreading-mode-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/transcript-check-frontend-module"
     },
     {
       "frontend": "lib/browser/image-viewer-frontend-module"
