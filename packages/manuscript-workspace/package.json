@@ -15,6 +15,7 @@
   "dependencies": {
     "@ai-focused-editor/ai-connect-theia": "workspace:*",
     "@ai-focused-editor/book-export": "0.1.0",
+    "@ai-focused-editor/document-preview-theia": "workspace:*",
     "@ai-focused-editor/semantic-markdown": "workspace:*",
     "@excalidraw/excalidraw": "0.18.1",
     "@theia/ai-chat": "1.73.1",
@@ -33,14 +34,11 @@
     "@theia/workspace": "1.73.1",
     "@vedmalex/ai-connect": "^0.11.0",
     "ajv": "8.20.0",
-    "dompurify": "^3.4.11",
     "jsonc-parser": "3.3.1",
-    "jszip": "^3.10.1",
     "katex": "^0.16.11",
     "mammoth": "^1.12.0",
     "markdown-it": "^14.3.0",
     "unpdf": "1.6.2",
-    "xlsx": "^0.18.5",
     "yaml": "2.9.0"
   },
   "devDependencies": {
@@ -64,9 +62,6 @@
     },
     {
       "frontend": "lib/browser/entity-editor-frontend-module"
-    },
-    {
-      "frontend": "lib/browser/office-preview-frontend-module"
     },
     {
       "frontend": "lib/browser/excalidraw-editor-frontend-module"

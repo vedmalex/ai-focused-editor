@@ -9,28 +9,30 @@ import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service
 import { inject, injectable } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
 import {
-  OfficePreviewResult,
-  OfficePreviewService,
-  officeExtension
+  DocumentPreviewResult,
+  DocumentPreviewService,
+  documentPreviewExtension
 } from '../common';
 
 /**
- * Read-only form-style preview for office documents (docx/xlsx/xls/ods/pptx and
- * the legacy binary .doc/.ppt, which render a friendly "unsupported" card
- * instead of binary garbage in Monaco).
+ * Read-only form-style preview for office documents (docx/odt/rtf/xlsx/xls/ods/
+ * pptx/odp/epub and the legacy binary .doc/.ppt, which render a friendly
+ * "unsupported" card instead of binary garbage in Monaco).
  *
- * The heavy parsing happens in the node {@link OfficePreviewService}; the widget
+ * The heavy parsing happens in the node {@link DocumentPreviewService}; the widget
  * only renders the returned payload. All HTML the backend produces (mammoth's
- * docx output, assembled sheet tables, slide run lists) is sanitized with
- * DOMPurify before it is injected — the office parsers are third-party and their
- * output is never trusted verbatim.
+ * docx output, odf-kit/rtf fragments, assembled sheet tables, slide run lists,
+ * epub chapter bodies) is sanitized with DOMPurify before it is injected — the
+ * office parsers are third-party (and epub XHTML can carry scripts/remote refs),
+ * so their output is never trusted verbatim.
  */
 @injectable()
-export class OfficePreviewWidget extends ReactWidget implements Navigatable {
+export class DocumentPreviewWidget extends ReactWidget implements Navigatable {
+  /** Historical factory id kept verbatim so saved layouts keep restoring. */
   static readonly FACTORY_ID = 'ai-focused-editor.office-preview';
 
-  @inject(OfficePreviewService)
-  protected readonly officeService!: OfficePreviewService;
+  @inject(DocumentPreviewService)
+  protected readonly documentPreviewService!: DocumentPreviewService;
 
   @inject(WorkspaceService)
   protected readonly workspaceService!: WorkspaceService;
@@ -44,13 +46,13 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
   protected uri!: URI;
   protected loading = false;
   protected error: string | undefined;
-  protected result: OfficePreviewResult | undefined;
+  protected result: DocumentPreviewResult | undefined;
   /** Index of the active worksheet tab (spreadsheets only). */
   protected activeSheet = 0;
 
   configure(uri: URI): void {
     this.uri = uri;
-    this.id = `${OfficePreviewWidget.FACTORY_ID}:${uri.toString()}`;
+    this.id = `${DocumentPreviewWidget.FACTORY_ID}:${uri.toString()}`;
     this.title.label = uri.path.base;
     this.title.caption = nls.localize('ai-focused-editor/office/caption', 'Office preview: {0}', uri.path.fsPath());
     this.title.iconClass = 'codicon codicon-preview';
@@ -78,7 +80,7 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
         return;
       }
       const path = this.workspaceRelativePath(root);
-      this.result = await this.officeService.convertOfficeDocument(root.toString(), path);
+      this.result = await this.documentPreviewService.convertOfficeDocument(root.toString(), path);
       this.activeSheet = 0;
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
@@ -137,7 +139,7 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
       'div',
       { className: 'afe-office-preview-header' },
       React.createElement('span', { className: 'afe-office-preview-title' }, this.uri.path.base),
-      React.createElement('span', { className: 'afe-office-preview-ext' }, officeExtension(this.uri.path.base).replace('.', '').toUpperCase()),
+      React.createElement('span', { className: 'afe-office-preview-ext' }, documentPreviewExtension(this.uri.path.base).replace('.', '').toUpperCase()),
       React.createElement(
         'button',
         {
@@ -183,6 +185,8 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
         return this.renderSheets(result);
       case 'slides':
         return this.renderSlides(result);
+      case 'epub':
+        return this.renderEpub(result);
       case 'unsupported':
       default:
         return this.renderUnsupported();
@@ -196,7 +200,7 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
     });
   }
 
-  protected renderSheets(result: OfficePreviewResult): React.ReactNode {
+  protected renderSheets(result: DocumentPreviewResult): React.ReactNode {
     const sheets = result.sheets ?? [];
     if (sheets.length === 0) {
       return React.createElement('div', { className: 'afe-office-preview-empty' },
@@ -228,7 +232,7 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
     return React.createElement('div', { className: 'afe-office-sheets' }, tabs, table);
   }
 
-  protected renderSlides(result: OfficePreviewResult): React.ReactNode {
+  protected renderSlides(result: DocumentPreviewResult): React.ReactNode {
     const slides = result.slides ?? [];
     if (slides.length === 0) {
       return React.createElement('div', { className: 'afe-office-preview-empty' },
@@ -256,6 +260,53 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
     );
   }
 
+  /** E-book: title, chapter list (TOC), and the first chapter's sanitized HTML. */
+  protected renderEpub(result: DocumentPreviewResult): React.ReactNode {
+    const epub = result.epub;
+    const chapters = epub?.chapters ?? [];
+    if (chapters.length === 0) {
+      return React.createElement('div', { className: 'afe-office-preview-empty' },
+        nls.localize('ai-focused-editor/office/no-chapters', 'No chapters were found in this e-book.'));
+    }
+    const rendered = chapters.find(chapter => chapter.html !== undefined);
+    return React.createElement(
+      'div',
+      { className: 'afe-office-epub' },
+      epub?.title
+        ? React.createElement('h2', { className: 'afe-office-epub-title' }, epub.title)
+        : undefined,
+      React.createElement(
+        'section',
+        { className: 'afe-office-epub-toc' },
+        React.createElement('h3', { className: 'afe-office-epub-toc-heading' },
+          nls.localize('ai-focused-editor/office/epub-contents', 'Contents')),
+        React.createElement(
+          'ol',
+          { className: 'afe-office-epub-toc-list' },
+          ...chapters.map((chapter, index) => React.createElement(
+            'li',
+            {
+              key: `${chapter.id}:${index}`,
+              className: `afe-office-epub-toc-item${chapter === rendered ? ' active' : ''}`
+            },
+            chapter.label
+          ))
+        )
+      ),
+      rendered
+        ? React.createElement(
+          'section',
+          { className: 'afe-office-epub-chapter' },
+          React.createElement('h3', { className: 'afe-office-epub-chapter-heading' }, rendered.label),
+          React.createElement('div', {
+            className: 'afe-office-epub-chapter-body',
+            dangerouslySetInnerHTML: { __html: this.sanitize(rendered.html ?? '') }
+          })
+        )
+        : undefined
+    );
+  }
+
   protected renderUnsupported(): React.ReactNode {
     return React.createElement(
       'div',
@@ -275,3 +326,8 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
     );
   }
 }
+
+/** @deprecated Use {@link DocumentPreviewWidget}. */
+export const OfficePreviewWidget = DocumentPreviewWidget;
+/** @deprecated Use {@link DocumentPreviewWidget}. */
+export type OfficePreviewWidget = DocumentPreviewWidget;

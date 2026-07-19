@@ -9,6 +9,7 @@ import {
   SelectionService,
   UriSelection
 } from '@theia/core/lib/common';
+import { MAIN_MENU_BAR, MenuPath } from '@theia/core/lib/common/menu';
 import {
   ApplicationShell,
   Navigatable,
@@ -19,9 +20,8 @@ import { nls } from '@theia/core/lib/common/nls';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import { EDITOR_CONTEXT_MENU } from '@theia/editor/lib/browser';
 import { inject, injectable } from '@theia/core/shared/inversify';
-import { isOfficePreviewFile } from '../common';
-import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
-import { OfficePreviewWidget } from './office-preview-widget';
+import { isDocumentPreviewFile } from '../common';
+import { DocumentPreviewWidget } from './document-preview-widget';
 
 /**
  * Priority returned for office documents. The text editor's `EditorManager`
@@ -30,23 +30,31 @@ import { OfficePreviewWidget } from './office-preview-widget';
  * too, so they open the friendly "unsupported" card instead of binary garbage
  * in Monaco.
  */
-const OFFICE_PREVIEW_PRIORITY = 500;
+const DOCUMENT_PREVIEW_PRIORITY = 500;
 
-function isOfficeDocument(uri: URI): boolean {
-  return isOfficePreviewFile(uri.path.toString());
+/**
+ * Mirrors manuscript-workspace's `AiFocusedEditorMenus.KNOWLEDGE` menu path.
+ * Duplicated by value (not imported) so this package stays free of a dependency
+ * on manuscript-workspace; the literal segments must stay in sync with
+ * `ai-focused-editor-menu.ts` for the actions to land in the same product menu.
+ */
+const AI_FOCUSED_EDITOR_KNOWLEDGE_MENU: MenuPath = [...MAIN_MENU_BAR, '8_ai_focused_editor', '4_knowledge'];
+
+function isPreviewableDocument(uri: URI): boolean {
+  return isDocumentPreviewFile(uri.path.toString());
 }
 
 @injectable()
-export class OfficePreviewOpenHandler extends NavigatableWidgetOpenHandler<OfficePreviewWidget> {
-  readonly id = OfficePreviewWidget.FACTORY_ID;
+export class DocumentPreviewOpenHandler extends NavigatableWidgetOpenHandler<DocumentPreviewWidget> {
+  readonly id = DocumentPreviewWidget.FACTORY_ID;
   readonly label = nls.localize('ai-focused-editor/office/open-handler-label', 'Office Document Preview');
 
   canHandle(uri: URI, _options?: WidgetOpenerOptions): number {
-    return isOfficeDocument(uri) ? OFFICE_PREVIEW_PRIORITY : 0;
+    return isPreviewableDocument(uri) ? DOCUMENT_PREVIEW_PRIORITY : 0;
   }
 }
 
-export namespace OfficePreviewCommands {
+export namespace DocumentPreviewCommands {
   export const OPEN_PREVIEW: Command = Command.toLocalizedCommand(
     {
       id: 'ai-focused-editor.office.openPreview',
@@ -65,9 +73,9 @@ export namespace OfficePreviewCommands {
 }
 
 @injectable()
-export class OfficePreviewCommandContribution implements CommandContribution, MenuContribution {
-  @inject(OfficePreviewOpenHandler)
-  protected readonly openHandler!: OfficePreviewOpenHandler;
+export class DocumentPreviewCommandContribution implements CommandContribution, MenuContribution {
+  @inject(DocumentPreviewOpenHandler)
+  protected readonly openHandler!: DocumentPreviewOpenHandler;
 
   @inject(EditorManager)
   protected readonly editorManager!: EditorManager;
@@ -82,15 +90,15 @@ export class OfficePreviewCommandContribution implements CommandContribution, Me
   protected readonly messageService!: MessageService;
 
   registerCommands(commands: CommandRegistry): void {
-    commands.registerCommand(OfficePreviewCommands.OPEN_PREVIEW, {
-      isEnabled: (arg?: unknown) => this.canResolveOffice(arg),
-      isVisible: (arg?: unknown) => this.canResolveOffice(arg),
+    commands.registerCommand(DocumentPreviewCommands.OPEN_PREVIEW, {
+      isEnabled: (arg?: unknown) => this.canResolveDocument(arg),
+      isVisible: (arg?: unknown) => this.canResolveDocument(arg),
       execute: async (arg?: unknown) => {
         const uri = this.resolveUri(arg);
-        if (!uri || !isOfficeDocument(uri)) {
+        if (!uri || !isPreviewableDocument(uri)) {
           await this.messageService.warn(nls.localize(
             'ai-focused-editor/office/only-office',
-            'Preview is only available for office documents (.docx, .xlsx, .xls, .ods, .pptx, .doc, .ppt).'
+            'Preview is only available for office documents (.docx, .odt, .rtf, .xlsx, .xls, .ods, .pptx, .odp, .epub, .doc, .ppt).'
           ));
           return;
         }
@@ -98,9 +106,9 @@ export class OfficePreviewCommandContribution implements CommandContribution, Me
       }
     });
 
-    commands.registerCommand(OfficePreviewCommands.OPEN_AS_TEXT, {
-      isEnabled: (arg?: unknown) => this.canResolveOffice(arg),
-      isVisible: (arg?: unknown) => this.canResolveOffice(arg),
+    commands.registerCommand(DocumentPreviewCommands.OPEN_AS_TEXT, {
+      isEnabled: (arg?: unknown) => this.canResolveDocument(arg),
+      isVisible: (arg?: unknown) => this.canResolveDocument(arg),
       execute: async (arg?: unknown) => {
         const uri = this.resolveUri(arg);
         if (!uri) {
@@ -115,20 +123,20 @@ export class OfficePreviewCommandContribution implements CommandContribution, Me
   }
 
   registerMenus(menus: MenuModelRegistry): void {
-    menus.registerMenuAction(AiFocusedEditorMenus.KNOWLEDGE, {
-      commandId: OfficePreviewCommands.OPEN_PREVIEW.id
+    menus.registerMenuAction(AI_FOCUSED_EDITOR_KNOWLEDGE_MENU, {
+      commandId: DocumentPreviewCommands.OPEN_PREVIEW.id
     });
-    menus.registerMenuAction(AiFocusedEditorMenus.KNOWLEDGE, {
-      commandId: OfficePreviewCommands.OPEN_AS_TEXT.id
+    menus.registerMenuAction(AI_FOCUSED_EDITOR_KNOWLEDGE_MENU, {
+      commandId: DocumentPreviewCommands.OPEN_AS_TEXT.id
     });
     menus.registerMenuAction([...EDITOR_CONTEXT_MENU, 'navigation'], {
-      commandId: OfficePreviewCommands.OPEN_PREVIEW.id
+      commandId: DocumentPreviewCommands.OPEN_PREVIEW.id
     });
   }
 
-  protected canResolveOffice(arg?: unknown): boolean {
+  protected canResolveDocument(arg?: unknown): boolean {
     const uri = this.resolveUri(arg);
-    return uri !== undefined && isOfficeDocument(uri);
+    return uri !== undefined && isPreviewableDocument(uri);
   }
 
   protected resolveUri(arg?: unknown): URI | undefined {
@@ -150,3 +158,14 @@ export class OfficePreviewCommandContribution implements CommandContribution, Me
       ?? this.editorManager.activeEditor?.editor.uri;
   }
 }
+
+/** @deprecated Use {@link DocumentPreviewOpenHandler}. */
+export const OfficePreviewOpenHandler = DocumentPreviewOpenHandler;
+/** @deprecated Use {@link DocumentPreviewOpenHandler}. */
+export type OfficePreviewOpenHandler = DocumentPreviewOpenHandler;
+/** @deprecated Use {@link DocumentPreviewCommands}. */
+export const OfficePreviewCommands = DocumentPreviewCommands;
+/** @deprecated Use {@link DocumentPreviewCommandContribution}. */
+export const OfficePreviewCommandContribution = DocumentPreviewCommandContribution;
+/** @deprecated Use {@link DocumentPreviewCommandContribution}. */
+export type OfficePreviewCommandContribution = DocumentPreviewCommandContribution;
