@@ -34,6 +34,7 @@
     "@theia/workspace": "1.73.1",
     "@vedmalex/ai-connect": "^0.11.0",
     "ajv": "8.20.0",
+    "cropperjs": "^1.6.2",
     "jsonc-parser": "3.3.1",
     "katex": "^0.16.11",
     "mammoth": "^1.12.0",

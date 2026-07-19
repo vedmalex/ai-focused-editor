@@ -11,6 +11,7 @@ export * from './context-sets';
 export * from './diagram-spec';
 export * from './entity-hover';
 export * from './generated-image';
+export * from './image-crop';
 export * from './image-mime';
 export * from './entity-mentions';
 export * from './entity-type-registry';
