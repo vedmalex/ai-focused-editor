@@ -14,6 +14,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@ai-focused-editor/ai-connect-theia": "workspace:*",
+        "@ai-focused-editor/document-preview-theia": "workspace:*",
         "@ai-focused-editor/git": "0.1.0",
         "@ai-focused-editor/manuscript-workspace": "workspace:*",
         "@parcel/watcher-darwin-arm64": "2.5.6",
@@ -70,6 +71,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@ai-focused-editor/ai-connect-theia": "workspace:*",
+        "@ai-focused-editor/document-preview-theia": "workspace:*",
         "@ai-focused-editor/git": "0.1.0",
         "@ai-focused-editor/manuscript-workspace": "workspace:*",
         "@parcel/watcher-darwin-arm64": "2.5.6",
@@ -160,12 +162,31 @@
         "typescript": "~5.8.3",
       },
     },
+    "packages/document-preview-theia": {
+      "name": "@ai-focused-editor/document-preview-theia",
+      "version": "0.1.0",
+      "dependencies": {
+        "@theia/core": "^1.73.0",
+        "@theia/editor": "^1.73.0",
+        "@theia/workspace": "^1.73.0",
+        "dompurify": "^3.4.11",
+        "jszip": "^3.10.1",
+        "mammoth": "^1.12.0",
+        "xlsx": "^0.18.5",
+      },
+      "devDependencies": {
+        "@types/node": "^24.0.10",
+        "reflect-metadata": "0.2.2",
+        "typescript": "~5.8.3",
+      },
+    },
     "packages/manuscript-workspace": {
       "name": "@ai-focused-editor/manuscript-workspace",
       "version": "0.1.0",
       "dependencies": {
         "@ai-focused-editor/ai-connect-theia": "workspace:*",
         "@ai-focused-editor/book-export": "0.1.0",
+        "@ai-focused-editor/document-preview-theia": "workspace:*",
         "@ai-focused-editor/semantic-markdown": "workspace:*",
         "@excalidraw/excalidraw": "0.18.1",
         "@theia/ai-chat": "1.73.1",
@@ -184,14 +205,11 @@
         "@theia/workspace": "1.73.1",
         "@vedmalex/ai-connect": "^0.11.0",
         "ajv": "8.20.0",
-        "dompurify": "^3.4.11",
         "jsonc-parser": "3.3.1",
-        "jszip": "^3.10.1",
         "katex": "^0.16.11",
         "mammoth": "^1.12.0",
         "markdown-it": "^14.3.0",
         "unpdf": "1.6.2",
-        "xlsx": "^0.18.5",
         "yaml": "2.9.0",
       },
       "devDependencies": {
@@ -269,6 +287,8 @@
     "@ai-focused-editor/book-export": ["@ai-focused-editor/book-export@workspace:packages/book-export"],
 
     "@ai-focused-editor/browser": ["@ai-focused-editor/browser@workspace:apps/browser"],
+
+    "@ai-focused-editor/document-preview-theia": ["@ai-focused-editor/document-preview-theia@workspace:packages/document-preview-theia"],
 
     "@ai-focused-editor/electron": ["@ai-focused-editor/electron@workspace:apps/electron"],
 
@@ -2194,7 +2214,7 @@
 
     "package-manager-detector": ["package-manager-detector@1.7.0", "", {}, "sha512-xg1eHpwYL/D/HEdWw2goFZP6vV0FH7W+PZ5rFkGjdIDLtxq7EkzBUeT3m+lndYCt8wKbmofUu1MUdMCXkCk9ZQ=="],
 
-    "pako": ["pako@2.0.3", "", {}, "sha512-WjR1hOeg+kki3ZIOjaf4b5WVcay1jaliKSYiEaB1XzwhMQZJxRdQRv0V31EKBYlxb4T7SK3hjfc/jxyU64BoSw=="],
+    "pako": ["pako@1.0.11", "", {}, "sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw=="],
 
     "parseurl": ["parseurl@1.3.3", "", {}, "sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ=="],
 
@@ -2844,6 +2864,8 @@
 
     "@electron/rebuild/node-api-version": ["node-api-version@0.2.1", "", { "dependencies": { "semver": "^7.3.5" } }, "sha512-2xP/IGGMmmSQpI1+O/k72jF/ykvZ89JeuKX3TLJAYPDVLUalrshrLHkeVcCCZqG/eEa635cr8IBYzgnDvM2O8Q=="],
 
+    "@excalidraw/excalidraw/pako": ["pako@2.0.3", "", {}, "sha512-WjR1hOeg+kki3ZIOjaf4b5WVcay1jaliKSYiEaB1XzwhMQZJxRdQRv0V31EKBYlxb4T7SK3hjfc/jxyU64BoSw=="],
+
     "@excalidraw/mermaid-to-excalidraw/@mermaid-js/parser": ["@mermaid-js/parser@0.6.3", "", { "dependencies": { "langium": "3.3.1" } }, "sha512-lnjOhe7zyHjc+If7yT4zoedx2vo4sHaTmtkl1+or8BRTnCtDmcTpAjpzDSfCZrshM5bCoz0GyidzadJAH1xobA=="],
 
     "@excalidraw/mermaid-to-excalidraw/nanoid": ["nanoid@4.0.2", "", { "bin": { "nanoid": "bin/nanoid.js" } }, "sha512-7ZtY5KTCNheRGfEFxnedV5zFiORN1+Y1N6zvPTnHQd8ENUvfaDBeuJDZb2bN/oXwXxu3qkTXDzy57W5vAmDTBw=="],
@@ -3071,8 +3093,6 @@
     "js-yaml/argparse": ["argparse@2.0.1", "", {}, "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="],
 
     "json-stable-stringify/isarray": ["isarray@2.0.5", "", {}, "sha512-xHjhDr3cNBK0BzdUJSPXZntQUx/mwMS5Rw4A7lPJ90XGAO6ISP/ePDNuo0vhqOZU+UD5JoodwCAAoZQd3FeAKw=="],
-
-    "jszip/pako": ["pako@1.0.11", "", {}, "sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw=="],
 
     "keytar/node-addon-api": ["node-addon-api@4.3.0", "", {}, "sha512-73sE9+3UaLYYFmDsFZnqCInzPyh3MqIwZO9cw58yIqAZhONrrabrYyYe3TuIqtIiOuTXVhsGau8hcrhhwSsDIQ=="],
 

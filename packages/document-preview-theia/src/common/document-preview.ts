@@ -1,20 +1,20 @@
-import type { OfficePreviewKind, OfficeSlidePreview } from './office-preview-protocol';
+import type { DocumentPreviewKind, DocumentSlidePreview } from './document-preview-protocol';
 
 /**
- * Pure formatting helpers for the office-preview backend. No Theia/Node/DOM
+ * Pure formatting helpers for the document-preview backend. No Theia/Node/DOM
  * imports so they can be exercised with plain `bun test`. The node service owns
  * the actual mammoth/xlsx/jszip parsing; everything deterministic — cell/slide
  * shaping and HTML assembly — lives here.
  */
 
 /** Row cap applied per worksheet before an explicit `truncated` flag is set. */
-export const OFFICE_SHEET_MAX_ROWS = 1000;
+export const DOCUMENT_SHEET_MAX_ROWS = 1000;
 /** Column cap applied per worksheet row. */
-export const OFFICE_SHEET_MAX_COLS = 50;
+export const DOCUMENT_SHEET_MAX_COLS = 50;
 /** Files larger than this are refused with a warning (bytes). */
-export const OFFICE_MAX_FILE_BYTES = 50 * 1024 * 1024;
+export const DOCUMENT_PREVIEW_MAX_FILE_BYTES = 50 * 1024 * 1024;
 /** Total embedded-media budget for a single presentation (bytes). */
-export const OFFICE_PPTX_MEDIA_BUDGET_BYTES = 20 * 1024 * 1024;
+export const DOCUMENT_PPTX_MEDIA_BUDGET_BYTES = 20 * 1024 * 1024;
 
 /** Extensions routed to each preview strategy. */
 const HTML_EXTENSIONS = ['.docx'];
@@ -23,10 +23,10 @@ const SLIDE_EXTENSIONS = ['.pptx'];
 /** Legacy binary formats we can only surface as a friendly "unsupported" view. */
 const LEGACY_BINARY_EXTENSIONS = ['.doc', '.ppt'];
 
-export type OfficeStrategy = 'html' | 'sheets' | 'slides' | 'legacy' | 'unknown';
+export type DocumentPreviewStrategy = 'html' | 'sheets' | 'slides' | 'legacy' | 'unknown';
 
-/** All extensions the office preview claims (drives the open-handler + tree). */
-export const OFFICE_PREVIEW_EXTENSIONS: readonly string[] = [
+/** All extensions the document preview claims (drives the open-handler + tree). */
+export const DOCUMENT_PREVIEW_EXTENSIONS: readonly string[] = [
   ...HTML_EXTENSIONS,
   ...SHEET_EXTENSIONS,
   ...SLIDE_EXTENSIONS,
@@ -34,19 +34,19 @@ export const OFFICE_PREVIEW_EXTENSIONS: readonly string[] = [
 ];
 
 /** Lower-cased extension (including the dot) of a path, or '' when none. */
-export function officeExtension(pathOrName: string): string {
+export function documentPreviewExtension(pathOrName: string): string {
   const base = pathOrName.split(/[\\/]/).pop() ?? '';
   const dot = base.lastIndexOf('.');
   return dot >= 0 ? base.slice(dot).toLowerCase() : '';
 }
 
-/** True when the office preview should claim this path. */
-export function isOfficePreviewFile(pathOrName: string): boolean {
-  return OFFICE_PREVIEW_EXTENSIONS.includes(officeExtension(pathOrName));
+/** True when the document preview should claim this path. */
+export function isDocumentPreviewFile(pathOrName: string): boolean {
+  return DOCUMENT_PREVIEW_EXTENSIONS.includes(documentPreviewExtension(pathOrName));
 }
 
 /** Map an extension to the parsing strategy the node service applies. */
-export function officeStrategyForExtension(ext: string): OfficeStrategy {
+export function documentPreviewStrategyForExtension(ext: string): DocumentPreviewStrategy {
   const lower = ext.toLowerCase();
   if (HTML_EXTENSIONS.includes(lower)) {
     return 'html';
@@ -64,7 +64,7 @@ export function officeStrategyForExtension(ext: string): OfficeStrategy {
 }
 
 /** The preview kind that corresponds to a strategy (legacy/unknown => unsupported). */
-export function kindForStrategy(strategy: OfficeStrategy): OfficePreviewKind {
+export function kindForStrategy(strategy: DocumentPreviewStrategy): DocumentPreviewKind {
   switch (strategy) {
     case 'html':
       return 'html';
@@ -93,14 +93,14 @@ export interface CappedGrid {
 }
 
 /**
- * Cap a rectangular grid of cell strings to {@link OFFICE_SHEET_MAX_ROWS} rows
- * and {@link OFFICE_SHEET_MAX_COLS} columns. `truncated` is true when either
+ * Cap a rectangular grid of cell strings to {@link DOCUMENT_SHEET_MAX_ROWS} rows
+ * and {@link DOCUMENT_SHEET_MAX_COLS} columns. `truncated` is true when either
  * dimension was clipped, so the frontend can surface an explicit notice.
  */
 export function capSheetGrid(
   grid: string[][],
-  maxRows: number = OFFICE_SHEET_MAX_ROWS,
-  maxCols: number = OFFICE_SHEET_MAX_COLS
+  maxRows: number = DOCUMENT_SHEET_MAX_ROWS,
+  maxCols: number = DOCUMENT_SHEET_MAX_COLS
 ): CappedGrid {
   let truncated = false;
   const rows: string[][] = [];
@@ -190,7 +190,7 @@ export function buildSlidePreview(
   index: number,
   runs: string[],
   emptyLabel: string
-): OfficeSlidePreview {
+): DocumentSlidePreview {
   if (runs.length === 0) {
     return {
       index,
@@ -212,3 +212,27 @@ export function slideNumberFromName(name: string): number {
   const match = /slide(\d+)\.xml$/i.exec(name);
   return match ? parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER;
 }
+
+// ---------------------------------------------------------------------------
+// Back-compat aliases (pre-extraction names used by manuscript-workspace and
+// external consumers). New code should prefer the DocumentPreview* names.
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use {@link DOCUMENT_SHEET_MAX_ROWS}. */
+export const OFFICE_SHEET_MAX_ROWS = DOCUMENT_SHEET_MAX_ROWS;
+/** @deprecated Use {@link DOCUMENT_SHEET_MAX_COLS}. */
+export const OFFICE_SHEET_MAX_COLS = DOCUMENT_SHEET_MAX_COLS;
+/** @deprecated Use {@link DOCUMENT_PREVIEW_MAX_FILE_BYTES}. */
+export const OFFICE_MAX_FILE_BYTES = DOCUMENT_PREVIEW_MAX_FILE_BYTES;
+/** @deprecated Use {@link DOCUMENT_PPTX_MEDIA_BUDGET_BYTES}. */
+export const OFFICE_PPTX_MEDIA_BUDGET_BYTES = DOCUMENT_PPTX_MEDIA_BUDGET_BYTES;
+/** @deprecated Use {@link DocumentPreviewStrategy}. */
+export type OfficeStrategy = DocumentPreviewStrategy;
+/** @deprecated Use {@link DOCUMENT_PREVIEW_EXTENSIONS}. */
+export const OFFICE_PREVIEW_EXTENSIONS = DOCUMENT_PREVIEW_EXTENSIONS;
+/** @deprecated Use {@link documentPreviewExtension}. */
+export const officeExtension = documentPreviewExtension;
+/** @deprecated Use {@link isDocumentPreviewFile}. */
+export const isOfficePreviewFile = isDocumentPreviewFile;
+/** @deprecated Use {@link documentPreviewStrategyForExtension}. */
+export const officeStrategyForExtension = documentPreviewStrategyForExtension;

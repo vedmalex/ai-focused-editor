@@ -24,14 +24,16 @@ export * from './manuscript-workspace-protocol';
 export * from './narrative-entity-protocol';
 export * from './narrative-graph-protocol';
 export * from './obsidian-plugin-protocol';
-export * from './office-preview';
+// Office/document preview extracted into the reusable document-preview Theia
+// extension; re-exported here (incl. the historical Office* aliases) so
+// existing `../common` imports keep resolving.
+export * from '@ai-focused-editor/document-preview-theia/lib/common';
 export * from './proofreading-model';
 export * from './proofreading-prompts';
 export * from './proofreading-scaffold';
 export * from './proofreading-scope';
 export * from './proofreading-sidecar';
 export * from './relations-map';
-export * from './office-preview-protocol';
 export * from './source-attach-routing';
 export * from './source-library-protocol';
 export * from './word-at-offset';

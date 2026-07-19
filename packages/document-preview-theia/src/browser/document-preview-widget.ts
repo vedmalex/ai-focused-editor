@@ -9,9 +9,9 @@ import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service
 import { inject, injectable } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
 import {
-  OfficePreviewResult,
-  OfficePreviewService,
-  officeExtension
+  DocumentPreviewResult,
+  DocumentPreviewService,
+  documentPreviewExtension
 } from '../common';
 
 /**
@@ -19,18 +19,19 @@ import {
  * the legacy binary .doc/.ppt, which render a friendly "unsupported" card
  * instead of binary garbage in Monaco).
  *
- * The heavy parsing happens in the node {@link OfficePreviewService}; the widget
+ * The heavy parsing happens in the node {@link DocumentPreviewService}; the widget
  * only renders the returned payload. All HTML the backend produces (mammoth's
  * docx output, assembled sheet tables, slide run lists) is sanitized with
  * DOMPurify before it is injected — the office parsers are third-party and their
  * output is never trusted verbatim.
  */
 @injectable()
-export class OfficePreviewWidget extends ReactWidget implements Navigatable {
+export class DocumentPreviewWidget extends ReactWidget implements Navigatable {
+  /** Historical factory id kept verbatim so saved layouts keep restoring. */
   static readonly FACTORY_ID = 'ai-focused-editor.office-preview';
 
-  @inject(OfficePreviewService)
-  protected readonly officeService!: OfficePreviewService;
+  @inject(DocumentPreviewService)
+  protected readonly documentPreviewService!: DocumentPreviewService;
 
   @inject(WorkspaceService)
   protected readonly workspaceService!: WorkspaceService;
@@ -44,13 +45,13 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
   protected uri!: URI;
   protected loading = false;
   protected error: string | undefined;
-  protected result: OfficePreviewResult | undefined;
+  protected result: DocumentPreviewResult | undefined;
   /** Index of the active worksheet tab (spreadsheets only). */
   protected activeSheet = 0;
 
   configure(uri: URI): void {
     this.uri = uri;
-    this.id = `${OfficePreviewWidget.FACTORY_ID}:${uri.toString()}`;
+    this.id = `${DocumentPreviewWidget.FACTORY_ID}:${uri.toString()}`;
     this.title.label = uri.path.base;
     this.title.caption = nls.localize('ai-focused-editor/office/caption', 'Office preview: {0}', uri.path.fsPath());
     this.title.iconClass = 'codicon codicon-preview';
@@ -78,7 +79,7 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
         return;
       }
       const path = this.workspaceRelativePath(root);
-      this.result = await this.officeService.convertOfficeDocument(root.toString(), path);
+      this.result = await this.documentPreviewService.convertOfficeDocument(root.toString(), path);
       this.activeSheet = 0;
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
@@ -137,7 +138,7 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
       'div',
       { className: 'afe-office-preview-header' },
       React.createElement('span', { className: 'afe-office-preview-title' }, this.uri.path.base),
-      React.createElement('span', { className: 'afe-office-preview-ext' }, officeExtension(this.uri.path.base).replace('.', '').toUpperCase()),
+      React.createElement('span', { className: 'afe-office-preview-ext' }, documentPreviewExtension(this.uri.path.base).replace('.', '').toUpperCase()),
       React.createElement(
         'button',
         {
@@ -196,7 +197,7 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
     });
   }
 
-  protected renderSheets(result: OfficePreviewResult): React.ReactNode {
+  protected renderSheets(result: DocumentPreviewResult): React.ReactNode {
     const sheets = result.sheets ?? [];
     if (sheets.length === 0) {
       return React.createElement('div', { className: 'afe-office-preview-empty' },
@@ -228,7 +229,7 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
     return React.createElement('div', { className: 'afe-office-sheets' }, tabs, table);
   }
 
-  protected renderSlides(result: OfficePreviewResult): React.ReactNode {
+  protected renderSlides(result: DocumentPreviewResult): React.ReactNode {
     const slides = result.slides ?? [];
     if (slides.length === 0) {
       return React.createElement('div', { className: 'afe-office-preview-empty' },
@@ -275,3 +276,8 @@ export class OfficePreviewWidget extends ReactWidget implements Navigatable {
     );
   }
 }
+
+/** @deprecated Use {@link DocumentPreviewWidget}. */
+export const OfficePreviewWidget = DocumentPreviewWidget;
+/** @deprecated Use {@link DocumentPreviewWidget}. */
+export type OfficePreviewWidget = DocumentPreviewWidget;

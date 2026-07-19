@@ -7,40 +7,40 @@ import {
   decodeXmlEntities,
   escapeHtml,
   extractSlideText,
-  isOfficePreviewFile,
+  isDocumentPreviewFile,
   kindForStrategy,
-  officeExtension,
-  officeStrategyForExtension,
-  OFFICE_PREVIEW_EXTENSIONS,
-  OFFICE_SHEET_MAX_COLS,
-  OFFICE_SHEET_MAX_ROWS,
+  documentPreviewExtension,
+  documentPreviewStrategyForExtension,
+  DOCUMENT_PREVIEW_EXTENSIONS,
+  DOCUMENT_SHEET_MAX_COLS,
+  DOCUMENT_SHEET_MAX_ROWS,
   slideNumberFromName
-} from './office-preview';
+} from './document-preview';
 
-describe('officeExtension / routing', () => {
+describe('documentPreviewExtension / routing', () => {
   it('lower-cases and isolates the final extension', () => {
-    expect(officeExtension('sources/Report.DOCX')).toBe('.docx');
-    expect(officeExtension('a.b.xlsx')).toBe('.xlsx');
-    expect(officeExtension('C:\\docs\\deck.PPTX')).toBe('.pptx');
-    expect(officeExtension('noext')).toBe('');
+    expect(documentPreviewExtension('sources/Report.DOCX')).toBe('.docx');
+    expect(documentPreviewExtension('a.b.xlsx')).toBe('.xlsx');
+    expect(documentPreviewExtension('C:\\docs\\deck.PPTX')).toBe('.pptx');
+    expect(documentPreviewExtension('noext')).toBe('');
   });
 
   it('claims exactly the office formats', () => {
     for (const ext of ['.docx', '.xlsx', '.xls', '.ods', '.pptx', '.doc', '.ppt']) {
-      expect(isOfficePreviewFile(`file${ext}`)).toBe(true);
+      expect(isDocumentPreviewFile(`file${ext}`)).toBe(true);
     }
-    expect(isOfficePreviewFile('notes.md')).toBe(false);
-    expect(isOfficePreviewFile('scan.pdf')).toBe(false);
-    expect(OFFICE_PREVIEW_EXTENSIONS).toContain('.docx');
+    expect(isDocumentPreviewFile('notes.md')).toBe(false);
+    expect(isDocumentPreviewFile('scan.pdf')).toBe(false);
+    expect(DOCUMENT_PREVIEW_EXTENSIONS).toContain('.docx');
   });
 
   it('maps extensions to strategies and kinds', () => {
-    expect(officeStrategyForExtension('.docx')).toBe('html');
-    expect(officeStrategyForExtension('.xls')).toBe('sheets');
-    expect(officeStrategyForExtension('.ods')).toBe('sheets');
-    expect(officeStrategyForExtension('.pptx')).toBe('slides');
-    expect(officeStrategyForExtension('.doc')).toBe('legacy');
-    expect(officeStrategyForExtension('.zip')).toBe('unknown');
+    expect(documentPreviewStrategyForExtension('.docx')).toBe('html');
+    expect(documentPreviewStrategyForExtension('.xls')).toBe('sheets');
+    expect(documentPreviewStrategyForExtension('.ods')).toBe('sheets');
+    expect(documentPreviewStrategyForExtension('.pptx')).toBe('slides');
+    expect(documentPreviewStrategyForExtension('.doc')).toBe('legacy');
+    expect(documentPreviewStrategyForExtension('.zip')).toBe('unknown');
 
     expect(kindForStrategy('html')).toBe('html');
     expect(kindForStrategy('sheets')).toBe('sheets');
@@ -66,16 +66,16 @@ describe('capSheetGrid', () => {
   });
 
   it('caps rows and flags truncation', () => {
-    const big = Array.from({ length: OFFICE_SHEET_MAX_ROWS + 5 }, (_, i) => [String(i)]);
+    const big = Array.from({ length: DOCUMENT_SHEET_MAX_ROWS + 5 }, (_, i) => [String(i)]);
     const { rows, truncated } = capSheetGrid(big);
-    expect(rows.length).toBe(OFFICE_SHEET_MAX_ROWS);
+    expect(rows.length).toBe(DOCUMENT_SHEET_MAX_ROWS);
     expect(truncated).toBe(true);
   });
 
   it('caps columns and flags truncation', () => {
-    const wide = [Array.from({ length: OFFICE_SHEET_MAX_COLS + 3 }, (_, i) => String(i))];
+    const wide = [Array.from({ length: DOCUMENT_SHEET_MAX_COLS + 3 }, (_, i) => String(i))];
     const { rows, truncated } = capSheetGrid(wide);
-    expect(rows[0].length).toBe(OFFICE_SHEET_MAX_COLS);
+    expect(rows[0].length).toBe(DOCUMENT_SHEET_MAX_COLS);
     expect(truncated).toBe(true);
   });
 
@@ -148,6 +148,22 @@ describe('slideNumberFromName', () => {
       'ppt/slides/slide2.xml',
       'ppt/slides/slide10.xml'
     ]);
+  });
+});
+
+describe('back-compat aliases', () => {
+  it('re-exports the historical Office* names as aliases of the new symbols', async () => {
+    const mod = await import('./document-preview');
+    expect(mod.officeExtension).toBe(mod.documentPreviewExtension);
+    expect(mod.isOfficePreviewFile).toBe(mod.isDocumentPreviewFile);
+    expect(mod.officeStrategyForExtension).toBe(mod.documentPreviewStrategyForExtension);
+    expect(mod.OFFICE_PREVIEW_EXTENSIONS).toBe(mod.DOCUMENT_PREVIEW_EXTENSIONS);
+    expect(mod.OFFICE_SHEET_MAX_ROWS).toBe(mod.DOCUMENT_SHEET_MAX_ROWS);
+    expect(mod.OFFICE_SHEET_MAX_COLS).toBe(mod.DOCUMENT_SHEET_MAX_COLS);
+    expect(mod.OFFICE_MAX_FILE_BYTES).toBe(mod.DOCUMENT_PREVIEW_MAX_FILE_BYTES);
+    const protocol = await import('./document-preview-protocol');
+    expect(protocol.OfficePreviewService).toBe(protocol.DocumentPreviewService);
+    expect(protocol.OfficePreviewServicePath).toBe(protocol.DocumentPreviewServicePath);
   });
 });
 

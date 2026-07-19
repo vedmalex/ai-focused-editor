@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import { createRequire } from 'module';
 import { extname, isAbsolute, relative, resolve } from 'path';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import { injectable } from '@theia/core/shared/inversify';
@@ -8,15 +9,15 @@ import {
   capSheetGrid,
   extractSlideText,
   kindForStrategy,
-  officeStrategyForExtension,
-  OFFICE_MAX_FILE_BYTES,
+  documentPreviewStrategyForExtension,
+  DOCUMENT_PREVIEW_MAX_FILE_BYTES,
   slideNumberFromName
-} from '../common/office-preview';
+} from '../common/document-preview';
 import {
-  OfficePreviewResult,
-  OfficePreviewService,
-  OfficeSheetPreview,
-  OfficeSlidePreview
+  DocumentPreviewResult,
+  DocumentPreviewService,
+  DocumentSheetPreview,
+  DocumentSlidePreview
 } from '../common';
 
 /** Minimal structural surface of the `mammoth` functions used for docx preview. */
@@ -69,8 +70,21 @@ interface JsZipModule {
  */
 function lazyRequire<T>(...parts: string[]): T {
   const moduleName = parts.join('');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  return require(moduleName) as T;
+  try {
+    // Resolves when this module runs unbundled from the package's own lib/
+    // (dev backend, tests) — node walks up into the package's node_modules.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require(moduleName) as T;
+  } catch {
+    // In the bundled backend (apps/*/lib/backend/main.js) the bundle's require
+    // starts at the app, which does not hoist this package's parser deps under
+    // bun's isolated install layout. Resolve relative to the installed
+    // extension package instead — the apps depend on it directly, so the
+    // package (and its node_modules) is always reachable from the bundle.
+    const selfName = ['@ai-focused-editor/', 'document-preview-theia'].join('');
+    const packageRequire = createRequire(require.resolve(selfName + '/package.json'));
+    return packageRequire(moduleName) as T;
+  }
 }
 
 function loadMammoth(): MammothModule {
@@ -93,8 +107,8 @@ const PPTX_MEDIA_CONTENT_TYPES: Record<string, string> = {
 };
 
 @injectable()
-export class NodeOfficePreviewService implements OfficePreviewService {
-  async convertOfficeDocument(rootUri: string, path: string): Promise<OfficePreviewResult> {
+export class NodeDocumentPreviewService implements DocumentPreviewService {
+  async convertOfficeDocument(rootUri: string, path: string): Promise<DocumentPreviewResult> {
     const warnings: string[] = [];
     if (!rootUri) {
       return { kind: 'unsupported', warnings: ['Open a manuscript workspace before previewing office documents.'] };
@@ -119,8 +133,8 @@ export class NodeOfficePreviewService implements OfficePreviewService {
     if (!stat.isFile()) {
       return { kind: 'unsupported', warnings: [`Not a file: ${path}`] };
     }
-    if (stat.size > OFFICE_MAX_FILE_BYTES) {
-      const mb = Math.round(OFFICE_MAX_FILE_BYTES / (1024 * 1024));
+    if (stat.size > DOCUMENT_PREVIEW_MAX_FILE_BYTES) {
+      const mb = Math.round(DOCUMENT_PREVIEW_MAX_FILE_BYTES / (1024 * 1024));
       return {
         kind: 'unsupported',
         warnings: [`This document is too large to preview (over ${mb} MB). Open it in a dedicated application.`]
@@ -128,7 +142,7 @@ export class NodeOfficePreviewService implements OfficePreviewService {
     }
 
     const ext = extname(absolutePath).toLowerCase();
-    const strategy = officeStrategyForExtension(ext);
+    const strategy = documentPreviewStrategyForExtension(ext);
     if (strategy === 'legacy') {
       return {
         kind: 'unsupported',
@@ -162,7 +176,7 @@ export class NodeOfficePreviewService implements OfficePreviewService {
   }
 
   /** Word documents → a single sanitized-on-frontend HTML fragment with inline images. */
-  protected async convertDocx(buffer: Buffer, warnings: string[]): Promise<OfficePreviewResult> {
+  protected async convertDocx(buffer: Buffer, warnings: string[]): Promise<DocumentPreviewResult> {
     const mammoth = loadMammoth();
     const convertImage = mammoth.images.imgElement(async image => {
       const base64 = await image.read('base64');
@@ -176,10 +190,10 @@ export class NodeOfficePreviewService implements OfficePreviewService {
   }
 
   /** Spreadsheets → one capped HTML table per worksheet. */
-  protected convertSpreadsheet(buffer: Buffer, warnings: string[]): OfficePreviewResult {
+  protected convertSpreadsheet(buffer: Buffer, warnings: string[]): DocumentPreviewResult {
     const xlsx = loadXlsx();
     const workbook = xlsx.read(buffer, { type: 'buffer' });
-    const sheets: OfficeSheetPreview[] = [];
+    const sheets: DocumentSheetPreview[] = [];
     for (const name of workbook.SheetNames) {
       const worksheet = workbook.Sheets[name];
       const grid = xlsx.utils.sheet_to_json<string[]>(worksheet, {
@@ -203,10 +217,10 @@ export class NodeOfficePreviewService implements OfficePreviewService {
   /**
    * Presentations → per-slide title + text runs extracted from
    * `ppt/slides/slideN.xml`. Embedded slide images are inlined as data URIs only
-   * while the cumulative media budget ({@link OFFICE_PPTX_MEDIA_BUDGET_BYTES})
+   * while the cumulative media budget ({@link DOCUMENT_PPTX_MEDIA_BUDGET_BYTES})
    * allows; beyond it, text-only slides render with a note.
    */
-  protected async convertPresentation(buffer: Buffer, warnings: string[]): Promise<OfficePreviewResult> {
+  protected async convertPresentation(buffer: Buffer, warnings: string[]): Promise<DocumentPreviewResult> {
     const JSZip = loadJsZip();
     const zip = await JSZip.loadAsync(buffer);
 
@@ -219,7 +233,7 @@ export class NodeOfficePreviewService implements OfficePreviewService {
       return { kind: 'slides', slides: [], warnings };
     }
 
-    const slides: OfficeSlidePreview[] = [];
+    const slides: DocumentSlidePreview[] = [];
     for (let i = 0; i < slideEntries.length; i++) {
       const xml = await slideEntries[i].async('string');
       const runs = extractSlideText(xml);
@@ -246,3 +260,8 @@ function toRootPath(rootUri: string): string {
   }
   return isAbsolute(rootUri) ? rootUri : resolve(process.cwd(), rootUri);
 }
+
+/** @deprecated Use {@link NodeDocumentPreviewService}. */
+export const NodeOfficePreviewService = NodeDocumentPreviewService;
+/** @deprecated Use {@link NodeDocumentPreviewService}. */
+export type NodeOfficePreviewService = NodeDocumentPreviewService;
