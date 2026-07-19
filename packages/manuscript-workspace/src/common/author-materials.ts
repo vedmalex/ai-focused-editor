@@ -4,6 +4,7 @@ import { BASE_ENTITY_TYPES, mergeEntityTypes } from './entity-type-registry';
 import type { EffectiveEntityType, EntityTypeProblem } from './entity-type-registry';
 import type { CitationEntry, SourceLibraryItem } from './source-library-protocol';
 import { formatProgressChip } from './proofreading-model';
+import { formatTranscriptProgressChip } from './transcript-set-model';
 
 /**
  * Pure grouping logic for the unified author-materials navigator. This module
@@ -28,7 +29,8 @@ export type BaseAuthorMaterialsSectionKind =
   | 'sources'
   | 'knowledge'
   | 'skills'
-  | 'proofreading';
+  | 'proofreading'
+  | 'transcription';
 
 /**
  * Navigator section kind. The nine built-in sections stay literals (so switch/
@@ -53,7 +55,8 @@ export const AUTHOR_MATERIALS_SECTION_ORDER: readonly BaseAuthorMaterialsSection
   'sources',
   'knowledge',
   'skills',
-  'proofreading'
+  'proofreading',
+  'transcription'
 ];
 
 const SECTION_LABELS: Record<BaseAuthorMaterialsSectionKind, string> = {
@@ -66,7 +69,8 @@ const SECTION_LABELS: Record<BaseAuthorMaterialsSectionKind, string> = {
   sources: 'Sources',
   knowledge: 'Knowledge',
   skills: 'Skills',
-  proofreading: 'Proofreading'
+  proofreading: 'Proofreading',
+  transcription: 'Transcription'
 };
 
 /** True for one of the nine built-in section kinds (has a static English label). */
@@ -157,6 +161,29 @@ export interface ProofreadingSetEntry {
   percent: number;
 }
 
+/**
+ * A transcript "set" discovered under `transcription/<slug>/transcriptset.yaml`
+ * (the transcript analogue of {@link ProofreadingSetEntry}). `verified`/`total`/
+ * `percent` come from `computeTranscriptProgress` over the sidecar's files
+ * (computed by the browser scanner), rendered as a progress chip on the set's
+ * tree node; opening the item opens the sidecar (the priority-500 Transcript
+ * editor takes over).
+ */
+export interface TranscriptionSetEntry {
+  /** Set folder slug, e.g. `lecture-1`; stable id within the section. */
+  slug: string;
+  /** Display label for the set (the folder slug). */
+  label: string;
+  /** Absolute URI of the set's `transcriptset.yaml`, opened on activation. */
+  uri: string;
+  /** Verified file count. */
+  verified: number;
+  /** Total file count. */
+  total: number;
+  /** Verified percent (0 when the set has no files yet). */
+  percent: number;
+}
+
 export interface AuthorMaterialsInput {
   rootUri?: string;
   /** Manifest content (manuscript section is rendered from the live nodes). */
@@ -171,6 +198,8 @@ export interface AuthorMaterialsInput {
   skills: SkillEntry[];
   /** Proofreading sets scanned from `proofreading/<slug>/proofset.yaml` (defaults to none). */
   proofreadingSets?: ProofreadingSetEntry[];
+  /** Transcript sets scanned from `transcription/<slug>/transcriptset.yaml` (defaults to none). */
+  transcriptionSets?: TranscriptionSetEntry[];
   /**
    * The EFFECTIVE entity types (built-in + author-declared) for the open root,
    * carried through so downstream consumers (dynamic sections, the type
@@ -389,6 +418,13 @@ export function buildAuthorMaterialsSections(input: AuthorMaterialsInput): Autho
   if (proofreading.length > 0) {
     sections.push(makeSection('proofreading', proofreading.length, proofreading, false));
   }
+  // Transcription mirrors the proofreading OPT-IN behavior: the section appears
+  // ONLY when the book actually has transcript sets, so it never clutters the
+  // navigator of a book that does no lecture/interview transcription.
+  const transcription = transcriptionItems(input.transcriptionSets ?? []);
+  if (transcription.length > 0) {
+    sections.push(makeSection('transcription', transcription.length, transcription, false));
+  }
 
   return sections;
 }
@@ -497,6 +533,24 @@ function proofreadingItems(sets: ProofreadingSetEntry[]): AuthorMaterialItem[] {
       id: set.slug,
       label: set.label?.trim() || set.slug,
       description: formatProgressChip({ verified: set.verified, total: set.total }),
+      uri: set.uri
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label, undefined, { numeric: true })
+      || left.id.localeCompare(right.id));
+}
+
+/**
+ * One flat leaf per transcript set, labelled by its folder slug, opening its
+ * `transcriptset.yaml`. The description carries the verified-progress chip
+ * (`N/M ✓`); sets are sorted numeric-aware by slug so `lecture-2` precedes
+ * `lecture-10` — the exact transcript twin of {@link proofreadingItems}.
+ */
+function transcriptionItems(sets: TranscriptionSetEntry[]): AuthorMaterialItem[] {
+  return sets
+    .map(set => ({
+      id: set.slug,
+      label: set.label?.trim() || set.slug,
+      description: formatTranscriptProgressChip({ verified: set.verified, total: set.total }),
       uri: set.uri
     }))
     .sort((left, right) => left.label.localeCompare(right.label, undefined, { numeric: true })

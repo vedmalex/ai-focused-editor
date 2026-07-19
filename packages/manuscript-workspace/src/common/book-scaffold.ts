@@ -25,6 +25,7 @@ import {
   KNOWLEDGE_CATEGORIES,
   createSemanticEntityId
 } from './entity-creation';
+import { AUDIO_SOURCES_AREA, TRANSCRIPTION_AREA } from './transcript-set-scaffold';
 
 /** Whether a scaffold entry is a directory or a seeded file. */
 export type ScaffoldEntryKind = 'folder' | 'file';
@@ -79,14 +80,26 @@ const CHAPTER_01_PATH = 'content/chapter-01.md';
 /** The book-native proofreading area — a new-book-only entry (see {@link isNewBookOnlyEntry}). */
 const PROOFREADING_AREA_PATH = 'proofreading';
 
+/** The book-native transcription area — a new-book-only entry (see {@link isNewBookOnlyEntry}). */
+const TRANSCRIPTION_AREA_PATH = TRANSCRIPTION_AREA;
+
+/** The transcription source-media area (`sources/audio`) — a new-book-only entry. */
+const AUDIO_SOURCES_AREA_PATH = AUDIO_SOURCES_AREA;
+
 /**
  * Scaffold paths that only make sense for a brand-new book: the doctor skips
  * offering them on an established book (one whose `content/` already holds
  * Markdown), while the New Book wizard materializes them unconditionally. The
- * empty `proofreading/` area is created for new books but never nagged onto an
- * existing book that legitimately has no proofreading sets.
+ * empty `proofreading/`, `transcription/`, and `sources/audio/` areas are
+ * created for new books but never nagged onto an existing book that
+ * legitimately does no proofreading or transcription.
  */
-const NEW_BOOK_ONLY_PATHS: ReadonlySet<string> = new Set([CHAPTER_01_PATH, PROOFREADING_AREA_PATH]);
+const NEW_BOOK_ONLY_PATHS: ReadonlySet<string> = new Set([
+  CHAPTER_01_PATH,
+  PROOFREADING_AREA_PATH,
+  TRANSCRIPTION_AREA_PATH,
+  AUDIO_SOURCES_AREA_PATH
+]);
 
 /*
  * Canonical starter YAML shapes for the config files that carry no per-book
@@ -365,6 +378,24 @@ export function bookScaffoldEntries(options?: NewBookOptions): BookScaffoldEntry
     description: 'Proofreading working copies: one folder per set (scan↔text pairing, verified state).'
   });
 
+  // Transcription working copies + source media. Each transcript "set" is a
+  // `transcription/<slug>/` folder paired with `sources/audio/<slug>/` media
+  // (created by the "New Transcript Set…" command); the areas themselves are
+  // seeded empty for a new book. New-book-only, like proofreading, so the
+  // doctor never nags an established book that does no transcription.
+  entries.push({
+    path: AUDIO_SOURCES_AREA_PATH,
+    kind: 'folder',
+    level: 'recommended',
+    description: 'Source audio/video media for transcript sets, one folder per set.'
+  });
+  entries.push({
+    path: TRANSCRIPTION_AREA_PATH,
+    kind: 'folder',
+    level: 'recommended',
+    description: 'Transcription working copies: one folder per set (transcripts, sidecar, speakers, raw.md).'
+  });
+
   return entries;
 }
 
@@ -383,9 +414,10 @@ export function missingScaffoldEntries(
 
 /**
  * True for an entry that only makes sense when creating a brand-new book — the
- * starter `content/chapter-01.md` and the empty `proofreading/` area. The doctor
- * uses this to skip offering these on an already-populated `content/` folder,
- * while the New Book wizard creates them unconditionally.
+ * starter `content/chapter-01.md` and the empty `proofreading/`,
+ * `transcription/`, and `sources/audio/` areas. The doctor uses this to skip
+ * offering these on an already-populated `content/` folder, while the New Book
+ * wizard creates them unconditionally.
  */
 export function isNewBookOnlyEntry(entry: BookScaffoldEntry): boolean {
   return NEW_BOOK_ONLY_PATHS.has(entry.path);

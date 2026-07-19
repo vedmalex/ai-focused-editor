@@ -18,6 +18,7 @@ export * from './text-range';
 export * from './entity-type-forms';
 export * from './excalidraw-canvas-ops';
 export * from './git-status-protocol';
+export * from './gitignore-utils';
 export * from './knowledge-templates';
 export * from './book-build-task-protocol';
 export * from './manuscript-workspace-protocol';

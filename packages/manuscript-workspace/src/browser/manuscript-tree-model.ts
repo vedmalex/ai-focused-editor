@@ -16,10 +16,11 @@ import {
   SourceLibraryService
 } from '../common';
 import { parse } from 'yaml';
-import { buildAuthorMaterialsSections, joinUri, type KnowledgeFileEntry, type ProofreadingSetEntry, type SkillEntry } from '../common/author-materials';
+import { buildAuthorMaterialsSections, joinUri, type KnowledgeFileEntry, type ProofreadingSetEntry, type SkillEntry, type TranscriptionSetEntry } from '../common/author-materials';
 import { computeProgress, parseProofsetYaml, PROOFSET_FILE_NAME } from '../common';
 import { EntityTypeRegistryService } from './entity-type-registry-service';
 import { ManuscriptTreeItemFactory } from './manuscript-tree-item-factory';
+import { TranscriptCheckSetsService } from './transcript-check-sets-service';
 
 const AUTO_REFRESH_DELAY_MS = 300;
 
@@ -69,12 +70,16 @@ export class ManuscriptTreeModel extends TreeModelImpl {
   @inject(FileService)
   protected readonly fileService!: FileService;
 
+  @inject(TranscriptCheckSetsService)
+  protected readonly transcriptSets!: TranscriptCheckSetsService;
+
   protected currentSnapshot: ManuscriptWorkspaceSnapshot | undefined;
   protected entitySnapshot: NarrativeEntitySnapshot | undefined;
   protected sourceSnapshot: SourceLibrarySnapshot | undefined;
   protected knowledgeFiles: KnowledgeFileEntry[] = [];
   protected skillEntries: SkillEntry[] = [];
   protected proofreadingSets: ProofreadingSetEntry[] = [];
+  protected transcriptionSets: TranscriptionSetEntry[] = [];
   protected autoRefreshHandle: ReturnType<typeof setTimeout> | undefined;
   protected mutationInFlight = false;
 
@@ -94,7 +99,8 @@ export class ManuscriptTreeModel extends TreeModelImpl {
           || path.includes('/sources/')
           || path.includes('/knowledge/')
           || path.includes('/.prompts/skills/')
-          || path.includes('/proofreading/');
+          || path.includes('/proofreading/')
+          || path.includes('/transcription/');
       });
       if (affectsMaterials) {
         this.scheduleAutoRefresh();
@@ -115,10 +121,11 @@ export class ManuscriptTreeModel extends TreeModelImpl {
     // Feed the dumb frontend registry from the fresh entity snapshot so
     // consumers see author-declared types (and their validation problems).
     this.entityTypeRegistry.update(entities?.effectiveEntityTypes, entities?.typeProblems);
-    [this.knowledgeFiles, this.skillEntries, this.proofreadingSets] = await Promise.all([
+    [this.knowledgeFiles, this.skillEntries, this.proofreadingSets, this.transcriptionSets] = await Promise.all([
       this.scanKnowledge(manuscript.rootUri),
       this.scanSkills(manuscript.rootUri),
-      this.scanProofreading(manuscript.rootUri)
+      this.scanProofreading(manuscript.rootUri),
+      this.scanTranscription(manuscript.rootUri)
     ]);
     this.rebuildRoot();
     return manuscript;
@@ -166,6 +173,7 @@ export class ManuscriptTreeModel extends TreeModelImpl {
       knowledge: this.knowledgeFiles,
       skills: this.skillEntries,
       proofreadingSets: this.proofreadingSets,
+      transcriptionSets: this.transcriptionSets,
       effectiveEntityTypes: this.entitySnapshot?.effectiveEntityTypes,
       typeProblems: this.entitySnapshot?.typeProblems
     });
@@ -328,6 +336,26 @@ export class ManuscriptTreeModel extends TreeModelImpl {
       });
     }
     return entries;
+  }
+
+  /**
+   * Enumerate the book's transcript sets: one folder per set under
+   * `transcription/<slug>/`, each carrying a `transcriptset.yaml` sidecar.
+   * Delegates to {@link TranscriptCheckSetsService} (the shared enumerator over
+   * `parseTranscriptsetYaml` + `computeTranscriptProgress`), so the tree, the
+   * open handler, and any future view all agree on what a set is. A missing
+   * `transcription/` area yields an empty list (mirrors `scanProofreading`);
+   * any error degrades to no sets rather than breaking the refresh.
+   */
+  protected async scanTranscription(rootUri: string | undefined): Promise<TranscriptionSetEntry[]> {
+    if (!rootUri) {
+      return [];
+    }
+    try {
+      return await this.transcriptSets.list(rootUri);
+    } catch {
+      return [];
+    }
   }
 
   protected scheduleAutoRefresh(): void {

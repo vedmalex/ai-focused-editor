@@ -38,6 +38,9 @@ import {
 import { buildEntityYaml } from './entity-creation';
 import { OBSIDIAN_PLUGIN_ID } from './obsidian-plugin-protocol';
 import { scanLegacyAiSettings } from './ai-settings-migration';
+import type { MediaTranscriptionDoctorReport } from './audio-conversion-protocol';
+import { AUDIO_SOURCES_AREA } from './transcript-set-scaffold';
+import { hasGitignoreEntry } from './gitignore-utils';
 
 /** Workspace-relative path of the Theia settings file the AI-settings check reads. */
 export const WORKSPACE_SETTINGS_PATH = '.theia/settings.json';
@@ -134,7 +137,7 @@ export interface AiSettingsMigrationFix {
 /** A report-only observation the doctor surfaces but never auto-changes. */
 export interface BookDoctorFinding {
   /** Category, for grouping/telemetry. */
-  kind: 'metadata' | 'parse-error' | 'entity' | 'settings';
+  kind: 'metadata' | 'parse-error' | 'entity' | 'settings' | 'transcription';
   /**
    * Optional severity hint for rendering (defaults to informational). Only the
    * settings findings set this today (`warning`); the rest stay informational.
@@ -267,6 +270,27 @@ export interface BookDoctorInput {
    * finding.
    */
   workspaceSettings?: string;
+  /**
+   * Transcription state gathered by the browser (set count, raw `.gitignore`
+   * text, the backend toolchain report). Absent — or a zero set count — skips
+   * BOTH transcription checks entirely: transcription is an OPT-IN area, so a
+   * book without transcript sets gets no media/gitignore advice.
+   */
+  transcription?: TranscriptionCheckInput;
+}
+
+/** Resolved inputs for the (advisory-only) transcription checks. */
+export interface TranscriptionCheckInput {
+  /** Number of transcript sets found under `transcription/` (0 = checks skipped). */
+  setCount: number;
+  /** Raw workspace `.gitignore` text; `undefined` when the file is absent. */
+  gitignoreContent?: string;
+  /**
+   * The backend media-transcription toolchain report (`AudioConversionService.
+   * doctor()`), when reachable. Absent (backend down / RPC error) skips the
+   * toolchain advice — a backend hiccup must never break the Book Doctor.
+   */
+  toolchain?: MediaTranscriptionDoctorReport;
 }
 
 /** Resolved inputs for {@link obsidianPluginFindings}. */
@@ -841,6 +865,65 @@ export function obsidianPluginFindings(input: ObsidianPluginCheckInput): BookDoc
 }
 
 /* ----------------------------------------------------------------------- */
+/* Transcription checks (advisory only — never fixes, never fails the book)  */
+/* ----------------------------------------------------------------------- */
+
+/**
+ * Transcription check A — `transcription-audio-not-ignored` (INFORMATIONAL):
+ * when the book has transcript sets but the `sources/audio/` media area is not
+ * covered by the workspace `.gitignore`, a friendly, non-destructive suggestion
+ * to add it (audio/video files are heavy; the "New Transcript Set…" command
+ * gitignores the area at creation, but a hand-made or pre-existing set may not
+ * have it). Report-only — the doctor never edits `.gitignore` itself.
+ */
+export function transcriptionGitignoreFindings(input: TranscriptionCheckInput): BookDoctorFinding[] {
+  if (input.setCount === 0) {
+    return [];
+  }
+  if (hasGitignoreEntry(input.gitignoreContent, `${AUDIO_SOURCES_AREA}/`)) {
+    return [];
+  }
+  return [{
+    kind: 'transcription',
+    code: 'transcription-audio-not-ignored',
+    params: [input.setCount, `${AUDIO_SOURCES_AREA}/`],
+    label: 'Transcript media is not in .gitignore',
+    detail: `This book has ${input.setCount} transcript set(s), but the ${AUDIO_SOURCES_AREA}/ media area is not listed in .gitignore. Audio/video files are heavy — consider adding "${AUDIO_SOURCES_AREA}/" to .gitignore to keep them out of git.`
+  }];
+}
+
+/**
+ * Transcription check B — `transcription-toolchain` (INFORMATIONAL): surface
+ * each FAILED check from the backend media-transcription toolchain report
+ * (ffmpeg/ffprobe, whisper-cli, model, Groq API key — as configured) as one
+ * advisory finding carrying the backend's friendly advice. These tools are
+ * OPTIONAL: the findings only warn, they never fail the book, and a fully-ok
+ * (or absent) report yields nothing. Skipped entirely when the book has no
+ * transcript sets.
+ */
+export function transcriptionToolchainFindings(input: TranscriptionCheckInput): BookDoctorFinding[] {
+  if (input.setCount === 0 || !input.toolchain) {
+    return [];
+  }
+  const findings: BookDoctorFinding[] = [];
+  for (const check of input.toolchain.checks) {
+    if (check.ok) {
+      continue;
+    }
+    const advice = check.advice?.trim() || check.detail;
+    findings.push({
+      kind: 'transcription',
+      severity: 'warning',
+      code: 'transcription-toolchain',
+      params: [check.label, check.detail, advice],
+      label: `Transcription toolchain: ${check.label} is not available`,
+      detail: `${check.detail} ${advice} These tools are optional — they are only needed to convert and transcribe media for transcript sets.`
+    });
+  }
+  return findings;
+}
+
+/* ----------------------------------------------------------------------- */
 /* Legacy AI settings migration (aiFocusedEditor.ai.* -> aiConnect.*)         */
 /* ----------------------------------------------------------------------- */
 
@@ -1003,6 +1086,12 @@ export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorRepo
   findings.push(...entityTypeProblemFindings(input.entityTypeProblems ?? []));
   if (aiSettings.finding) {
     findings.push(aiSettings.finding);
+  }
+  // Transcription advice (opt-in: only when the book has transcript sets) —
+  // the gitignore suggestion, then the optional-toolchain warnings.
+  if (input.transcription) {
+    findings.push(...transcriptionGitignoreFindings(input.transcription));
+    findings.push(...transcriptionToolchainFindings(input.transcription));
   }
 
   return { fixes, findings };

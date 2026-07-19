@@ -24,8 +24,15 @@ import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { inject, injectable } from '@theia/core/shared/inversify';
+import { PreferenceService } from '@theia/core/lib/common/preferences';
 import { parse } from 'yaml';
-import { ManuscriptWorkspaceBackendService, ManuscriptWorkspaceService, ObsidianPluginBackendService } from '../common';
+import {
+  AudioConversionService,
+  ManuscriptWorkspaceBackendService,
+  ManuscriptWorkspaceService,
+  ObsidianPluginBackendService,
+  type MediaTranscriptionDoctorRequest
+} from '../common';
 import {
   extractMetadataFields,
   flattenManifestRows,
@@ -40,7 +47,8 @@ import {
   type BookDoctorReport,
   type EntityCardRef,
   type EntityTagOccurrence,
-  type ObsidianPluginCheckInput
+  type ObsidianPluginCheckInput,
+  type TranscriptionCheckInput
 } from '../common/book-doctor';
 import {
   appendEntriesToManifest,
@@ -60,6 +68,15 @@ import {
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import { AFE_MANUSCRIPT_SECTION_CONTEXT_KEY } from './manuscript-tree';
+import { TranscriptCheckSetsService } from './transcript-check-sets-service';
+import {
+  MEDIA_TRANSCRIPTION_BACKEND,
+  MEDIA_TRANSCRIPTION_FFMPEG_PATH,
+  MEDIA_TRANSCRIPTION_FFPROBE_PATH,
+  MEDIA_TRANSCRIPTION_GROQ_API_KEY,
+  MEDIA_TRANSCRIPTION_MODEL_PATH,
+  MEDIA_TRANSCRIPTION_WHISPER_CLI_PATH
+} from './ai-focused-editor-preferences';
 
 export namespace BookDoctorCommands {
   // en label/category stay inline as the source of truth; ru comes from
@@ -150,6 +167,15 @@ export class BookDoctorContribution
 
   @inject(ManuscriptWorkspaceBackendService)
   protected readonly workspaceBackend!: ManuscriptWorkspaceBackendService;
+
+  @inject(TranscriptCheckSetsService)
+  protected readonly transcriptSets!: TranscriptCheckSetsService;
+
+  @inject(AudioConversionService)
+  protected readonly audioConversion!: AudioConversionService;
+
+  @inject(PreferenceService)
+  protected readonly preferences!: PreferenceService;
 
   registerCommands(registry: CommandRegistry): void {
     registry.registerCommand(BookDoctorCommands.DOCTOR, {
@@ -291,6 +317,10 @@ export class BookDoctorContribution
     // Absent file -> undefined, so the check is skipped.
     const workspaceSettings = await this.readTextIfExists(root.resolve('.theia/settings.json'));
 
+    // Transcription advice (opt-in: only for books with transcript sets) —
+    // .gitignore coverage of the media area + the backend toolchain report.
+    const transcription = await this.gatherTranscriptionInput(root, rootUri);
+
     return assembleBookDoctorReport({
       scaffoldEntries,
       exists,
@@ -307,8 +337,56 @@ export class BookDoctorContribution
       effectiveEntityTypes,
       entityTypeProblems,
       obsidianPlugin,
-      workspaceSettings
+      workspaceSettings,
+      transcription
     });
+  }
+
+  /**
+   * Gather the transcription check input: the set count (via the shared
+   * {@link TranscriptCheckSetsService} enumerator), the raw `.gitignore` text,
+   * and — only when sets exist — the backend media-transcription toolchain
+   * report built from the resolved `mediaTranscription.*` preferences. Returns
+   * undefined when the book has no transcript sets (the checks are opt-in) or
+   * when enumeration itself fails; a toolchain RPC failure degrades to
+   * gitignore-advice-only. The doctor must never break on this.
+   */
+  protected async gatherTranscriptionInput(
+    root: URI,
+    rootUri: string
+  ): Promise<TranscriptionCheckInput | undefined> {
+    try {
+      const sets = await this.transcriptSets.list(rootUri);
+      if (sets.length === 0) {
+        return undefined;
+      }
+      const gitignoreContent = await this.readTextIfExists(root.resolve('.gitignore'));
+      let toolchain: TranscriptionCheckInput['toolchain'];
+      try {
+        toolchain = await this.audioConversion.doctor(this.readDoctorRequest());
+      } catch {
+        toolchain = undefined;
+      }
+      return { setCount: sets.length, gitignoreContent, toolchain };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Project the resolved `mediaTranscription.*` preferences into the doctor request. */
+  protected readDoctorRequest(): MediaTranscriptionDoctorRequest {
+    const stringPref = (key: string): string | undefined =>
+      (this.preferences.get<string>(key, '') || '').trim() || undefined;
+    const backend = this.preferences.get<string>(MEDIA_TRANSCRIPTION_BACKEND, 'local') === 'groq' ? 'groq' : 'local';
+    const groqApiKey = stringPref(MEDIA_TRANSCRIPTION_GROQ_API_KEY);
+    return {
+      backend,
+      ffmpegPath: stringPref(MEDIA_TRANSCRIPTION_FFMPEG_PATH),
+      ffprobePath: stringPref(MEDIA_TRANSCRIPTION_FFPROBE_PATH),
+      whisperCliPath: stringPref(MEDIA_TRANSCRIPTION_WHISPER_CLI_PATH),
+      modelPath: stringPref(MEDIA_TRANSCRIPTION_MODEL_PATH),
+      groqApiKeys: groqApiKey ? [groqApiKey] : undefined
+    };
   }
 
   /**
@@ -621,6 +699,12 @@ export class BookDoctorContribution
         return nls.localize('ai-focused-editor/doctor/problem-legacy-ai-settings-label', 'Legacy AI settings in .theia/settings.json', ...(finding.params ?? []));
       case 'legacy-ai-settings-malformed':
         return nls.localize('ai-focused-editor/doctor/problem-legacy-ai-settings-malformed-label', '.theia/settings.json could not be parsed');
+      case 'transcription-audio-not-ignored':
+        // params: [set count, media area path]
+        return nls.localize('ai-focused-editor/doctor/problem-transcription-audio-not-ignored-label', 'Transcript media is not in .gitignore', ...(finding.params ?? []));
+      case 'transcription-toolchain':
+        // params: [check label, probed detail, advice]
+        return nls.localize('ai-focused-editor/doctor/problem-transcription-toolchain-label', 'Transcription toolchain: {0} is not available', ...(finding.params ?? []));
       default:
         return finding.label;
     }
@@ -653,6 +737,12 @@ export class BookDoctorContribution
         return nls.localize('ai-focused-editor/doctor/problem-legacy-ai-settings-detail', '{0} legacy aiFocusedEditor.ai.* key(s) in .theia/settings.json ({1}). These have been renamed to aiConnect.*; apply the fix to migrate them.', ...params);
       case 'legacy-ai-settings-malformed':
         return nls.localize('ai-focused-editor/doctor/problem-legacy-ai-settings-malformed-detail', '.theia/settings.json is not valid JSON, so the doctor could not check it for legacy AI settings. Fix the JSON syntax, then re-run the doctor to migrate any aiFocusedEditor.ai.* keys.', ...params);
+      case 'transcription-audio-not-ignored':
+        // params: [set count, media area path]
+        return nls.localize('ai-focused-editor/doctor/problem-transcription-audio-not-ignored-detail', 'This book has {0} transcript set(s), but the {1} media area is not listed in .gitignore. Audio/video files are heavy — consider adding "{1}" to .gitignore to keep them out of git.', ...params);
+      case 'transcription-toolchain':
+        // params: [check label, probed detail, advice]
+        return nls.localize('ai-focused-editor/doctor/problem-transcription-toolchain-detail', '{1} {2} These tools are optional — they are only needed to convert and transcribe media for transcript sets.', ...params);
       default:
         return finding.detail;
     }

@@ -57,7 +57,9 @@ function baseInput(overrides: Partial<AuthorMaterialsInput> = {}): AuthorMateria
 describe('section ordering', () => {
   test('sections are emitted in the fixed navigator order', () => {
     const sections = buildAuthorMaterialsSections(baseInput());
-    expect(sections.map(section => section.kind)).toEqual(AUTHOR_MATERIALS_SECTION_ORDER.filter(k => k !== 'proofreading'));
+    expect(sections.map(section => section.kind)).toEqual(
+      AUTHOR_MATERIALS_SECTION_ORDER.filter(k => k !== 'proofreading' && k !== 'transcription')
+    );
   });
 
   test('only manuscript is expanded by default', () => {
@@ -222,6 +224,42 @@ describe('proofreading section', () => {
   });
 });
 
+describe('transcription section', () => {
+  test('one leaf per set, numeric-sorted by slug, with a verified-progress chip', () => {
+    const sections = buildAuthorMaterialsSections(baseInput({
+      transcriptionSets: [
+        { slug: 'lecture-10', label: 'lecture-10', uri: `${ROOT}/transcription/lecture-10/transcriptset.yaml`, verified: 0, total: 4, percent: 0 },
+        { slug: 'lecture-2', label: 'lecture-2', uri: `${ROOT}/transcription/lecture-2/transcriptset.yaml`, verified: 3, total: 10, percent: 30 }
+      ]
+    }));
+    const transcription = sections.find(section => section.kind === 'transcription')!;
+    expect(transcription.count).toBe(2);
+    expect(transcription.label).toBe('Transcription');
+    expect(transcription.items.map(item => item.label)).toEqual(['lecture-2', 'lecture-10']);
+    expect(transcription.items[0].description).toBe('3/10 ✓');
+    expect(transcription.items[0].uri).toBe(`${ROOT}/transcription/lecture-2/transcriptset.yaml`);
+    expect(transcription.expandedByDefault).toBe(false);
+  });
+
+  test('the transcription section is ordered after proofreading', () => {
+    const sections = buildAuthorMaterialsSections(baseInput({
+      proofreadingSets: [
+        { slug: 'ch-1', label: 'ch-1', uri: `${ROOT}/proofreading/ch-1/proofset.yaml`, verified: 0, total: 1, percent: 0 }
+      ],
+      transcriptionSets: [
+        { slug: 'lec-1', label: 'lec-1', uri: `${ROOT}/transcription/lec-1/transcriptset.yaml`, verified: 0, total: 1, percent: 0 }
+      ]
+    }));
+    const kinds = sections.map(section => section.kind);
+    expect(kinds.indexOf('transcription')).toBe(kinds.indexOf('proofreading') + 1);
+  });
+
+  test('no sets => the transcription section is omitted entirely (opt-in mode)', () => {
+    const sections = buildAuthorMaterialsSections(baseInput());
+    expect(sections.find(section => section.kind === 'transcription')).toBeUndefined();
+  });
+});
+
 describe('allowed material types', () => {
   test('accepts documents, images, and structural files; rejects dotfiles and binaries', () => {
     expect(isAllowedMaterialFile('notes.md')).toBe(true);
@@ -352,7 +390,9 @@ describe('dynamic author-type sections', () => {
   test('an effective list with no author types yields exactly the base section order', () => {
     const builtInOnly = mergeEntityTypes(BASE_ENTITY_TYPES, []);
     const sections = buildAuthorMaterialsSections(baseInput({ effectiveEntityTypes: builtInOnly }));
-    expect(sections.map(section => section.kind)).toEqual(AUTHOR_MATERIALS_SECTION_ORDER.filter(k => k !== 'proofreading'));
+    expect(sections.map(section => section.kind)).toEqual(
+      AUTHOR_MATERIALS_SECTION_ORDER.filter(k => k !== 'proofreading' && k !== 'transcription')
+    );
   });
 });
 

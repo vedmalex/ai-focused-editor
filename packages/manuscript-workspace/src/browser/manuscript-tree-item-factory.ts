@@ -37,7 +37,8 @@ const SECTION_LABEL_DEFAULTS: Record<string, string> = {
   sources: 'Sources',
   knowledge: 'Knowledge',
   skills: 'Skills',
-  proofreading: 'Proofreading'
+  proofreading: 'Proofreading',
+  transcription: 'Transcription'
 };
 
 /**
