@@ -41,6 +41,7 @@ import { scanLegacyAiSettings } from './ai-settings-migration';
 import type { MediaTranscriptionDoctorReport } from './audio-conversion-protocol';
 import { AUDIO_SOURCES_AREA } from './transcript-set-scaffold';
 import { hasGitignoreEntry } from './gitignore-utils';
+import type { TranscriptionBackend } from './audio-conversion-protocol';
 
 /** Workspace-relative path of the Theia settings file the AI-settings check reads. */
 export const WORKSPACE_SETTINGS_PATH = '.theia/settings.json';
@@ -111,6 +112,14 @@ export interface BookDoctorFix {
    */
   aiSettings?: AiSettingsMigrationFix;
   /**
+   * Present on a `.gitignore` append fix (currently the workspace-scope Groq
+   * API key secret advisory). Its presence tells the browser to route the fix
+   * through the idempotent {@link appendGitignoreEntry} helper (read the file,
+   * append the entry, write it back) instead of the normal FileService create
+   * — the file usually already exists and must never be overwritten wholesale.
+   */
+  gitignore?: GitignoreAppendFix;
+  /**
    * Stable kebab-case identifier for the fix kind (e.g. `create-folder`). The
    * rendering contribution maps it to a localized {@link description}; when
    * absent/unknown it falls back to the English {@link description}. Purely
@@ -132,6 +141,14 @@ export interface BookDoctorFix {
 export interface AiSettingsMigrationFix {
   /** Legacy keys present in `.theia/settings.json` (mapping order). */
   legacyKeys: string[];
+}
+
+/** Marker attached to a `.gitignore` append fix (see {@link BookDoctorFix.gitignore}). */
+export interface GitignoreAppendFix {
+  /** The entry to append idempotently (e.g. `.theia/settings.json`). */
+  entry: string;
+  /** Optional `# comment` line written above the entry. */
+  comment?: string;
 }
 
 /** A report-only observation the doctor surfaces but never auto-changes. */
@@ -277,6 +294,13 @@ export interface BookDoctorInput {
    * book without transcript sets gets no media/gitignore advice.
    */
   transcription?: TranscriptionCheckInput;
+  /**
+   * Secret-hygiene input for the workspace-scope Groq API key check. Gathered
+   * UNCONDITIONALLY (not gated on transcript sets): a secret committed to git
+   * is a risk whether or not the book currently has sets. Absent skips the
+   * check.
+   */
+  transcriptionSecret?: TranscriptionSecretInput;
 }
 
 /** Resolved inputs for the (advisory-only) transcription checks. */
@@ -291,6 +315,41 @@ export interface TranscriptionCheckInput {
    * toolchain advice — a backend hiccup must never break the Book Doctor.
    */
   toolchain?: MediaTranscriptionDoctorReport;
+  /**
+   * The EFFECTIVE `mediaTranscription.*` settings (after the user/workspace
+   * cascade), resolved by the browser. When present, the doctor splits its
+   * transcription advice into missing-SETTING findings (what to configure)
+   * vs missing-DEPENDENCY findings (what to install), superseding the generic
+   * {@link transcriptionToolchainFindings}. Absent keeps the legacy combined
+   * toolchain findings.
+   */
+  settings?: TranscriptionSettingsSnapshot;
+}
+
+/** The resolved effective `mediaTranscription.*` values the settings checks read. */
+export interface TranscriptionSettingsSnapshot {
+  /** The selected transcription backend. */
+  backend: TranscriptionBackend;
+  /** Effective whisper-cli path (blank/absent = not configured). */
+  whisperCliPath?: string;
+  /** Effective ggml model path (blank/absent = not configured). */
+  modelPath?: string;
+  /** Effective Groq API keys (already comma-split; empty = not configured). */
+  groqApiKeys?: string[];
+  /** Effective Groq transcription model (blank/absent = not configured). */
+  groqModel?: string;
+  /** Effective ffmpeg path (blank/absent = resolve from PATH). */
+  ffmpegPath?: string;
+  /** Effective ffprobe path (blank/absent = resolve from PATH). */
+  ffprobePath?: string;
+}
+
+/** Resolved inputs for {@link transcriptionSecretChecks}. */
+export interface TranscriptionSecretInput {
+  /** True when `mediaTranscription.groqApiKey` is set (non-blank) at workspace scope. */
+  groqApiKeyWorkspaceScoped: boolean;
+  /** Raw workspace `.gitignore` text; `undefined` when the file is absent. */
+  gitignoreContent?: string;
 }
 
 /** Resolved inputs for {@link obsidianPluginFindings}. */
@@ -923,6 +982,194 @@ export function transcriptionToolchainFindings(input: TranscriptionCheckInput): 
   return findings;
 }
 
+/** Fallback what-to-set advice per setting key (mirrors the backend doctor's advice strings). */
+const TRANSCRIPTION_SETTING_ADVICE: Record<string, string> = {
+  'mediaTranscription.whisperCliPath':
+    'Set mediaTranscription.whisperCliPath to <whisper.cpp>/build/bin/whisper-cli. Build it first: ' +
+    'cmake -S <whisper.cpp> -B <whisper.cpp>/build && cmake --build <whisper.cpp>/build -j --config Release',
+  'mediaTranscription.modelPath':
+    'Download a ggml model with <whisper.cpp>/models/download-ggml-model.sh (e.g. large-v3-turbo) and set ' +
+    'mediaTranscription.modelPath to the resulting models/ggml-<name>.bin.',
+  'mediaTranscription.groqApiKey':
+    'Get an API key at https://console.groq.com and set mediaTranscription.groqApiKey ' +
+    '(comma-separate multiple keys to enable rotation).',
+  'mediaTranscription.groqModel':
+    'Set mediaTranscription.groqModel to a Groq transcription model (e.g. whisper-large-v3-turbo or whisper-large-v3).'
+};
+
+/** The toolchain check id whose backend advice matches a setting key, if any. */
+const SETTING_TOOLCHAIN_CHECK: Record<string, MediaTranscriptionDoctorCheckIdLike> = {
+  'mediaTranscription.whisperCliPath': 'whisper-cli',
+  'mediaTranscription.modelPath': 'model',
+  'mediaTranscription.groqApiKey': 'groq-api-key'
+};
+
+type MediaTranscriptionDoctorCheckIdLike = MediaTranscriptionDoctorReport['checks'][number]['id'];
+
+function isBlank(value: string | undefined): boolean {
+  return !value || value.trim().length === 0;
+}
+
+/** Build one missing-SETTING finding, preferring the backend toolchain advice when present. */
+function missingSettingFinding(
+  settingKey: string,
+  toolchain: MediaTranscriptionDoctorReport | undefined
+): BookDoctorFinding {
+  const checkId = SETTING_TOOLCHAIN_CHECK[settingKey];
+  const backendAdvice = checkId
+    ? toolchain?.checks.find(check => check.id === checkId && !check.ok)?.advice?.trim()
+    : undefined;
+  const advice = backendAdvice || TRANSCRIPTION_SETTING_ADVICE[settingKey] || '';
+  return {
+    kind: 'transcription',
+    severity: 'warning',
+    code: 'transcription-setting-missing',
+    params: [settingKey, advice],
+    label: `Transcription setting missing: ${settingKey}`,
+    detail: `The selected transcription backend needs ${settingKey}, but it is not set. ${advice} Transcription stays optional — this only matters when you transcribe media for transcript sets.`
+  };
+}
+
+/**
+ * Transcription check C — `transcription-setting-missing` (WARNING, advisory):
+ * for the SELECTED backend, every REQUIRED setting that is not configured
+ * becomes one finding with what-to-set advice:
+ *  - `local` → `mediaTranscription.whisperCliPath` and `mediaTranscription.modelPath`;
+ *  - `groq`  → `mediaTranscription.groqApiKey` (non-empty key list) and a
+ *    non-blank `mediaTranscription.groqModel`.
+ * ffmpeg/ffprobe paths are NOT required settings (a PATH lookup is a valid
+ * configuration) — their absence is a DEPENDENCY problem (check D). Skipped
+ * when the book has no transcript sets or no settings snapshot was gathered.
+ * Advisory only — never fails the book.
+ */
+export function transcriptionSettingFindings(input: TranscriptionCheckInput): BookDoctorFinding[] {
+  const settings = input.settings;
+  if (input.setCount === 0 || !settings) {
+    return [];
+  }
+  const findings: BookDoctorFinding[] = [];
+  if (settings.backend === 'local') {
+    if (isBlank(settings.whisperCliPath)) {
+      findings.push(missingSettingFinding('mediaTranscription.whisperCliPath', input.toolchain));
+    }
+    if (isBlank(settings.modelPath)) {
+      findings.push(missingSettingFinding('mediaTranscription.modelPath', input.toolchain));
+    }
+  } else {
+    if ((settings.groqApiKeys ?? []).length === 0) {
+      findings.push(missingSettingFinding('mediaTranscription.groqApiKey', input.toolchain));
+    }
+    if (isBlank(settings.groqModel)) {
+      findings.push(missingSettingFinding('mediaTranscription.groqModel', input.toolchain));
+    }
+  }
+  return findings;
+}
+
+/**
+ * True when a failed toolchain check is CAUSED by an unset setting (and is
+ * therefore already reported as a missing-SETTING finding, not a dependency).
+ */
+function failureIsUnsetSetting(
+  checkId: MediaTranscriptionDoctorCheckIdLike,
+  settings: TranscriptionSettingsSnapshot
+): boolean {
+  switch (checkId) {
+    case 'whisper-cli':
+      return isBlank(settings.whisperCliPath);
+    case 'model':
+      return isBlank(settings.modelPath);
+    case 'groq-api-key':
+      return (settings.groqApiKeys ?? []).length === 0;
+    default:
+      // ffmpeg/ffprobe: an unset path is a VALID configuration (PATH lookup),
+      // so a failure is always a real dependency problem.
+      return false;
+  }
+}
+
+/**
+ * Transcription check D — `transcription-dependency-missing` (WARNING,
+ * advisory): every FAILED backend toolchain check whose failure is NOT caused
+ * by an unset setting — i.e. the tool/file itself is missing, not executable,
+ * or not on PATH (ffmpeg/ffprobe always; whisper-cli/model when their path IS
+ * configured but broken). Carries the backend's probed detail + install
+ * advice. Requires the settings snapshot (else the legacy combined
+ * {@link transcriptionToolchainFindings} runs instead); skipped when the book
+ * has no transcript sets or the backend report is unavailable. Advisory only.
+ */
+export function transcriptionDependencyFindings(input: TranscriptionCheckInput): BookDoctorFinding[] {
+  const settings = input.settings;
+  if (input.setCount === 0 || !input.toolchain || !settings) {
+    return [];
+  }
+  const findings: BookDoctorFinding[] = [];
+  for (const check of input.toolchain.checks) {
+    if (check.ok || failureIsUnsetSetting(check.id, settings)) {
+      continue;
+    }
+    const advice = check.advice?.trim() || check.detail;
+    findings.push({
+      kind: 'transcription',
+      severity: 'warning',
+      code: 'transcription-dependency-missing',
+      params: [check.label, check.detail, advice],
+      label: `Transcription dependency missing: ${check.label}`,
+      detail: `${check.detail}. ${advice} These tools are optional — they are only needed to convert and transcribe media for transcript sets.`
+    });
+  }
+  return findings;
+}
+
+/** The `.gitignore` entry the secret check advises (workspace settings file). */
+export const THEIA_SETTINGS_GITIGNORE_ENTRY = '.theia/settings.json';
+
+/**
+ * Transcription check E — `transcription-groq-key-workspace` (WARNING,
+ * advisory) + a fixable `.gitignore` append: when `mediaTranscription.
+ * groqApiKey` is set at WORKSPACE scope, the secret lives in
+ * `<book>/.theia/settings.json` and can be committed to git. If neither
+ * `.theia/` nor `.theia/settings.json` is gitignored, emit the advisory plus a
+ * fix that appends `.theia/settings.json` via the idempotent gitignore helper.
+ * NOT gated on transcript sets — a committable secret is a risk regardless.
+ * The finding never carries the key value itself.
+ */
+export function transcriptionSecretChecks(input: TranscriptionSecretInput): {
+  finding?: BookDoctorFinding;
+  fix?: BookDoctorFix;
+} {
+  if (!input.groqApiKeyWorkspaceScoped) {
+    return {};
+  }
+  if (
+    hasGitignoreEntry(input.gitignoreContent, '.theia/') ||
+    hasGitignoreEntry(input.gitignoreContent, THEIA_SETTINGS_GITIGNORE_ENTRY)
+  ) {
+    return {};
+  }
+  return {
+    finding: {
+      kind: 'transcription',
+      severity: 'warning',
+      code: 'transcription-groq-key-workspace',
+      params: [THEIA_SETTINGS_GITIGNORE_ENTRY],
+      label: 'Workspace Groq API key can be committed to git',
+      detail: `mediaTranscription.groqApiKey is set at WORKSPACE scope, so the secret is stored in ${THEIA_SETTINGS_GITIGNORE_ENTRY} inside the book — and that file is not gitignored, so the key can be committed. Apply the fix to gitignore ${THEIA_SETTINGS_GITIGNORE_ENTRY}, or move the key to your user settings.`
+    },
+    fix: {
+      path: '.gitignore',
+      kind: 'file',
+      code: 'gitignore-theia-settings',
+      params: [THEIA_SETTINGS_GITIGNORE_ENTRY],
+      description: `Add ${THEIA_SETTINGS_GITIGNORE_ENTRY} to .gitignore so the workspace-scope Groq API key is never committed.`,
+      gitignore: {
+        entry: THEIA_SETTINGS_GITIGNORE_ENTRY,
+        comment: 'Workspace settings can hold secrets (mediaTranscription.groqApiKey) — keep them out of git'
+      }
+    }
+  };
+}
+
 /* ----------------------------------------------------------------------- */
 /* Legacy AI settings migration (aiFocusedEditor.ai.* -> aiConnect.*)         */
 /* ----------------------------------------------------------------------- */
@@ -1065,6 +1312,16 @@ export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorRepo
     push(aiSettings.fix);
   }
 
+  // Secret hygiene: a workspace-scope Groq API key that is not gitignored gets
+  // an advisory finding plus a fixable `.gitignore` append. Not gated on
+  // transcript sets.
+  const secret = input.transcriptionSecret
+    ? transcriptionSecretChecks(input.transcriptionSecret)
+    : {};
+  if (secret.fix) {
+    push(secret.fix);
+  }
+
   const findings: BookDoctorFinding[] = [];
   if (input.metadata) {
     findings.push(...metadataFindings(input.metadata));
@@ -1088,10 +1345,20 @@ export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorRepo
     findings.push(aiSettings.finding);
   }
   // Transcription advice (opt-in: only when the book has transcript sets) —
-  // the gitignore suggestion, then the optional-toolchain warnings.
+  // the gitignore suggestion, then either the split SETTING/DEPENDENCY
+  // findings (when the effective settings snapshot was gathered) or the
+  // legacy combined toolchain warnings.
   if (input.transcription) {
     findings.push(...transcriptionGitignoreFindings(input.transcription));
-    findings.push(...transcriptionToolchainFindings(input.transcription));
+    if (input.transcription.settings) {
+      findings.push(...transcriptionSettingFindings(input.transcription));
+      findings.push(...transcriptionDependencyFindings(input.transcription));
+    } else {
+      findings.push(...transcriptionToolchainFindings(input.transcription));
+    }
+  }
+  if (secret.finding) {
+    findings.push(secret.finding);
   }
 
   return { fixes, findings };

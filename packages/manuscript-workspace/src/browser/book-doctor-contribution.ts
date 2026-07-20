@@ -48,8 +48,12 @@ import {
   type EntityCardRef,
   type EntityTagOccurrence,
   type ObsidianPluginCheckInput,
-  type TranscriptionCheckInput
+  type TranscriptionCheckInput,
+  type TranscriptionSecretInput,
+  type TranscriptionSettingsSnapshot
 } from '../common/book-doctor';
+import { hasWorkspaceScopedValue, splitGroqApiKeys } from '../common/transcription-settings';
+import { appendGitignoreEntry } from '../common/gitignore-utils';
 import {
   appendEntriesToManifest,
   extractFirstHeading,
@@ -74,6 +78,7 @@ import {
   MEDIA_TRANSCRIPTION_FFMPEG_PATH,
   MEDIA_TRANSCRIPTION_FFPROBE_PATH,
   MEDIA_TRANSCRIPTION_GROQ_API_KEY,
+  MEDIA_TRANSCRIPTION_GROQ_MODEL,
   MEDIA_TRANSCRIPTION_MODEL_PATH,
   MEDIA_TRANSCRIPTION_WHISPER_CLI_PATH
 } from './ai-focused-editor-preferences';
@@ -321,6 +326,10 @@ export class BookDoctorContribution
     // .gitignore coverage of the media area + the backend toolchain report.
     const transcription = await this.gatherTranscriptionInput(root, rootUri);
 
+    // Secret hygiene (NOT gated on transcript sets): a workspace-scope Groq
+    // API key that is not gitignored is a committable secret.
+    const transcriptionSecret = await this.gatherTranscriptionSecretInput(root);
+
     return assembleBookDoctorReport({
       scaffoldEntries,
       exists,
@@ -338,7 +347,8 @@ export class BookDoctorContribution
       entityTypeProblems,
       obsidianPlugin,
       workspaceSettings,
-      transcription
+      transcription,
+      transcriptionSecret
     });
   }
 
@@ -361,32 +371,66 @@ export class BookDoctorContribution
         return undefined;
       }
       const gitignoreContent = await this.readTextIfExists(root.resolve('.gitignore'));
+      const settings = this.readTranscriptionSettingsSnapshot();
       let toolchain: TranscriptionCheckInput['toolchain'];
       try {
-        toolchain = await this.audioConversion.doctor(this.readDoctorRequest());
+        toolchain = await this.audioConversion.doctor(this.readDoctorRequest(settings));
       } catch {
         toolchain = undefined;
       }
-      return { setCount: sets.length, gitignoreContent, toolchain };
+      return { setCount: sets.length, gitignoreContent, toolchain, settings };
     } catch {
       return undefined;
     }
   }
 
-  /** Project the resolved `mediaTranscription.*` preferences into the doctor request. */
-  protected readDoctorRequest(): MediaTranscriptionDoctorRequest {
+  /**
+   * The EFFECTIVE `mediaTranscription.*` values (after the user/workspace
+   * cascade) that drive both the settings checks and the backend doctor call.
+   */
+  protected readTranscriptionSettingsSnapshot(): TranscriptionSettingsSnapshot {
     const stringPref = (key: string): string | undefined =>
       (this.preferences.get<string>(key, '') || '').trim() || undefined;
     const backend = this.preferences.get<string>(MEDIA_TRANSCRIPTION_BACKEND, 'local') === 'groq' ? 'groq' : 'local';
-    const groqApiKey = stringPref(MEDIA_TRANSCRIPTION_GROQ_API_KEY);
+    const groqApiKeys = splitGroqApiKeys(stringPref(MEDIA_TRANSCRIPTION_GROQ_API_KEY));
     return {
       backend,
       ffmpegPath: stringPref(MEDIA_TRANSCRIPTION_FFMPEG_PATH),
       ffprobePath: stringPref(MEDIA_TRANSCRIPTION_FFPROBE_PATH),
       whisperCliPath: stringPref(MEDIA_TRANSCRIPTION_WHISPER_CLI_PATH),
       modelPath: stringPref(MEDIA_TRANSCRIPTION_MODEL_PATH),
-      groqApiKeys: groqApiKey ? [groqApiKey] : undefined
+      groqApiKeys: groqApiKeys.length > 0 ? groqApiKeys : undefined,
+      groqModel: stringPref(MEDIA_TRANSCRIPTION_GROQ_MODEL)
     };
+  }
+
+  /** Project the resolved settings snapshot into the backend doctor request. */
+  protected readDoctorRequest(settings: TranscriptionSettingsSnapshot): MediaTranscriptionDoctorRequest {
+    return {
+      backend: settings.backend,
+      ffmpegPath: settings.ffmpegPath,
+      ffprobePath: settings.ffprobePath,
+      whisperCliPath: settings.whisperCliPath,
+      modelPath: settings.modelPath,
+      groqApiKeys: settings.groqApiKeys
+    };
+  }
+
+  /**
+   * Secret-hygiene input: whether `mediaTranscription.groqApiKey` carries a
+   * non-blank value at WORKSPACE scope (workspace or workspace-folder — the
+   * value would live in `<book>/.theia/settings.json`), plus the raw
+   * `.gitignore` text. Never throws — the doctor must not break on this.
+   */
+  protected async gatherTranscriptionSecretInput(root: URI): Promise<TranscriptionSecretInput | undefined> {
+    try {
+      const inspection = this.preferences.inspect<string>(MEDIA_TRANSCRIPTION_GROQ_API_KEY);
+      const groqApiKeyWorkspaceScoped = inspection ? hasWorkspaceScopedValue(inspection) : false;
+      const gitignoreContent = await this.readTextIfExists(root.resolve('.gitignore'));
+      return { groqApiKeyWorkspaceScoped, gitignoreContent };
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -666,6 +710,9 @@ export class BookDoctorContribution
       case 'migrate-ai-settings':
         // params: [legacy key count, comma-joined key list]
         return nls.localize('ai-focused-editor/doctor/problem-migrate-ai-settings', 'Migrate {0} legacy AI setting(s) to aiConnect.* ({1}).', ...params);
+      case 'gitignore-theia-settings':
+        // params: [gitignore entry]
+        return nls.localize('ai-focused-editor/doctor/problem-gitignore-theia-settings', 'Add {0} to .gitignore so the workspace-scope Groq API key is never committed.', ...params);
       default:
         return fix.description;
     }
@@ -705,6 +752,15 @@ export class BookDoctorContribution
       case 'transcription-toolchain':
         // params: [check label, probed detail, advice]
         return nls.localize('ai-focused-editor/doctor/problem-transcription-toolchain-label', 'Transcription toolchain: {0} is not available', ...(finding.params ?? []));
+      case 'transcription-setting-missing':
+        // params: [setting key, advice]
+        return nls.localize('ai-focused-editor/doctor/problem-transcription-setting-missing-label', 'Transcription setting missing: {0}', ...(finding.params ?? []));
+      case 'transcription-dependency-missing':
+        // params: [check label, probed detail, advice]
+        return nls.localize('ai-focused-editor/doctor/problem-transcription-dependency-missing-label', 'Transcription dependency missing: {0}', ...(finding.params ?? []));
+      case 'transcription-groq-key-workspace':
+        // params: [gitignore entry]
+        return nls.localize('ai-focused-editor/doctor/problem-transcription-groq-key-workspace-label', 'Workspace Groq API key can be committed to git', ...(finding.params ?? []));
       default:
         return finding.label;
     }
@@ -743,6 +799,15 @@ export class BookDoctorContribution
       case 'transcription-toolchain':
         // params: [check label, probed detail, advice]
         return nls.localize('ai-focused-editor/doctor/problem-transcription-toolchain-detail', '{1} {2} These tools are optional — they are only needed to convert and transcribe media for transcript sets.', ...params);
+      case 'transcription-setting-missing':
+        // params: [setting key, advice]
+        return nls.localize('ai-focused-editor/doctor/problem-transcription-setting-missing-detail', 'The selected transcription backend needs {0}, but it is not set. {1} Transcription stays optional — this only matters when you transcribe media for transcript sets.', ...params);
+      case 'transcription-dependency-missing':
+        // params: [check label, probed detail, advice]
+        return nls.localize('ai-focused-editor/doctor/problem-transcription-dependency-missing-detail', '{1}. {2} These tools are optional — they are only needed to convert and transcribe media for transcript sets.', ...params);
+      case 'transcription-groq-key-workspace':
+        // params: [gitignore entry]
+        return nls.localize('ai-focused-editor/doctor/problem-transcription-groq-key-workspace-detail', 'mediaTranscription.groqApiKey is set at WORKSPACE scope, so the secret is stored in {0} inside the book — and that file is not gitignored, so the key can be committed. Apply the fix to gitignore {0}, or move the key to your user settings.', ...params);
       default:
         return finding.detail;
     }
@@ -989,6 +1054,24 @@ export class BookDoctorContribution
             'Migrated {0} legacy AI setting(s) in .theia/settings.json to aiConnect.*.',
             migrated
           ));
+          continue;
+        }
+        if (fix.gitignore) {
+          // Idempotent `.gitignore` append (the secret-hygiene fix): read the
+          // current text (undefined = absent file), append the entry via the
+          // shared helper, and write the result. Never a wholesale rewrite.
+          const existing = await this.readTextIfExists(uri);
+          const result = appendGitignoreEntry(existing, fix.gitignore.entry, fix.gitignore.comment);
+          if (!result.added) {
+            skipped += 1;
+            continue;
+          }
+          if (existing === undefined) {
+            await this.fileService.create(uri, result.text, { overwrite: false });
+          } else {
+            await this.fileService.write(uri, result.text);
+          }
+          created += 1;
           continue;
         }
         if (fix.manifest?.mode === 'append') {

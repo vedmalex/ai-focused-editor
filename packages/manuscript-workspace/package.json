@@ -81,6 +81,9 @@
       "frontend": "lib/browser/image-viewer-frontend-module"
     },
     {
+      "frontend": "lib/browser/media-viewer-frontend-module"
+    },
+    {
       "frontend": "lib/browser/citation-editor-frontend-module"
     },
     {
@@ -121,6 +124,9 @@
     },
     {
       "frontend": "lib/browser/book-doctor-frontend-module"
+    },
+    {
+      "frontend": "lib/browser/transcription-settings-frontend-module"
     },
     {
       "frontend": "lib/browser/welcome-frontend-module"

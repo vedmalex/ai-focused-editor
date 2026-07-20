@@ -27,6 +27,8 @@ export type TranscriptSidecarProblemCode =
   | 'invalid-extensions'
   /** `language` was present but not a string. */
   | 'invalid-language'
+  /** `sourceMedia` was present but not a string. */
+  | 'invalid-source-media'
   /** A `files` entry was malformed (not an object, no base, or a non-boolean flag). */
   | 'invalid-file';
 
@@ -107,7 +109,8 @@ function parseFiles(value: unknown, problems: TranscriptSidecarProblem[]): Trans
  * Parse the text of a `transcriptset.yaml` into a {@link TranscriptSet} plus
  * coded {@link TranscriptSidecarProblem}s. A BLOCKING problem (bad shape /
  * required folder) yields no `set`; non-blocking problems
- * (`invalid-extensions`, `invalid-language`, `invalid-file`) still yield a
+ * (`invalid-extensions`, `invalid-language`, `invalid-source-media`,
+ * `invalid-file`) still yield a
  * `set` with the bad parts dropped/defaulted. Defaults: `mediaExtensions`
  * falls back to {@link DEFAULT_MEDIA_EXTENSIONS}, `language` to absent,
  * `files` to `[]`.
@@ -155,6 +158,15 @@ export function parseTranscriptsetYaml(text: string): { set?: TranscriptSet; pro
     }
   }
 
+  let sourceMedia: string | undefined;
+  if (document.sourceMedia !== undefined && document.sourceMedia !== null) {
+    if (typeof document.sourceMedia !== 'string') {
+      problems.push({ code: 'invalid-source-media', message: '"sourceMedia" must be a string.' });
+    } else {
+      sourceMedia = document.sourceMedia.trim() || undefined;
+    }
+  }
+
   const mediaExtensions = parseExtensions(document.mediaExtensions, problems);
   const files = parseFiles(document.files, problems);
 
@@ -167,6 +179,7 @@ export function parseTranscriptsetYaml(text: string): { set?: TranscriptSet; pro
     transcriptFolder,
     mediaExtensions,
     ...(language ? { language } : {}),
+    ...(sourceMedia ? { sourceMedia } : {}),
     files
   };
   return { set, problems };
@@ -176,7 +189,8 @@ export function parseTranscriptsetYaml(text: string): { set?: TranscriptSet; pro
  * Serialize a {@link TranscriptSet} into `transcriptset.yaml` text, PRESERVING
  * the comments and any unknown keys of `existingText`. Only the keys this
  * module owns (`audioFolder`, `transcriptFolder`, `mediaExtensions`,
- * `language`, `files`) are (re)written via the `yaml` `Document` API.
+ * `language`, `sourceMedia`, `files`) are (re)written via the `yaml`
+ * `Document` API.
  */
 export function writeTranscriptsetYaml(existingText: string | undefined, set: TranscriptSet): string {
   const parsed = existingText ? parseDocument(existingText) : undefined;
@@ -189,6 +203,11 @@ export function writeTranscriptsetYaml(existingText: string | undefined, set: Tr
     document.set('language', set.language);
   } else {
     document.delete('language');
+  }
+  if (set.sourceMedia) {
+    document.set('sourceMedia', set.sourceMedia);
+  } else {
+    document.delete('sourceMedia');
   }
   document.set(
     'files',
@@ -238,6 +257,7 @@ const transcriptsetSchema = {
     transcriptFolder: { type: 'string', minLength: 1 },
     mediaExtensions: { type: 'array', items: { type: 'string' }, nullable: true },
     language: { type: 'string', nullable: true },
+    sourceMedia: { type: 'string', nullable: true },
     files: {
       type: 'array',
       nullable: true,

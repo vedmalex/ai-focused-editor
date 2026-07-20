@@ -2238,6 +2238,106 @@
 }
 
 /* ============================================================================
+   Media viewer (MediaViewerWidget) — audio/video preview, image-viewer pattern
+   ========================================================================== */
+
+.afe-media-viewer-widget {
+  height: 100%;
+  overflow: hidden;
+}
+
+.afe-media-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.afe-media-viewer-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--theia-editorGroup-border, var(--theia-panel-border));
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-foreground);
+}
+
+.afe-media-viewer-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.afe-media-viewer-size {
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-media-viewer-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background-color: var(--theia-editor-background);
+}
+
+.afe-media-viewer-audio {
+  width: 100%;
+  max-width: 560px;
+}
+
+.afe-media-viewer-video {
+  max-width: 100%;
+  max-height: 100%;
+  background: #000;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
+
+.afe-media-viewer-message {
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: var(--theia-foreground);
+  background: var(--theia-editorWidget-background, var(--theia-editor-background));
+  border: 1px solid var(--theia-editorWidget-border, var(--theia-panel-border));
+  border-radius: 6px;
+}
+
+.afe-media-viewer-message-icon {
+  font-size: 28px;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-media-viewer-message-text {
+  font-size: var(--theia-ui-font-size1);
+  line-height: 1.4;
+}
+
+.afe-media-viewer-message-size {
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-media-viewer-status {
+  padding: 12px 16px;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.afe-media-viewer-status.error {
+  color: var(--theia-errorForeground);
+}
+
+/* ============================================================================
    Writing Mode + mobile ergonomics (WritingModeContribution)
    ----------------------------------------------------------------------------
    Two independent layers:
@@ -3860,4 +3960,123 @@ body.afe-proofreading-mode .lm-TabBar-toolbar .item {
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Transcription Settings panel (transcription-settings-widget.ts)           */
+/* Reuses the afe-model-config-* base classes from ai-connect-theia; the     */
+/* rules below are panel-specific additions.                                  */
+/* ------------------------------------------------------------------------- */
+
+.afe-transcription-settings {
+  padding: 8px 12px;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.afe-transcription-scope-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.afe-transcription-scope-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.afe-transcription-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.afe-transcription-field-label {
+  min-width: 140px;
+  font-weight: 500;
+}
+
+.afe-transcription-field input {
+  flex: 1 1 180px;
+  min-width: 120px;
+}
+
+.afe-transcription-origin {
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+  border: 1px solid var(--theia-editorWidget-border);
+  border-radius: 8px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+.afe-transcription-origin.workspace,
+.afe-transcription-origin.folder {
+  color: var(--theia-charts-blue, var(--theia-textLink-foreground));
+  border-color: var(--theia-charts-blue, var(--theia-textLink-foreground));
+}
+
+.afe-transcription-origin.user {
+  color: var(--theia-charts-green, var(--theia-successBackground));
+  border-color: var(--theia-charts-green, var(--theia-successBackground));
+}
+
+.afe-transcription-secret-warning {
+  color: var(--theia-editorWarning-foreground, var(--theia-warningForeground));
+}
+
+.afe-transcription-check-summary.ok {
+  color: var(--theia-successBackground, var(--theia-charts-green));
+}
+
+.afe-transcription-check-summary.fail,
+.afe-transcription-check-error {
+  color: var(--theia-errorForeground);
+}
+
+.afe-transcription-check-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+
+.afe-transcription-check-item {
+  margin: 4px 0;
+  padding: 4px 6px;
+  border-left: 2px solid var(--theia-editorWidget-border);
+}
+
+.afe-transcription-check-item.fail {
+  border-left-color: var(--theia-errorForeground);
+}
+
+.afe-transcription-check-item.ok {
+  border-left-color: var(--theia-successBackground, var(--theia-charts-green));
+}
+
+.afe-transcription-check-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.afe-transcription-check-label {
+  font-weight: 600;
+}
+
+.afe-transcription-check-detail {
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-transcription-check-advice {
+  margin-top: 2px;
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+  white-space: pre-wrap;
+  word-break: break-word;
 }

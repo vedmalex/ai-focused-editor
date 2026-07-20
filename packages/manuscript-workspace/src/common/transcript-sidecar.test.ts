@@ -194,3 +194,61 @@ describe('TranscriptsetSchemaValidator', () => {
     expect(diagnostics.every(d => d.severity === 'error')).toBe(true);
   });
 });
+
+describe('sourceMedia (legacy-import / new-transcription source reference)', () => {
+  test('parses an absolute sourceMedia path (Cyrillic + spaces)', () => {
+    const text = [
+      VALID_MINIMAL,
+      'sourceMedia: "/books/Урок 4/Академия Шраванам 2026-02-25 19_00.mp4"'
+    ].join('\n');
+    const { set, problems } = parseTranscriptsetYaml(text);
+    expect(problems).toEqual([]);
+    expect(set!.sourceMedia).toBe('/books/Урок 4/Академия Шраванам 2026-02-25 19_00.mp4');
+  });
+
+  test('absent / blank sourceMedia stays undefined (backward compatible)', () => {
+    expect(parseTranscriptsetYaml(VALID_MINIMAL).set!.sourceMedia).toBeUndefined();
+    expect(parseTranscriptsetYaml(`${VALID_MINIMAL}\nsourceMedia: "  "\n`).set!.sourceMedia).toBeUndefined();
+  });
+
+  test('invalid-source-media is non-blocking and drops the field', () => {
+    const { set, problems } = parseTranscriptsetYaml(`${VALID_MINIMAL}\nsourceMedia: 42\n`);
+    expect(problems.map(p => p.code)).toEqual(['invalid-source-media']);
+    expect(set).toBeDefined();
+    expect(set!.sourceMedia).toBeUndefined();
+  });
+
+  test('write → parse round-trips sourceMedia and preserves comments', () => {
+    const set: TranscriptSet = {
+      audioFolder: 'sources/audio/lesson-4',
+      transcriptFolder: 'transcription/lesson-4/transcripts',
+      mediaExtensions: ['.mp3'],
+      sourceMedia: '/abs/Академия Шраванам 2026-02-25 19_00.mp4',
+      files: [{ base: 'time[00:09:22][562]', verified: false, needsRework: false }]
+    };
+    const written = writeTranscriptsetYaml('# keep me\naudioFolder: old\ntranscriptFolder: old\n', set);
+    expect(written).toContain('# keep me');
+    const parsed = parseTranscriptsetYaml(written);
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.set!.sourceMedia).toBe('/abs/Академия Шраванам 2026-02-25 19_00.mp4');
+    expect(parsed.set!.files).toEqual(set.files);
+  });
+
+  test('writing a set without sourceMedia removes a stale key', () => {
+    const withSource = `${VALID_MINIMAL}\nsourceMedia: /old/path.mp4\n`;
+    const set = parseTranscriptsetYaml(VALID_MINIMAL).set!;
+    const written = writeTranscriptsetYaml(withSource, set);
+    expect(written).not.toContain('sourceMedia');
+  });
+
+  test('schema accepts sourceMedia and rejects a non-string', () => {
+    const validator = new TranscriptsetSchemaValidator();
+    expect(validator.validate('mem:/t.yaml', {
+      audioFolder: 'a', transcriptFolder: 't', sourceMedia: '/abs/x.mp4'
+    })).toEqual([]);
+    const errors = validator.validate('mem:/t.yaml', {
+      audioFolder: 'a', transcriptFolder: 't', sourceMedia: 42
+    });
+    expect(errors.length).toBeGreaterThan(0);
+  });
+});

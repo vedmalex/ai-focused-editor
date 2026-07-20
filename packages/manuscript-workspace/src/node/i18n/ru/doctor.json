@@ -62,7 +62,14 @@
       "problem-transcription-audio-not-ignored-detail": "В книге есть наборы транскриптов ({0}), но папка медиа {1} не указана в .gitignore. Аудио- и видеофайлы тяжёлые — добавьте «{1}» в .gitignore, чтобы они не попадали в git.",
       "problem-transcription-toolchain-label": "Инструменты транскрибации: {0} недоступен",
       "problem-transcription-toolchain-detail": "{1} {2} Эти инструменты необязательны — они нужны только для конвертации и распознавания медиа в наборах транскриптов.",
-      "report-more-files": "…и ещё {0}"
+      "report-more-files": "…и ещё {0}",
+      "problem-gitignore-theia-settings": "Добавить {0} в .gitignore, чтобы Groq API-ключ уровня рабочей области никогда не попал в коммит.",
+      "problem-transcription-setting-missing-label": "Не задана настройка транскрибации: {0}",
+      "problem-transcription-setting-missing-detail": "Выбранному движку распознавания нужна настройка {0}, но она не задана. {1} Транскрибация остаётся необязательной — это важно только при распознавании медиа для наборов транскриптов.",
+      "problem-transcription-dependency-missing-label": "Не хватает зависимости транскрибации: {0}",
+      "problem-transcription-dependency-missing-detail": "{1}. {2} Эти инструменты необязательны — они нужны только для конвертации и распознавания медиа для наборов транскриптов.",
+      "problem-transcription-groq-key-workspace-label": "Groq API-ключ рабочей области может попасть в git",
+      "problem-transcription-groq-key-workspace-detail": "mediaTranscription.groqApiKey задан на уровне РАБОЧЕЙ ОБЛАСТИ, поэтому секрет хранится в {0} внутри книги — а этот файл не в .gitignore, и ключ может попасть в коммит. Примените исправление, чтобы добавить {0} в .gitignore, или перенесите ключ в пользовательские настройки."
     }
   }
 }
