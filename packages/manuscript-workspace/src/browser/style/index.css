@@ -3987,22 +3987,70 @@ body.afe-proofreading-mode .lm-TabBar-toolbar .item {
   gap: 6px;
 }
 
-.afe-transcription-field {
-  display: flex;
-  flex-wrap: wrap;
+/* Each field element carries BOTH `afe-model-config-field` (ai-connect-theia,
+   which sets `flex-direction: column`) and `afe-transcription-field`. This row
+   layout must win DETERMINISTICALLY regardless of stylesheet order, so the
+   selectors are scoped by the panel class for higher specificity and set the
+   axis explicitly. Without that, the inherited column axis made the input's
+   `flex-basis` size its HEIGHT (tall boxes) and `align-items: center` stacked
+   the label/input/buttons into a centred column. */
+/* Each field element carries BOTH `afe-model-config-field` (ai-connect-theia,
+   which sets `flex-direction: column`) and `afe-transcription-field`, so the
+   axis is set explicitly here and the selectors are scoped by the panel class
+   to win deterministically regardless of stylesheet order. Without that, the
+   inherited column axis made the input's `flex-basis` size its HEIGHT (tall
+   boxes) and centred every control into a stack.
+
+   The panel lives in a NARROW side area, so a single horizontal row does not
+   fit. The label and the origin badge each take a full line; the input and its
+   Save/Clear buttons share one line, with the input taking the slack:
+
+       whisper-cli path
+       [ input .............. ] [Save] [Clear]
+       from: default                                                        */
+/* GRID, not flex, on purpose. The field element also carries
+   `afe-model-config-field` (ai-connect-theia) whose `flex-direction: column`
+   otherwise made the input's `flex-basis` size its HEIGHT — the tall boxes.
+   And this panel docks in a NARROW side area (~220px), where flex-wrap creates
+   a chicken-and-egg: items wrap first, then the lone input grows to fill its
+   line, so the buttons can never rejoin it. Grid places them deterministically
+   at any width:
+
+       whisper-cli path          <- label spans every column
+       [ input, full width ]     <- spans every column
+       from: default             <- origin badge spans every column
+       [Save] [Clear]            <- auto-placed side by side on the last row
+
+   Selectors are scoped by the panel class so they outrank the shared
+   `afe-model-config-field` rules regardless of stylesheet order. */
+.afe-transcription-settings .afe-transcription-field {
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
   align-items: center;
-  gap: 6px;
-  margin: 6px 0;
+  gap: 4px 6px;
+  margin: 8px 0;
 }
 
-.afe-transcription-field-label {
-  min-width: 140px;
+.afe-transcription-settings .afe-transcription-field-label,
+.afe-transcription-settings .afe-transcription-field > input,
+.afe-transcription-settings .afe-transcription-field > .afe-transcription-origin {
+  grid-column: 1 / -1;
+}
+
+.afe-transcription-settings .afe-transcription-field-label {
   font-weight: 500;
 }
 
-.afe-transcription-field input {
-  flex: 1 1 180px;
-  min-width: 120px;
+.afe-transcription-settings .afe-transcription-field input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/* Actions sit next to each other on the final row. */
+.afe-transcription-settings .afe-transcription-field button {
+  width: auto;
+  justify-self: start;
 }
 
 .afe-transcription-origin {
