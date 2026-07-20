@@ -21,6 +21,7 @@ export * from './excalidraw-canvas-ops';
 export * from './git-status-protocol';
 export * from './gitignore-utils';
 export * from './knowledge-templates';
+export * from './legacy-transcript-import';
 export * from './book-build-task-protocol';
 export * from './manuscript-workspace-protocol';
 export * from './narrative-entity-protocol';

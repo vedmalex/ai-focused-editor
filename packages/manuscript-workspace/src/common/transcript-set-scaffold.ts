@@ -133,6 +133,8 @@ export interface BuildTranscriptSetInput {
   mediaExtensions?: string[];
   /** STT language hint (e.g. `ru`); omitted = auto-detect. */
   language?: string;
+  /** Absolute path of the original source media (sidecar `sourceMedia`). */
+  sourceMedia?: string;
 }
 
 /**
@@ -146,11 +148,13 @@ export function buildTranscriptsetSkeleton(input: BuildTranscriptSetInput): Tran
     input.mediaExtensions && input.mediaExtensions.length > 0 ? input.mediaExtensions.slice() : [...DEFAULT_MEDIA_EXTENSIONS];
   const folders = transcriptSetFolders(input.slug);
   const language = input.language?.trim();
+  const sourceMedia = input.sourceMedia?.trim();
   return {
     audioFolder: folders.audioFolder,
     transcriptFolder: folders.transcriptFolder,
     mediaExtensions,
     ...(language ? { language } : {}),
+    ...(sourceMedia ? { sourceMedia } : {}),
     files: seedFilesFromMediaNames(input.mediaNames ?? [], mediaExtensions)
   };
 }

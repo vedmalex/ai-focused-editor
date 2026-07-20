@@ -66,6 +66,13 @@ export interface TranscriptSet {
   mediaExtensions: string[];
   /** BCP-47-ish language hint for STT (e.g. `ru`, `en`); empty = auto. */
   language?: string;
+  /**
+   * ABSOLUTE path of the original source media (or, for a referenced legacy
+   * import, its external chunk directory). Informational: records where the
+   * set's audio came from so a transcription can be re-run; the source itself
+   * is NOT copied into the book (owner decision).
+   */
+  sourceMedia?: string;
   /** Per-file verified/rework state, keyed by base name. */
   files: TranscriptFileState[];
 }

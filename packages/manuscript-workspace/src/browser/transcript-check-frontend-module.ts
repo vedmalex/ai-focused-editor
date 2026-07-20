@@ -22,6 +22,7 @@ import {
   TranscriptCheckCommandContribution,
   TranscriptCheckOpenHandler
 } from './transcript-check-open-handler';
+import { TranscriptIngestContribution } from './transcript-ingest-contribution';
 
 /**
  * Standalone frontend module for the Transcript Check editor (audio transcript
@@ -60,4 +61,9 @@ export default new ContainerModule(bind => {
   bind(MenuContribution).toService(TranscriptCheckCommandContribution);
   bind(KeybindingContribution).toService(TranscriptCheckCommandContribution);
   bind(FrontendApplicationContribution).toService(TranscriptCheckCommandContribution);
+
+  // The "Transcribe..." ingest wizard (legacy import + new-transcription pipeline).
+  bind(TranscriptIngestContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(TranscriptIngestContribution);
+  bind(MenuContribution).toService(TranscriptIngestContribution);
 });
