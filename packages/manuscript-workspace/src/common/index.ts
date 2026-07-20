@@ -13,6 +13,7 @@ export * from './entity-hover';
 export * from './generated-image';
 export * from './image-crop';
 export * from './image-mime';
+export * from './media-mime';
 export * from './entity-mentions';
 export * from './entity-type-registry';
 export * from './text-range';

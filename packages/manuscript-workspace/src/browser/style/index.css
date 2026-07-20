@@ -2238,6 +2238,106 @@
 }
 
 /* ============================================================================
+   Media viewer (MediaViewerWidget) — audio/video preview, image-viewer pattern
+   ========================================================================== */
+
+.afe-media-viewer-widget {
+  height: 100%;
+  overflow: hidden;
+}
+
+.afe-media-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.afe-media-viewer-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--theia-editorGroup-border, var(--theia-panel-border));
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-foreground);
+}
+
+.afe-media-viewer-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.afe-media-viewer-size {
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-media-viewer-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background-color: var(--theia-editor-background);
+}
+
+.afe-media-viewer-audio {
+  width: 100%;
+  max-width: 560px;
+}
+
+.afe-media-viewer-video {
+  max-width: 100%;
+  max-height: 100%;
+  background: #000;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
+
+.afe-media-viewer-message {
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: var(--theia-foreground);
+  background: var(--theia-editorWidget-background, var(--theia-editor-background));
+  border: 1px solid var(--theia-editorWidget-border, var(--theia-panel-border));
+  border-radius: 6px;
+}
+
+.afe-media-viewer-message-icon {
+  font-size: 28px;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-media-viewer-message-text {
+  font-size: var(--theia-ui-font-size1);
+  line-height: 1.4;
+}
+
+.afe-media-viewer-message-size {
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-media-viewer-status {
+  padding: 12px 16px;
+  color: var(--theia-foreground);
+  font-size: var(--theia-ui-font-size1);
+}
+
+.afe-media-viewer-status.error {
+  color: var(--theia-errorForeground);
+}
+
+/* ============================================================================
    Writing Mode + mobile ergonomics (WritingModeContribution)
    ----------------------------------------------------------------------------
    Two independent layers:

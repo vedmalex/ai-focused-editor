@@ -81,6 +81,9 @@
       "frontend": "lib/browser/image-viewer-frontend-module"
     },
     {
+      "frontend": "lib/browser/media-viewer-frontend-module"
+    },
+    {
       "frontend": "lib/browser/citation-editor-frontend-module"
     },
     {
