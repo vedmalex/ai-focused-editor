@@ -55,6 +55,7 @@ When spawning `Agent(subagent_type=\"mb3-critic\")`, require: SINGLE-PASS per di
 - CD-39 attribution narrowing: concurrent DIFFERENT-task critics are WRITE-atomic (TASK-489) but NOT attribution-safe (a drifted critic's envelope `task_id` is trusted at capture; TASK-530 adds only an advisory signal, not a hard reject) — prefer SEQUENTIAL dispatch when task-attribution certainty matters, until dispatch-context task_id plumbing exists.
 - Meta-cognition guard (TASK-544 D3/UR-004): a repeated REVISE is LEGITIMATE design feedback, NOT evidence the gate is broken; a `missing_envelope` / capture-oscillation is an ORTHOGONAL runtime capture-mechanism bug — do NOT conflate them or treat repeated REVISE as a defect that waives the findings.
 - Prompt-discipline (TASK-544 D7.2/UR-004): instruct the critic to emit ONLY the clean v2 envelope; free-form CAR analysis goes ABOVE the envelope as PROSE, NEVER as an extra top-level envelope field (`report_markdown` / `rendered_markdown` / `date` / `report` / `summary`). The fenced envelope MUST be the ABSOLUTE FINAL element of the critic's output.
+- Custom-lens consumption mandate (TASK-614 / REQ-043): when a gate's `lens_ids` resolve to a plugin-declared `critic.extensions[].lens_file` extension (see `plugin-loader/types.ts` `CriticExtensionDeclaration.lens_file`), the orchestrator MUST call `buildCustomLensInjection(snapshot, lensIds)` (critic-extension-bridge.ts) and include the returned block in the critic prompt, OR give the critic the explicit absolute lens-file path as a self-Read fallback. The critic is `Read`/`Glob`/`Grep`-only with no MCP — without this injection (or path) it cannot see the plugin's lens content at all. Orchestration-discipline only (no runtime spawn-time auto-injector — CD-39); same pattern as the CD-65 inject-requests.md / inject-rendered-evidence rules.
 
 ### MB3 Interaction Discipline (live-requirement capture)
 
@@ -86,6 +87,9 @@ Portable coding-discipline rules distributed from the central CD registry. Fetch
 - **CD-63** — DST coverage is mandatory for simulatable behavior changes (user directive 2026-06-22)
 - **CD-65** — Graceful recovery over rigid reject (flexibility-by-default, stakes-calibrated)
 - **CD-66** — MB3 Interaction Discipline: live-requirement CAPTURE, VISIBILITY, INTERACTIVE choices, and CAPTURE-AND-VERIFY (user directive 2026-06-29, TASK-507)
+- **CD-68** — Human-in-the-loop authoritative DA gate (user-approval authority, TASK-578)
+- **CD-69** — Living-task develop-as-you-go mode (opt-in resident workflow, TASK-579)
+- **CD-70** — Incremental (scoped) DA re-review: iteration-1 full, scoped re-dispatch after REVISE under the inductive-coverage contract (TASK-603, REQ-052)
 <!-- MB3_MANAGED_END -->
 
 <!-- LLM_WIKI_MANAGED_START -->
