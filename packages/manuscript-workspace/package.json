@@ -123,6 +123,9 @@
       "frontend": "lib/browser/book-doctor-frontend-module"
     },
     {
+      "frontend": "lib/browser/transcription-settings-frontend-module"
+    },
+    {
       "frontend": "lib/browser/welcome-frontend-module"
     },
     {

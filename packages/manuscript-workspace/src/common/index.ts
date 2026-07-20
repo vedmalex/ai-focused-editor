@@ -49,6 +49,7 @@ export * from './transcript-set-model';
 export * from './transcript-set-scaffold';
 export * from './transcript-sidecar';
 export * from './transcript-speakers';
+export * from './transcription-settings';
 export * from './source-library-protocol';
 export * from './word-at-offset';
 export * from './yaml-schema-validator';

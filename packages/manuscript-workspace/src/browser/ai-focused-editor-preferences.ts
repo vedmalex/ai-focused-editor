@@ -30,6 +30,16 @@ export const AI_FOCUSED_EDITOR_LIBRARY_PATH = 'aiFocusedEditor.library.path';
  * tells the user which ones to set. The frontend reads these and passes the
  * values into `AudioConversionService` requests (the backend never reads
  * preferences directly).
+ *
+ * SCOPE (owner decision): every transcription setting is settable BOTH
+ * globally (user, `~/.theia/settings.json`) AND per-project
+ * (`<workspace>/.theia/settings.json`), with the normal Theia cascade
+ * (workspace overrides user). In Theia a property's `scope` is the MAXIMUM
+ * scope where it can be set (`PreferenceScope.Folder` = 3 is the permissive
+ * one: User, Workspace, and Folder all pass `isValidInScope`), so no key here
+ * declares `PreferenceScope.User` — that would BLOCK workspace-level values.
+ * The schema's top-level `scope: PreferenceScope.Folder` is the default for
+ * keys without an explicit scope.
  */
 export const MEDIA_TRANSCRIPTION_FFMPEG_PATH = 'mediaTranscription.ffmpegPath';
 export const MEDIA_TRANSCRIPTION_FFPROBE_PATH = 'mediaTranscription.ffprobePath';
@@ -69,31 +79,31 @@ export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
     [AI_FOCUSED_EDITOR_LIBRARY_PATH]: {
       type: 'string',
       default: '',
-      scope: PreferenceScope.User,
+      scope: PreferenceScope.Folder,
       description: nls.localize('ai-focused-editor/ai-config/pref-library-path-desc', 'Folder that holds your books. When set, the welcome page shows a "My Books" catalog built by scanning this folder\'s immediate subfolders (one or two levels deep) for book folders (a folder containing manifest.yaml). Leave empty to hide the catalog. Set it from the welcome page with "Choose books folder...".')
     },
     [MEDIA_TRANSCRIPTION_FFMPEG_PATH]: {
       type: 'string',
       default: '',
-      scope: PreferenceScope.User,
+      scope: PreferenceScope.Folder,
       description: nls.localize('ai-focused-editor/media-transcription/pref-ffmpeg-path-desc', 'Absolute path to the ffmpeg binary used by media transcription. Leave empty to use "ffmpeg" from PATH. Install with "brew install ffmpeg" on macOS.')
     },
     [MEDIA_TRANSCRIPTION_FFPROBE_PATH]: {
       type: 'string',
       default: '',
-      scope: PreferenceScope.User,
+      scope: PreferenceScope.Folder,
       description: nls.localize('ai-focused-editor/media-transcription/pref-ffprobe-path-desc', 'Absolute path to the ffprobe binary used by media transcription. Leave empty to use "ffprobe" from PATH (ffprobe ships with ffmpeg).')
     },
     [MEDIA_TRANSCRIPTION_WHISPER_CLI_PATH]: {
       type: 'string',
       default: '',
-      scope: PreferenceScope.User,
+      scope: PreferenceScope.Folder,
       description: nls.localize('ai-focused-editor/media-transcription/pref-whisper-cli-desc', 'Absolute path to whisper.cpp\'s whisper-cli binary (<whisper.cpp>/build/bin/whisper-cli) for the local transcription backend. Run the media-transcription doctor to verify.')
     },
     [MEDIA_TRANSCRIPTION_MODEL_PATH]: {
       type: 'string',
       default: '',
-      scope: PreferenceScope.User,
+      scope: PreferenceScope.Folder,
       description: nls.localize('ai-focused-editor/media-transcription/pref-model-path-desc', 'Absolute path to the whisper ggml model file (models/ggml-<name>.bin) for the local transcription backend. Download one with whisper.cpp\'s models/download-ggml-model.sh.')
     },
     [MEDIA_TRANSCRIPTION_LANGUAGE]: {
@@ -121,8 +131,8 @@ export const aiFocusedEditorPreferenceSchema: PreferenceSchema = {
     [MEDIA_TRANSCRIPTION_GROQ_API_KEY]: {
       type: 'string',
       default: '',
-      scope: PreferenceScope.User,
-      description: nls.localize('ai-focused-editor/media-transcription/pref-groq-key-desc', 'Groq API key (secret — stored in user settings, never logged). Comma-separate multiple keys to rotate on rate limits. Get a key at https://console.groq.com.')
+      scope: PreferenceScope.Folder,
+      description: nls.localize('ai-focused-editor/media-transcription/pref-groq-key-desc', 'Groq API key (secret — never logged). Comma-separate multiple keys to rotate on rate limits. Get a key at https://console.groq.com. CAUTION: a workspace-scope value lands in <book>/.theia/settings.json and can be committed to git — prefer user scope, or gitignore .theia/settings.json.')
     },
     [MEDIA_TRANSCRIPTION_SEGMENT_SECONDS]: {
       type: 'number',

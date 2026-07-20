@@ -21,11 +21,16 @@ import {
   obsidianPluginFindings,
   preferredEntityLabel,
   scaffoldFixes,
+  transcriptionDependencyFindings,
   transcriptionGitignoreFindings,
+  transcriptionSecretChecks,
+  transcriptionSettingFindings,
   transcriptionToolchainFindings,
+  THEIA_SETTINGS_GITIGNORE_ENTRY,
   type EntityCardRef,
   type EntityTagOccurrence,
-  type TranscriptionCheckInput
+  type TranscriptionCheckInput,
+  type TranscriptionSettingsSnapshot
 } from './book-doctor';
 import {
   BASE_ENTITY_TYPES,
@@ -784,6 +789,227 @@ describe('transcription checks', () => {
       manifestRows: []
     });
     expect(report.findings.some(finding => finding.kind === 'transcription')).toBe(false);
+  });
+});
+
+describe('transcriptionSettingFindings (missing SETTINGS per backend)', () => {
+  const localSettings = (overrides: Partial<TranscriptionSettingsSnapshot> = {}): TranscriptionSettingsSnapshot => ({
+    backend: 'local',
+    whisperCliPath: '/opt/whisper/build/bin/whisper-cli',
+    modelPath: '/opt/whisper/models/ggml-large-v3-turbo.bin',
+    groqModel: 'whisper-large-v3-turbo',
+    ...overrides
+  });
+
+  test('local backend: unset whisperCliPath and modelPath become one setting finding each', () => {
+    const findings = transcriptionSettingFindings({
+      setCount: 1,
+      settings: localSettings({ whisperCliPath: '', modelPath: undefined })
+    });
+    expect(findings).toHaveLength(2);
+    for (const finding of findings) {
+      expect(finding.kind).toBe('transcription');
+      expect(finding.severity).toBe('warning');
+      expect(finding.code).toBe('transcription-setting-missing');
+    }
+    expect(findings[0].params?.[0]).toBe('mediaTranscription.whisperCliPath');
+    expect(findings[1].params?.[0]).toBe('mediaTranscription.modelPath');
+    // What-to-set advice is carried in the params/detail.
+    expect(String(findings[0].params?.[1])).toContain('mediaTranscription.whisperCliPath');
+    expect(String(findings[1].params?.[1])).toContain('download-ggml-model.sh');
+  });
+
+  test('local backend: fully configured yields nothing (Groq settings irrelevant)', () => {
+    expect(transcriptionSettingFindings({
+      setCount: 1,
+      settings: localSettings({ groqApiKeys: undefined, groqModel: undefined })
+    })).toEqual([]);
+  });
+
+  test('groq backend: no keys and a blank model become setting findings', () => {
+    const findings = transcriptionSettingFindings({
+      setCount: 1,
+      settings: { backend: 'groq', groqApiKeys: [], groqModel: '  ' }
+    });
+    expect(findings.map(finding => finding.params?.[0])).toEqual([
+      'mediaTranscription.groqApiKey',
+      'mediaTranscription.groqModel'
+    ]);
+    expect(String(findings[0].params?.[1])).toContain('console.groq.com');
+  });
+
+  test('groq backend: keys + model configured yields nothing (local settings irrelevant)', () => {
+    expect(transcriptionSettingFindings({
+      setCount: 1,
+      settings: { backend: 'groq', groqApiKeys: ['gsk_a', 'gsk_b'], groqModel: 'whisper-large-v3' }
+    })).toEqual([]);
+  });
+
+  test('prefers the backend toolchain advice string for the matching failed check', () => {
+    const findings = transcriptionSettingFindings({
+      setCount: 1,
+      settings: localSettings({ whisperCliPath: '' }),
+      toolchain: {
+        ok: false,
+        checks: [{
+          id: 'whisper-cli',
+          label: 'whisper-cli',
+          ok: false,
+          detail: 'mediaTranscription.whisperCliPath is not set',
+          advice: 'BACKEND ADVICE: build whisper.cpp.'
+        }]
+      }
+    });
+    expect(findings).toHaveLength(1);
+    expect(findings[0].params?.[1]).toBe('BACKEND ADVICE: build whisper.cpp.');
+    expect(findings[0].detail).toContain('BACKEND ADVICE');
+  });
+
+  test('skipped without sets or without a settings snapshot', () => {
+    expect(transcriptionSettingFindings({ setCount: 0, settings: { backend: 'local' } })).toEqual([]);
+    expect(transcriptionSettingFindings({ setCount: 2 })).toEqual([]);
+  });
+});
+
+describe('transcriptionDependencyFindings (missing DEPENDENCIES)', () => {
+  const report = (checks: Array<{ id: string; ok: boolean; detail?: string; advice?: string }>) => ({
+    ok: checks.every(check => check.ok),
+    checks: checks.map(check => ({
+      id: check.id as never,
+      label: check.id,
+      ok: check.ok,
+      detail: check.detail ?? `probed ${check.id}`,
+      advice: check.advice
+    }))
+  });
+
+  test('ffmpeg/ffprobe failures are always dependencies (PATH lookup is a valid config)', () => {
+    const findings = transcriptionDependencyFindings({
+      setCount: 1,
+      settings: { backend: 'local', whisperCliPath: '/cli', modelPath: '/model' },
+      toolchain: report([
+        { id: 'ffmpeg', ok: false, detail: 'ffmpeg not found on PATH', advice: 'Install ffmpeg.' },
+        { id: 'ffprobe', ok: true }
+      ])
+    });
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe('transcription-dependency-missing');
+    expect(findings[0].severity).toBe('warning');
+    expect(findings[0].params).toEqual(['ffmpeg', 'ffmpeg not found on PATH', 'Install ffmpeg.']);
+  });
+
+  test('a CONFIGURED-but-broken whisper-cli/model is a dependency, an UNSET one is not (already a setting finding)', () => {
+    const toolchain = report([
+      { id: 'whisper-cli', ok: false, detail: 'whisper-cli is missing or not executable: /cli', advice: 'Build it.' },
+      { id: 'model', ok: false, detail: 'mediaTranscription.modelPath is not set', advice: 'Download a model.' }
+    ]);
+    const findings = transcriptionDependencyFindings({
+      setCount: 1,
+      settings: { backend: 'local', whisperCliPath: '/cli', modelPath: '' },
+      toolchain
+    });
+    expect(findings).toHaveLength(1);
+    expect(findings[0].params?.[0]).toBe('whisper-cli');
+  });
+
+  test('an unset groq key never becomes a dependency finding', () => {
+    const findings = transcriptionDependencyFindings({
+      setCount: 1,
+      settings: { backend: 'groq', groqApiKeys: [] },
+      toolchain: report([{ id: 'groq-api-key', ok: false, detail: 'no Groq API key configured', advice: 'Set the key.' }])
+    });
+    expect(findings).toEqual([]);
+  });
+
+  test('skipped without sets, toolchain report, or settings snapshot', () => {
+    const toolchain = report([{ id: 'ffmpeg', ok: false }]);
+    expect(transcriptionDependencyFindings({ setCount: 0, settings: { backend: 'local' }, toolchain })).toEqual([]);
+    expect(transcriptionDependencyFindings({ setCount: 1, settings: { backend: 'local' } })).toEqual([]);
+    expect(transcriptionDependencyFindings({ setCount: 1, toolchain })).toEqual([]);
+  });
+
+  test('assembleBookDoctorReport splits SETTING vs DEPENDENCY when the snapshot is present', () => {
+    const report_ = assembleBookDoctorReport({
+      scaffoldEntries: bookScaffoldEntries(),
+      exists: () => true,
+      contentHasMarkdown: true,
+      manifestExists: false,
+      manifestRows: [],
+      transcription: {
+        setCount: 1,
+        gitignoreContent: 'sources/audio/\n',
+        settings: { backend: 'local', whisperCliPath: '', modelPath: '/model.bin' },
+        toolchain: {
+          ok: false,
+          checks: [
+            { id: 'ffmpeg', label: 'ffmpeg', ok: false, detail: 'ffmpeg not found on PATH', advice: 'Install ffmpeg.' },
+            { id: 'ffprobe', label: 'ffprobe', ok: true, detail: 'ffprobe found on PATH' },
+            { id: 'whisper-cli', label: 'whisper-cli', ok: false, detail: 'mediaTranscription.whisperCliPath is not set', advice: 'Set it.' },
+            { id: 'model', label: 'ggml model', ok: false, detail: 'model file does not exist: /model.bin', advice: 'Download one.' }
+          ]
+        }
+      }
+    });
+    const codes = report_.findings.map(finding => finding.code);
+    expect(codes).toContain('transcription-setting-missing');
+    expect(codes).toContain('transcription-dependency-missing');
+    // The legacy combined code never appears once the snapshot is present.
+    expect(codes).not.toContain('transcription-toolchain');
+    const settingFindings = report_.findings.filter(finding => finding.code === 'transcription-setting-missing');
+    const dependencyFindings = report_.findings.filter(finding => finding.code === 'transcription-dependency-missing');
+    expect(settingFindings.map(finding => finding.params?.[0])).toEqual(['mediaTranscription.whisperCliPath']);
+    expect(dependencyFindings.map(finding => finding.params?.[0])).toEqual(['ffmpeg', 'ggml model']);
+  });
+});
+
+describe('transcriptionSecretChecks (workspace-scope Groq key hygiene)', () => {
+  test('workspace-scoped key without gitignore coverage yields the advisory + the .gitignore fix', () => {
+    const { finding, fix } = transcriptionSecretChecks({
+      groqApiKeyWorkspaceScoped: true,
+      gitignoreContent: 'node_modules/\n'
+    });
+    expect(finding?.kind).toBe('transcription');
+    expect(finding?.severity).toBe('warning');
+    expect(finding?.code).toBe('transcription-groq-key-workspace');
+    expect(finding?.detail).toContain(THEIA_SETTINGS_GITIGNORE_ENTRY);
+    expect(fix?.path).toBe('.gitignore');
+    expect(fix?.code).toBe('gitignore-theia-settings');
+    expect(fix?.gitignore?.entry).toBe(THEIA_SETTINGS_GITIGNORE_ENTRY);
+  });
+
+  test('also fires when .gitignore is absent entirely', () => {
+    const { finding, fix } = transcriptionSecretChecks({ groqApiKeyWorkspaceScoped: true });
+    expect(finding).toBeDefined();
+    expect(fix).toBeDefined();
+  });
+
+  test('silent when .theia/ or .theia/settings.json is already ignored (slash variants count)', () => {
+    expect(transcriptionSecretChecks({
+      groqApiKeyWorkspaceScoped: true,
+      gitignoreContent: '.theia/\n'
+    })).toEqual({});
+    expect(transcriptionSecretChecks({
+      groqApiKeyWorkspaceScoped: true,
+      gitignoreContent: '/.theia/settings.json\n'
+    })).toEqual({});
+  });
+
+  test('silent when the key is not workspace-scoped', () => {
+    expect(transcriptionSecretChecks({ groqApiKeyWorkspaceScoped: false })).toEqual({});
+  });
+
+  test('assembleBookDoctorReport surfaces the secret advisory + fix, independent of transcript sets', () => {
+    const report = assembleBookDoctorReport({
+      scaffoldEntries: bookScaffoldEntries(),
+      exists: () => true,
+      contentHasMarkdown: true,
+      manifestExists: false,
+      manifestRows: [],
+      // NO transcription input at all — the secret check is not set-gated.
+      transcriptionSecret: { groqApiKeyWorkspaceScoped: true, gitignoreContent: '' }
+    });
+    expect(report.findings.some(finding => finding.code === 'transcription-groq-key-workspace')).toBe(true);
+    expect(report.fixes.some(fix => fix.code === 'gitignore-theia-settings')).toBe(true);
   });
 });
 
