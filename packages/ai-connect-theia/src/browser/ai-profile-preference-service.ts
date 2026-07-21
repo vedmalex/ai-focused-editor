@@ -29,6 +29,17 @@ import { buildUnconfiguredAiProfileStatus, type AiProfileStatus } from './ai-pro
 export type { AiProfileStatus } from './ai-profile-status';
 
 /**
+ * Scope a caller wants `setWorkspacePreference` writes to land in. `'folder'`
+ * is the pre-existing default behavior (Folder scope at the workspace root,
+ * falling back to `updateValue` when there is no root). `'user'` targets
+ * `PreferenceScope.User` explicitly, independent of any workspace.
+ */
+export type AiSettingsWriteScope = 'user' | 'folder';
+
+/** Effective scope a preference value currently resolves from, per `inspect`. */
+export type AiPreferenceEffectiveScope = 'folder' | 'workspace' | 'user' | 'default';
+
+/**
  * AI connection registry over the two-level ENDPOINT + ALIAS model. Endpoints
  * (channels) and aliases (ordered endpoint+model failover chains) are persisted
  * in workspace preferences; API keys live in a user-scope map keyed by endpoint
@@ -42,6 +53,34 @@ export class AiProfilePreferenceService {
 
   @inject(WorkspaceService)
   protected readonly workspaceService!: WorkspaceService;
+
+  /**
+   * Default scope for `setWorkspacePreference` calls that omit an explicit
+   * scope argument. `'folder'` preserves today's behavior byte-for-byte;
+   * switching to `'user'` (via `setWriteScope`) redirects future writes to
+   * `PreferenceScope.User` without touching any call site. Secret writes
+   * (`setApiKey`/`deleteEndpoint`'s key cleanup) never consult this — they
+   * are hardcoded to `PreferenceScope.User`.
+   */
+  protected writeScope: AiSettingsWriteScope = 'folder';
+
+  getWriteScope(): AiSettingsWriteScope {
+    return this.writeScope;
+  }
+
+  setWriteScope(scope: AiSettingsWriteScope): void {
+    this.writeScope = scope;
+  }
+
+  /**
+   * Public snapshot of the user-scope API-key map keyed by endpoint id, for the
+   * explicit "export secrets" flow. Returns a copy so callers cannot mutate the
+   * stored preference; secrets still leave the editor only through the guarded
+   * `saveSecretsToLayer` path after user consent.
+   */
+  getApiKeys(): Record<string, string> {
+    return { ...this.readApiKeys() };
+  }
 
   async getConfiguredProfile(resourceUri?: string): Promise<AiConnectionProfile | undefined> {
     const status = await this.getStatus(resourceUri);
@@ -441,7 +480,15 @@ export class AiProfilePreferenceService {
     });
   }
 
-  protected async setWorkspacePreference(preferenceName: string, value: unknown): Promise<void> {
+  protected async setWorkspacePreference(
+    preferenceName: string,
+    value: unknown,
+    scope: AiSettingsWriteScope = this.writeScope
+  ): Promise<void> {
+    if (scope === 'user') {
+      await this.preferenceService.set(preferenceName, value, PreferenceScope.User);
+      return;
+    }
     await this.workspaceService.ready;
     const root = this.workspaceService.tryGetRoots()[0] ?? (await this.workspaceService.roots)[0];
     const resourceUri = root?.resource.toString();
@@ -454,5 +501,27 @@ export class AiProfilePreferenceService {
 
   protected getPreferenceText(preferenceName: string, resourceUri?: string): string {
     return (this.readMigrated<string>(preferenceName, '', resourceUri) ?? '').trim();
+  }
+
+  /**
+   * The scope a preference's currently-active value actually resolves from,
+   * for UI source badges: Folder > Workspace > User > default (mirrors
+   * `PreferenceService.inspect`'s own precedence).
+   */
+  getPreferenceEffectiveScope(preferenceName: string, resourceUri?: string): AiPreferenceEffectiveScope {
+    const inspection = this.preferenceService.inspect(preferenceName, resourceUri);
+    if (!inspection) {
+      return 'default';
+    }
+    if (inspection.workspaceFolderValue !== undefined) {
+      return 'folder';
+    }
+    if (inspection.workspaceValue !== undefined) {
+      return 'workspace';
+    }
+    if (inspection.globalValue !== undefined) {
+      return 'user';
+    }
+    return 'default';
   }
 }

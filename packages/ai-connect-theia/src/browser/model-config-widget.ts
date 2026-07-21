@@ -7,6 +7,8 @@ import URI from '@theia/core/lib/common/uri';
 import { nls } from '@theia/core/lib/common/nls';
 import { PreferenceService } from '@theia/core/lib/common/preferences';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { ConfirmDialog } from '@theia/core/lib/browser';
+import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { FileDialogService } from '@theia/filesystem/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import {
@@ -23,11 +25,19 @@ import type {
   AliasCheckVerdict,
   AliasLegVerdict,
   EndpointCheckVerdict,
+  RegistryFileLayer,
   StoredAiEndpoint,
   V1AliasesFile,
   V1EndpointsFile
 } from '../common';
-import { AiConnectionService, parseV1Import } from '../common';
+import {
+  AiConnectionService,
+  ConnectionRegistryFileService,
+  keysToSecretsFragment,
+  parseV1Import,
+  storedFromRegistry,
+  storedToRegistry
+} from '../common';
 import { AiVerificationService } from './ai-verification-service';
 import { AiCapabilityService } from './ai-capability-service';
 import { AiHealthService } from './ai-health-service';
@@ -40,7 +50,11 @@ import {
   AiProfilePreferenceService,
   AiProfileStatus
 } from './ai-profile-preference-service';
-import { AI_CONNECT_WATCHED_PREFERENCES } from './ai-connect-preferences';
+import {
+  AI_CONNECT_ALIASES,
+  AI_CONNECT_ENDPOINTS,
+  AI_CONNECT_WATCHED_PREFERENCES
+} from './ai-connect-preferences';
 // Watch both the new aiConnect.* keys and their legacy equivalents so an
 // external edit of either refreshes the view.
 const AI_PROFILE_PREFERENCE_KEYS = [...AI_CONNECT_WATCHED_PREFERENCES];
@@ -102,6 +116,12 @@ export class ModelConfigWidget extends ReactWidget {
   @inject(FileService)
   protected readonly fileService!: FileService;
 
+  @inject(ConnectionRegistryFileService)
+  protected readonly registryFiles!: ConnectionRegistryFileService;
+
+  @inject(WorkspaceService)
+  protected readonly workspaceService!: WorkspaceService;
+
   protected readonly providerCatalog: AiProviderCatalogEntry[] = getAiProviderCatalog();
   protected status: AiProfileStatus | undefined;
   // Read-only capabilities of the active alias's resolved route (undefined =
@@ -125,6 +145,14 @@ export class ModelConfigWidget extends ReactWidget {
   // Live connection-health check (per configured alias); no cache, runs on click.
   protected checkingHealth = false;
   protected healthResults: AiEndpointHealth[] | undefined;
+  // Connections file (v2) import/export: which on-disk layer to target, the
+  // custom path when 'custom' is chosen, and whether the export should also
+  // write the API keys to the sibling connections.secrets.json.
+  protected registryLayerChoice: 'user' | 'project' | 'custom' = 'user';
+  protected registryCustomPath = '';
+  protected exportSecretsConsent = false;
+  // Resolved absolute path of the selected layer (display-only, resolved via RPC).
+  protected resolvedLayerPath = '';
   protected readonly refreshDisposables = new DisposableCollection();
 
   @postConstruct()
@@ -167,6 +195,9 @@ export class ModelConfigWidget extends ReactWidget {
       }
     }
     this.update();
+    // Resolve the selected layer's on-disk path for display (RPC to the backend);
+    // re-renders when it lands. Non-blocking so refresh() itself stays fast.
+    void this.updateResolvedLayerPath();
   }
 
   protected render(): React.ReactNode {
@@ -179,6 +210,7 @@ export class ModelConfigWidget extends ReactWidget {
       'div',
       { className: 'afe-model-config' },
       React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-config/connections-heading', 'AI Connections')),
+      this.renderWriteScopeSelector(),
       this.renderTopStatus(status),
       this.renderCapabilities(),
       this.renderHealthSection(),
@@ -207,6 +239,92 @@ export class ModelConfigWidget extends ReactWidget {
       { className: status.configured ? 'afe-model-config-status ok' : 'afe-model-config-status missing' },
       message
     );
+  }
+
+  // ===========================================================================
+  // Write-scope selector + source badges (explicit user/folder settings layer)
+  // ===========================================================================
+
+  /**
+   * Header segment choosing which preference layer new writes land in:
+   * "User Settings" (PreferenceScope.User) vs "This Folder" (workspace root).
+   * The choice is transient (defaults to 'folder', i.e. today's behavior) and
+   * only redirects future writes — it never moves existing values.
+   */
+  protected renderWriteScopeSelector(): React.ReactNode {
+    const scope = this.aiProfilePreferences.getWriteScope();
+    const option = (value: 'user' | 'folder', label: string, title: string): React.ReactNode =>
+      React.createElement('button', {
+        key: value,
+        type: 'button',
+        className: `theia-button ${scope === value ? 'main' : 'secondary'} afe-write-scope-option`,
+        title,
+        onClick: () => this.setWriteScope(value)
+      }, label);
+    return React.createElement(
+      'div',
+      { className: 'afe-model-config-write-scope' },
+      React.createElement('span', { className: 'afe-model-config-help' },
+        nls.localize('ai-focused-editor/ai-config/write-scope-label', 'Save changes to:')),
+      option('user',
+        nls.localize('ai-focused-editor/ai-config/write-scope-user', 'User Settings'),
+        nls.localize('ai-focused-editor/ai-config/write-scope-user-title', 'Write new endpoint/alias changes to your user settings (shared across all folders)')),
+      option('folder',
+        nls.localize('ai-focused-editor/ai-config/write-scope-folder', 'This Folder'),
+        nls.localize('ai-focused-editor/ai-config/write-scope-folder-title', 'Write new endpoint/alias changes to this folder’s settings (overrides user settings here)'))
+    );
+  }
+
+  protected setWriteScope(scope: 'user' | 'folder'): void {
+    this.aiProfilePreferences.setWriteScope(scope);
+    this.update();
+  }
+
+  /** Section heading (Endpoints/Aliases) with a source-layer badge for its preference. */
+  protected renderSectionHeading(title: string, preferenceName: string): React.ReactNode {
+    return React.createElement(
+      'div',
+      { className: 'afe-model-config-section-heading' },
+      React.createElement('h3', undefined, title),
+      this.renderSourceBadge(preferenceName)
+    );
+  }
+
+  /**
+   * A small badge showing which layer the preference's current value resolves
+   * from (Folder > Workspace > User > default). When the write scope is 'user'
+   * but the effective value comes from the folder, it also flags the Theia
+   * override precedence (Folder wins over User) so the user is not surprised.
+   */
+  protected renderSourceBadge(preferenceName: string): React.ReactNode {
+    const effective = this.aiProfilePreferences.getPreferenceEffectiveScope(preferenceName, this.getRootResourceUri());
+    const writeScope = this.aiProfilePreferences.getWriteScope();
+    const sourceLabel = this.effectiveScopeLabel(effective);
+    const children: React.ReactNode[] = [
+      React.createElement('span', { key: 'src', className: `afe-source-badge ${effective}` },
+        nls.localize('ai-focused-editor/ai-config/source-badge', 'source: {0}', sourceLabel))
+    ];
+    if (writeScope === 'user' && effective === 'folder') {
+      children.push(React.createElement('span', {
+        key: 'hint',
+        className: 'afe-source-badge override',
+        title: nls.localize('ai-focused-editor/ai-config/source-override-title', 'This folder’s value overrides your user settings here (Theia precedence: Folder > User). New writes go to user settings but the folder value still wins for this folder.')
+      }, nls.localize('ai-focused-editor/ai-config/source-override', 'folder overrides user')));
+    }
+    return React.createElement('span', { className: 'afe-source-badges' }, ...children);
+  }
+
+  protected effectiveScopeLabel(scope: 'folder' | 'workspace' | 'user' | 'default'): string {
+    switch (scope) {
+      case 'folder':
+        return nls.localize('ai-focused-editor/ai-config/scope-folder', 'this folder');
+      case 'workspace':
+        return nls.localize('ai-focused-editor/ai-config/scope-workspace', 'workspace');
+      case 'user':
+        return nls.localize('ai-focused-editor/ai-config/scope-user', 'user settings');
+      default:
+        return nls.localize('ai-focused-editor/ai-config/scope-default', 'default');
+    }
   }
 
   /**
@@ -358,7 +476,7 @@ export class ModelConfigWidget extends ReactWidget {
     return React.createElement(
       'div',
       { className: 'afe-model-config-section' },
-      React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-config/endpoints-heading', 'Endpoints')),
+      this.renderSectionHeading(nls.localize('ai-focused-editor/ai-config/endpoints-heading', 'Endpoints'), AI_CONNECT_ENDPOINTS),
       React.createElement(
         'p',
         { className: 'afe-model-config-help' },
@@ -946,7 +1064,7 @@ export class ModelConfigWidget extends ReactWidget {
     return React.createElement(
       'div',
       { className: 'afe-model-config-section' },
-      React.createElement('h3', undefined, nls.localize('ai-focused-editor/ai-config/aliases-heading', 'Aliases')),
+      this.renderSectionHeading(nls.localize('ai-focused-editor/ai-config/aliases-heading', 'Aliases'), AI_CONNECT_ALIASES),
       React.createElement(
         'p',
         { className: 'afe-model-config-help' },
@@ -1268,24 +1386,296 @@ export class ModelConfigWidget extends ReactWidget {
   }
 
   // ===========================================================================
-  // ai-editor v1 import
+  // Connections file (v2) — import/export + ai-editor v1 import
   // ===========================================================================
 
+  /** The workspace-root fs path anchoring the 'project' layer (undefined = no root). */
+  protected getProjectCwd(): string | undefined {
+    const root = this.workspaceService.tryGetRoots()[0];
+    return root ? root.resource.path.fsPath() : undefined;
+  }
+
+  /** The workspace-root resource URI, used to resolve folder-scope source badges. */
+  protected getRootResourceUri(): string | undefined {
+    return this.workspaceService.tryGetRoots()[0]?.resource.toString();
+  }
+
+  /** Map the current UI choice to a backend layer, or undefined when unusable. */
+  protected currentRegistryLayer(): RegistryFileLayer | undefined {
+    if (this.registryLayerChoice === 'user') {
+      return 'user';
+    }
+    if (this.registryLayerChoice === 'project') {
+      // The project layer needs a workspace root to anchor on.
+      return this.getProjectCwd() ? 'project' : undefined;
+    }
+    const path = this.registryCustomPath.trim();
+    return path ? { path } : undefined;
+  }
+
+  /** Resolve the selected layer's absolute path for the read-only display line. */
+  protected async updateResolvedLayerPath(): Promise<void> {
+    const layer = this.currentRegistryLayer();
+    if (!layer) {
+      this.resolvedLayerPath = '';
+      this.update();
+      return;
+    }
+    try {
+      this.resolvedLayerPath = await this.registryFiles.resolveLayerPath(layer, { cwd: this.getProjectCwd() });
+    } catch {
+      this.resolvedLayerPath = '';
+    }
+    this.update();
+  }
+
+  protected onRegistryLayerChoice(value: string): void {
+    if (value === 'user' || value === 'project' || value === 'custom') {
+      this.registryLayerChoice = value;
+      this.update();
+      void this.updateResolvedLayerPath();
+    }
+  }
+
   protected renderImportSection(): React.ReactNode {
-    return React.createElement(
+    const projectDisabled = !this.getProjectCwd();
+    const layer = this.currentRegistryLayer();
+    const children: React.ReactNode[] = [
+      React.createElement('h3', { key: 'heading' },
+        nls.localize('ai-focused-editor/ai-config/connections-file-heading', 'Connections file (v2)')),
+      React.createElement('p', { key: 'help', className: 'afe-model-config-help' },
+        nls.localize('ai-focused-editor/ai-config/connections-file-help', 'Export the current endpoints and aliases to a shareable ai-connect connections.json, or import one. Import/export is a one-time operation, not a live sync.')),
+      // Layer selector.
+      React.createElement(
+        'label',
+        { key: 'layer', className: 'afe-model-config-field' },
+        React.createElement('span', undefined, nls.localize('ai-focused-editor/ai-config/connections-layer', 'Layer')),
+        React.createElement(
+          'select',
+          {
+            value: this.registryLayerChoice,
+            onChange: (event: React.ChangeEvent<HTMLSelectElement>) => this.onRegistryLayerChoice(event.currentTarget.value)
+          },
+          React.createElement('option', { key: 'user', value: 'user' },
+            nls.localize('ai-focused-editor/ai-config/connections-layer-user', 'User (~/.config/ai-connect)')),
+          React.createElement('option', { key: 'project', value: 'project', disabled: projectDisabled },
+            nls.localize('ai-focused-editor/ai-config/connections-layer-project', 'Project (<workspace>/.config/ai-connect)')),
+          React.createElement('option', { key: 'custom', value: 'custom' },
+            nls.localize('ai-focused-editor/ai-config/connections-layer-custom', 'Custom file…'))
+        )
+      )
+    ];
+    if (this.registryLayerChoice === 'custom') {
+      children.push(React.createElement(
+        'label',
+        { key: 'custom-path', className: 'afe-model-config-field' },
+        React.createElement('span', undefined, nls.localize('ai-focused-editor/ai-config/connections-custom-path', 'File path')),
+        React.createElement('input', {
+          value: this.registryCustomPath,
+          placeholder: nls.localize('ai-focused-editor/ai-config/connections-custom-path-ph', 'absolute or workspace-relative path to a connections.json'),
+          onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
+            this.registryCustomPath = event.currentTarget.value;
+            this.update();
+            void this.updateResolvedLayerPath();
+          }
+        })
+      ));
+    }
+    // Read-only resolved path.
+    children.push(React.createElement(
+      'label',
+      { key: 'resolved', className: 'afe-model-config-field' },
+      React.createElement('span', undefined, nls.localize('ai-focused-editor/ai-config/connections-resolved-path', 'Resolved path')),
+      React.createElement('input', {
+        value: this.resolvedLayerPath || (this.registryLayerChoice === 'project' && projectDisabled
+          ? nls.localize('ai-focused-editor/ai-config/connections-no-workspace', '(no workspace folder open)')
+          : ''),
+        readOnly: true,
+        title: this.resolvedLayerPath
+      })
+    ));
+    // Export + secrets consent.
+    children.push(React.createElement(
       'div',
-      { className: 'afe-model-config-section afe-model-config-import' },
+      { key: 'export-actions', className: 'afe-model-config-actions' },
+      React.createElement('button', {
+        className: 'theia-button main',
+        type: 'button',
+        disabled: !layer,
+        onClick: () => { void this.exportConnections(); }
+      }, nls.localize('ai-focused-editor/ai-config/connections-export', 'Export connections.json…')),
+      React.createElement('button', {
+        className: 'theia-button secondary',
+        type: 'button',
+        disabled: !layer,
+        onClick: () => { void this.importConnections(); }
+      }, nls.localize('ai-focused-editor/ai-config/connections-import', 'Import connections.json…'))
+    ));
+    children.push(React.createElement(
+      'label',
+      { key: 'secrets-consent', className: 'afe-model-config-field afe-model-config-checkbox' },
+      React.createElement('input', {
+        type: 'checkbox',
+        checked: this.exportSecretsConsent,
+        onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
+          this.exportSecretsConsent = event.currentTarget.checked;
+          this.update();
+        }
+      }),
+      React.createElement('span', undefined,
+        nls.localize('ai-focused-editor/ai-config/connections-export-secrets', 'Also write API keys to connections.secrets.json'))
+    ));
+    // Security help text: cleartext secrets + the env-strip gap (F-D3.2-1).
+    children.push(React.createElement('p', { key: 'security-help', className: 'afe-model-config-help afe-model-config-warn' },
+      nls.localize(
+        'ai-focused-editor/ai-config/connections-security-help',
+        'API keys are never written to connections.json — the library strips auth.token before writing. Enabling the checkbox above writes keys in CLEARTEXT to a sibling connections.secrets.json, after a confirmation. Note: endpoint env values are written to connections.json as-is (the strip only covers auth.token, not env) — do not put secrets in env if you export.'
+      )));
+    // ai-editor v1 import (moved into this section; now backed by convertV1Registry).
+    children.push(React.createElement(
+      'div',
+      { key: 'v1-actions', className: 'afe-model-config-actions afe-model-config-import' },
       React.createElement('button', {
         className: 'theia-button secondary',
         type: 'button',
         onClick: () => { void this.importV1Settings(); }
-      }, nls.localize('ai-focused-editor/ai-config/import-v1', 'Import ai-editor v1 Settings...')),
-      React.createElement(
-        'span',
-        { className: 'afe-model-config-help' },
-        nls.localize('ai-focused-editor/ai-config/import-v1-help', 'Reads .config/rag-endpoints.json + rag-aliases.json and creates endpoints (keys → user settings) and aliases.')
-      )
-    );
+      }, nls.localize('ai-focused-editor/ai-config/import-v1', 'Import ai-editor v1 Settings...'))
+    ));
+    children.push(React.createElement('span', { key: 'v1-help', className: 'afe-model-config-help' },
+      nls.localize('ai-focused-editor/ai-config/import-v1-help', 'Reads .config/rag-endpoints.json + rag-aliases.json and creates endpoints (keys → user settings) and aliases.')));
+    return React.createElement('div', { className: 'afe-model-config-section afe-model-config-connections' }, ...children);
+  }
+
+  /** Export the current endpoints/aliases to the selected layer's connections.json. */
+  protected async exportConnections(): Promise<void> {
+    const layer = this.currentRegistryLayer();
+    if (!layer) {
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-config/connections-no-layer', 'Choose a valid connections.json layer first.'));
+      return;
+    }
+    const cwd = this.getProjectCwd();
+    const endpoints = this.aiProfilePreferences.readEndpoints();
+    const aliases = this.aiProfilePreferences.readAliases();
+    const activeAliasId = this.aiProfilePreferences.getActiveAliasId();
+    const registry = storedToRegistry(endpoints, aliases, { activeAliasId });
+    try {
+      const result = await this.registryFiles.saveToLayer(layer, registry, 'merge', { cwd });
+      // The library strips secret fields (e.g. auth.token) from the final document
+      // as a safety measure. In 'merge' mode this can also strip an inline secret
+      // that already existed in the on-disk file (from another tool), so a non-empty
+      // strippedFields is NOT necessarily a leak on our side — report it neutrally.
+      if (result.strippedFields.length > 0) {
+        // Developer diagnostic: our storedToRegistry whitelist should never emit
+        // secret fields, so if these came from OUR output it is a whitelist
+        // regression (the R2 test guards this). In 'merge' mode they may also be a
+        // foreign on-disk inline secret — benign. Log for diagnosis either way.
+        console.warn('[ai-connect] saveConnectionRegistry stripped fields on export:', result.strippedFields);
+        await this.messages.info(nls.localize(
+          'ai-focused-editor/ai-config/connections-export-stripped',
+          'Note: secret fields ({0}) were excluded from the exported file as a safety measure.',
+          result.strippedFields.join(', ')
+        ));
+      }
+      const backupSuffix = result.backupPath
+        ? nls.localize('ai-focused-editor/ai-config/connections-export-backup', ' (previous file backed up to {0})', result.backupPath)
+        : '';
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/ai-config/connections-export-done',
+        'Exported {0} endpoint(s) and {1} alias(es) to {2}{3}.',
+        registry.endpoints.length, (registry.aliases ?? []).length, result.path, backupSuffix
+      ));
+      if (this.exportSecretsConsent) {
+        await this.exportSecrets(layer, cwd, result.path);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.messages.error(nls.localize('ai-focused-editor/ai-config/connections-export-failed', 'Export failed: {0}', detail));
+    }
+  }
+
+  /** After explicit confirmation, write the API keys to connections.secrets.json. */
+  protected async exportSecrets(layer: RegistryFileLayer, cwd: string | undefined, registryPath: string): Promise<void> {
+    const keys = this.aiProfilePreferences.getApiKeys();
+    const secretCount = Object.keys(keys).filter(id => typeof keys[id] === 'string' && keys[id].trim().length > 0).length;
+    if (secretCount === 0) {
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-config/connections-no-secrets', 'No API keys are configured to export.'));
+      return;
+    }
+    // Must mirror the backend exactly: NodeConnectionRegistryFileService writes the
+    // sibling `connections.secrets.json` next to the resolved registry file
+    // (path.join(dirname(target), 'connections.secrets.json')). A `.replace()` on the
+    // file NAME silently diverges for a custom layer (e.g. `my-conn.json` stays
+    // unchanged), which would show the user one path in the consent dialog while the
+    // cleartext keys land in another — the consent would not be informed.
+    const lastSeparator = Math.max(registryPath.lastIndexOf('/'), registryPath.lastIndexOf('\\'));
+    const secretsPath = `${lastSeparator >= 0 ? registryPath.slice(0, lastSeparator + 1) : ''}connections.secrets.json`;
+    const confirmed = await new ConfirmDialog({
+      title: nls.localize('ai-focused-editor/ai-config/connections-secrets-title', 'Write API keys in cleartext?'),
+      msg: nls.localize(
+        'ai-focused-editor/ai-config/connections-secrets-confirm',
+        'This writes {0} API key(s) in CLEARTEXT to:\n{1}\nAnyone with read access to that file can read your keys. Continue?',
+        secretCount, secretsPath
+      ),
+      ok: nls.localize('ai-focused-editor/ai-config/connections-secrets-ok', 'Write secrets'),
+      cancel: nls.localize('ai-focused-editor/ai-config/cancel', 'Cancel')
+    }).open();
+    if (!confirmed) {
+      return;
+    }
+    try {
+      const result = await this.registryFiles.saveSecretsToLayer(layer, keysToSecretsFragment(keys), 'merge', { cwd });
+      await this.messages.info(nls.localize('ai-focused-editor/ai-config/connections-secrets-done', 'Wrote {0} API key(s) to {1}.', secretCount, result.path));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.messages.error(nls.localize('ai-focused-editor/ai-config/connections-secrets-failed', 'Writing secrets failed: {0}', detail));
+    }
+  }
+
+  /** Import a connections.json from the selected layer into preferences. */
+  protected async importConnections(): Promise<void> {
+    const layer = this.currentRegistryLayer();
+    if (!layer) {
+      await this.messages.warn(nls.localize('ai-focused-editor/ai-config/connections-no-layer', 'Choose a valid connections.json layer first.'));
+      return;
+    }
+    const cwd = this.getProjectCwd();
+    // Capture whether an active alias already exists BEFORE importing, so a
+    // document's declared default only takes effect when the user had none.
+    const hadActiveAlias = this.aiProfilePreferences.getActiveAliasId();
+    try {
+      const result = await this.registryFiles.loadFromLayer(layer, { cwd, includeSecrets: true });
+      if (!result.found) {
+        await this.messages.warn(nls.localize('ai-focused-editor/ai-config/connections-import-not-found', 'No connections.json found at {0}.', result.path));
+        return;
+      }
+      const converted = storedFromRegistry(result.registry);
+      for (const endpoint of converted.endpoints) {
+        await this.aiProfilePreferences.upsertEndpoint(endpoint);
+      }
+      for (const id of Object.keys(converted.keys)) {
+        // API keys always land in user scope (setApiKey is hardcoded to User).
+        await this.aiProfilePreferences.setApiKey(id, converted.keys[id]);
+      }
+      for (const alias of converted.aliases) {
+        await this.aiProfilePreferences.upsertAlias(alias);
+      }
+      if (converted.defaultAliasId && !hadActiveAlias) {
+        await this.aiProfilePreferences.setActiveAlias(converted.defaultAliasId);
+      }
+      await this.refresh();
+      const noteCount = result.issues.length + result.notes.length;
+      const noteSuffix = noteCount > 0
+        ? nls.localize('ai-focused-editor/ai-config/connections-import-notes', ' ({0} note(s)/issue(s) — check the file for details)', noteCount)
+        : '';
+      await this.messages.info(nls.localize(
+        'ai-focused-editor/ai-config/connections-import-done',
+        'Imported {0} endpoint(s), {1} alias(es), {2} key(s) from {3}{4}.',
+        converted.endpoints.length, converted.aliases.length, Object.keys(converted.keys).length, result.path, noteSuffix
+      ));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.messages.error(nls.localize('ai-focused-editor/ai-config/connections-import-failed', 'Import failed: {0}', detail));
+    }
   }
 
   protected async importV1Settings(): Promise<void> {

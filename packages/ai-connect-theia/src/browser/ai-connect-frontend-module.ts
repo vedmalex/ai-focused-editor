@@ -13,6 +13,8 @@ import { bindViewContribution } from '@theia/core/lib/browser/shell/view-contrib
 import { LanguageModelProvider } from '@theia/ai-core';
 import {
   AiConnectionService,
+  ConnectionRegistryFileService,
+  ConnectionRegistryFileServicePath,
   LocalAiConnectionService,
   LocalAiConnectionServicePath
 } from '../common';
@@ -55,6 +57,10 @@ export default new ContainerModule(bind => {
     )
   ).inSingletonScope();
   bind(AiConnectionService).to(BrowserAiConnectionService).inSingletonScope();
+  // Registry file service proxy (backend does the actual fs I/O); no client.
+  bind(ConnectionRegistryFileService).toDynamicValue(ctx =>
+    ServiceConnectionProvider.createProxy(ctx.container, ConnectionRegistryFileServicePath)
+  ).inSingletonScope();
   bind(AiConnectTheiaLanguageModel).toSelf().inSingletonScope();
   bind(LanguageModelProvider).toDynamicValue(ctx => async () => [
     ctx.container.get(AiConnectTheiaLanguageModel)

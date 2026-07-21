@@ -142,7 +142,7 @@
         "@theia/editor": "^1.73.0",
         "@theia/filesystem": "^1.73.0",
         "@theia/workspace": "^1.73.0",
-        "@vedmalex/ai-connect": "^0.11.0",
+        "@vedmalex/ai-connect": "^0.13.0",
       },
       "devDependencies": {
         "@types/node": "^24.0.10",
@@ -205,7 +205,7 @@
         "@theia/process": "1.73.1",
         "@theia/task": "1.73.1",
         "@theia/workspace": "1.73.1",
-        "@vedmalex/ai-connect": "^0.11.0",
+        "@vedmalex/ai-connect": "^0.13.0",
         "ajv": "8.20.0",
         "cropperjs": "^1.6.2",
         "jsonc-parser": "3.3.1",
@@ -1028,7 +1028,7 @@
 
     "@upsetjs/venn.js": ["@upsetjs/venn.js@2.0.0", "", { "optionalDependencies": { "d3-selection": "^3.0.0", "d3-transition": "^3.0.1" } }, "sha512-WbBhLrooyePuQ1VZxrJjtLvTc4NVfpOyKx0sKqioq9bX1C1m7Jgykkn8gLrtwumBioXIqam8DLxp88Adbue6Hw=="],
 
-    "@vedmalex/ai-connect": ["@vedmalex/ai-connect@0.11.0", "", {}, "sha512-gbVEl7pqYoKCtHVrR1aCoY69coJkNMye9ey7iwd6TCZ2jkPpP9wHNPa2MSNS7/IODIjeYaM9K2sVG1H3s9cFDw=="],
+    "@vedmalex/ai-connect": ["@vedmalex/ai-connect@0.13.0", "", {}, "sha512-XrLJOp+HdwBVwU8LuJ0t+cXlU9zn0Nau7F6VQo07Tpy4qXdObA2G5aP0N2apngKJCohZZ7a6cpfGkqSaXqhj2w=="],
 
     "@virtuoso.dev/react-urx": ["@virtuoso.dev/react-urx@0.2.13", "", { "dependencies": { "@virtuoso.dev/urx": "^0.2.13" }, "peerDependencies": { "react": ">=16" } }, "sha512-MY0ugBDjFb5Xt8v2HY7MKcRGqw/3gTpMlLXId2EwQvYJoC8sP7nnXjAxcBtTB50KTZhO0SbzsFimaZ7pSdApwA=="],
 
