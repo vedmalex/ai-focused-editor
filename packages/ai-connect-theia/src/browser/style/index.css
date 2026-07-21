@@ -681,3 +681,57 @@
   font-variant-numeric: tabular-nums;
   font-family: var(--theia-code-font-family, monospace);
 }
+
+/* Write-scope selector (User Settings / This Folder) in the config header. */
+.afe-model-config-write-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 4px 0 8px;
+}
+
+.afe-write-scope-option {
+  padding: 2px 10px;
+}
+
+/* Section heading + source-layer badge (Endpoints / Aliases). */
+.afe-model-config-section-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.afe-model-config-section-heading h3 {
+  margin: 0;
+}
+
+.afe-source-badges {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.afe-source-badge {
+  font-size: var(--theia-ui-font-size0);
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: var(--theia-descriptionForeground);
+  border: 1px solid var(--theia-editorWidget-border, rgba(128, 128, 128, 0.3));
+}
+
+.afe-source-badge.folder {
+  color: var(--theia-editorInfo-foreground, #3794ff);
+  border-color: var(--theia-editorInfo-foreground, #3794ff);
+}
+
+.afe-source-badge.override {
+  color: var(--theia-editorWarning-foreground, #cca700);
+  border-color: var(--theia-editorWarning-foreground, #cca700);
+}
+
+/* Security warning help text in the Connections file section. */
+.afe-model-config-warn {
+  color: var(--theia-editorWarning-foreground, #cca700);
+}

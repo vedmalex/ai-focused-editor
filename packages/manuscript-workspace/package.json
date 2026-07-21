@@ -32,7 +32,7 @@
     "@theia/process": "1.73.1",
     "@theia/task": "1.73.1",
     "@theia/workspace": "1.73.1",
-    "@vedmalex/ai-connect": "^0.11.0",
+    "@vedmalex/ai-connect": "^0.13.0",
     "ajv": "8.20.0",
     "cropperjs": "^1.6.2",
     "jsonc-parser": "3.3.1",

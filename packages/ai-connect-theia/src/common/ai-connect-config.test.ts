@@ -154,3 +154,28 @@ describe('buildAiConnectConfigInput', () => {
     })).toBe('openai:acct:gpt-test');
   });
 });
+
+describe('single-element pool invariant (0.13.0 routeHints.pool breaking change)', () => {
+  // The 0.12.0+ library dispatches an explicit routeHints.pool in exact pool order
+  // (no baseSort re-sort). Our config builder emits a single account + a single
+  // route selector per leg; failover chaining happens in ai-failover.ts, one
+  // service.generate per leg. So each dispatched pool has exactly one element and
+  // the ordering breaking-change is a no-op for us. This test pins that invariant.
+  const profiles = {
+    api: { provider: 'openai', model: 'gpt-test', transportKind: 'api' as const, secretValue: 'k', endpointUrl: 'http://127.0.0.1:8045/v1' },
+    cli: { provider: 'anthropic', model: 'claude-test', transportKind: 'cli' as const, command: 'claude' },
+    acp: { provider: 'anthropic', model: 'claude-test', transportKind: 'acp' as const, transportId: 'claude-code-acp', authMethodId: 'oauth' },
+    nonCatalog: { provider: 'my-agent', model: 'local-model', command: 'my-agent-cli' }
+  };
+
+  for (const [name, profile] of Object.entries(profiles)) {
+    test(`${name}: exactly one account and one text route selector`, () => {
+      const config = buildAiConnectConfigInput(profile);
+      const providerBlock = config.providers?.[profile.provider] as { accounts?: unknown[] } | undefined;
+      expect(providerBlock?.accounts).toHaveLength(1);
+      const textRoutes = config.routing?.operations?.text as string[] | undefined;
+      expect(textRoutes).toHaveLength(1);
+      expect(textRoutes?.[0]).toBe(buildAiConnectRouteSelector(profile));
+    });
+  }
+});

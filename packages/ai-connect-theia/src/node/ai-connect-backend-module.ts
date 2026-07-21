@@ -4,11 +4,14 @@ import { ConnectionHandler } from '@theia/core/lib/common/messaging/handler';
 import { RpcConnectionHandler } from '@theia/core/lib/common/messaging/proxy-factory';
 import { LocalizationContribution } from '@theia/core/lib/node/i18n/localization-contribution';
 import {
+  ConnectionRegistryFileService,
+  ConnectionRegistryFileServicePath,
   LocalAiConnectionService,
   LocalAiConnectionServicePath,
   LocalAiStreamClient
 } from '../common';
 import { NodeLocalAiConnectionService } from './node-local-ai-connection-service';
+import { NodeConnectionRegistryFileService } from './node-connection-registry-file-service';
 import { AiConnectRuLocalizationContribution } from './i18n/ai-connect-ru-localization-contribution';
 
 @injectable()
@@ -30,6 +33,15 @@ export default new ContainerModule(bind => {
       service.addClient(client);
       return service;
     })
+  ).inSingletonScope();
+  // Registry file service (v2 connections.json I/O outside the workspace root):
+  // plain request/response, no client callback.
+  bind(NodeConnectionRegistryFileService).toSelf().inSingletonScope();
+  bind(ConnectionRegistryFileService).toService(NodeConnectionRegistryFileService);
+  bind(ConnectionHandler).toDynamicValue(ctx =>
+    new RpcConnectionHandler(ConnectionRegistryFileServicePath, () =>
+      ctx.container.get<NodeConnectionRegistryFileService>(NodeConnectionRegistryFileService)
+    )
   ).inSingletonScope();
   bind(BackendApplicationContribution).to(AiConnectBackendContribution).inSingletonScope();
   bind(AiConnectRuLocalizationContribution).toSelf().inSingletonScope();

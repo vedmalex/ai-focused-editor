@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import type { ConnectionRegistry } from '@vedmalex/ai-connect/registry';
 import {
   parseV1Import,
   resolveChainFromConfig,
   resolveEndpointLeg,
+  storedFromRegistry,
   type StoredAiAlias,
   type StoredAiEndpoint
 } from './ai-alias-resolution';
@@ -189,5 +191,118 @@ describe('parseV1Import', () => {
       model: 'claude-sonnet-4-6',
       secretValue: 'sk-1'
     });
+  });
+
+  test('a deleted:true v1 endpoint is a tombstone and is dropped', () => {
+    // convertV1Registry skips deleted entries; the overlay does not resurrect them.
+    const result = parseV1Import(
+      {
+        endpoints: [
+          { id: 'keep', provider: 'openai', url: 'http://k/v1' },
+          { id: 'gone', provider: 'openai', url: 'http://x/v1', deleted: true }
+        ]
+      },
+      undefined
+    );
+    expect(result.endpoints.map(e => e.id)).toEqual(['keep']);
+  });
+
+  test('the overlay carries ai-editor v1 fields the library ignores: timeWindows, env, enabled:false', () => {
+    const result = parseV1Import(
+      {
+        endpoints: [
+          {
+            id: 'gw',
+            provider: 'openai',
+            transportKind: 'acp',
+            command: 'claude',
+            url: 'http://g/v1',
+            env: { TOKEN: 'x' },
+            timeWindows: ['22:00-23:00', '  '],
+            enabled: false
+          }
+        ]
+      },
+      undefined
+    );
+    expect(result.endpoints[0]).toMatchObject({
+      id: 'gw',
+      transportKind: 'acp',
+      command: 'claude',
+      env: { TOKEN: 'x' },
+      timeWindows: ['22:00-23:00'],
+      enabled: false
+    });
+  });
+
+  test('an alias leg with no model falls back to the endpoint defaultModel then empty string', () => {
+    const result = parseV1Import(
+      { endpoints: [{ id: 'gw', provider: 'openai', url: 'http://g/v1' }] },
+      {
+        aliases: [
+          { alias: 'a', chain: [{ endpointId: 'gw' }, { endpointId: 'gw', model: 'm2' }] }
+        ]
+      }
+    );
+    // v1 has no defaultModel, so the model-less leg resolves to ''.
+    expect(result.aliases[0].chain).toEqual([
+      { endpointId: 'gw', model: '' },
+      { endpointId: 'gw', model: 'm2' }
+    ]);
+  });
+});
+
+describe('storedFromRegistry', () => {
+  test('maps a v2 registry: baseUrl, transport, models, metadata.timeWindows, auth.token -> keys', () => {
+    const registry: ConnectionRegistry = {
+      version: 2,
+      defaults: { alias: 'main' },
+      endpoints: [
+        {
+          id: 'gw',
+          provider: 'anthropic',
+          transport: 'api',
+          baseUrl: 'http://g/v1',
+          label: 'Gateway',
+          models: ['a', { id: 'b' }],
+          defaultModel: 'b',
+          auth: { token: 'sk-secret', methodId: 'oauth' },
+          enabled: false,
+          metadata: { timeWindows: ['09:00-18:00'] }
+        }
+      ],
+      aliases: [
+        { id: 'main', description: 'Main', chain: [{ endpointId: 'gw', model: 'a' }] }
+      ]
+    };
+    const result = storedFromRegistry(registry);
+    expect(result.defaultAliasId).toBe('main');
+    expect(result.endpoints[0]).toMatchObject({
+      id: 'gw',
+      provider: 'anthropic',
+      transportKind: 'api',
+      endpointUrl: 'http://g/v1',
+      label: 'Gateway',
+      authMethodId: 'oauth',
+      allowedModels: ['b', 'a'], // defaultModel ordered first
+      timeWindows: ['09:00-18:00'],
+      enabled: false
+    });
+    // Secret lands in keys, never on the endpoint record.
+    expect(result.keys).toEqual({ gw: 'sk-secret' });
+    expect((result.endpoints[0] as Record<string, unknown>).token).toBeUndefined();
+    // description flows into label; chain model preserved.
+    expect(result.aliases[0]).toMatchObject({ id: 'main', label: 'Main' });
+    expect(result.aliases[0].chain).toEqual([{ endpointId: 'gw', model: 'a' }]);
+  });
+
+  test('a model-less alias leg falls back to the endpoint defaultModel', () => {
+    const registry: ConnectionRegistry = {
+      version: 2,
+      endpoints: [{ id: 'gw', provider: 'openai', transport: 'api', defaultModel: 'default-m' }],
+      aliases: [{ id: 'a', chain: [{ endpointId: 'gw' }] }]
+    };
+    const result = storedFromRegistry(registry);
+    expect(result.aliases[0].chain).toEqual([{ endpointId: 'gw', model: 'default-m' }]);
   });
 });

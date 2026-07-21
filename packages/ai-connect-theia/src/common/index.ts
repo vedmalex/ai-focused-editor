@@ -6,6 +6,8 @@ export * from './attachment-input';
 export * from './ai-connect-config';
 export * from './alias-model-id';
 export * from './ai-alias-resolution';
+export * from './ai-registry-conversion';
+export * from './connection-registry-file-protocol';
 export * from './ai-failover';
 export * from './ai-time-windows';
 export * from './ai-verification';
