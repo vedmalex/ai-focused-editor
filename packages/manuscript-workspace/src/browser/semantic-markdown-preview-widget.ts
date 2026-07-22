@@ -4,7 +4,7 @@ import {
   splitMathSegments,
   SemanticTag
 } from '@ai-focused-editor/semantic-markdown';
-import { Disposable, DisposableCollection } from '@theia/core/lib/common';
+import { Disposable, DisposableCollection, UntitledResourceResolver } from '@theia/core/lib/common';
 import { nls } from '@theia/core/lib/common/nls';
 import URI from '@theia/core/lib/common/uri';
 import { PreferenceService } from '@theia/core/lib/common/preferences';
@@ -12,10 +12,18 @@ import { Markdown } from '@theia/core/lib/browser/markdown-rendering/markdown';
 import { MarkdownRenderer } from '@theia/core/lib/browser/markdown-rendering/markdown-renderer';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import type { ExtractableWidget } from '@theia/core/lib/browser/widgets/extractable-widget';
+import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
+import { ThemeService } from '@theia/core/lib/browser/theming';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import type { TextEditor } from '@theia/editor/lib/browser/editor';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
+import { MonacoEditorProvider } from '@theia/monaco/lib/browser/monaco-editor-provider';
+import {
+  MarkdownMermaidSegment,
+  MermaidViewer,
+  splitMermaidSegments
+} from '@theia/ai-chat-ui/lib/browser/chat-response-renderer/mermaid-rendering';
 import {
   inject,
   injectable,
@@ -186,6 +194,25 @@ function renderMathInElement(root: HTMLElement, katex: KatexModule): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Mermaid diagram rendering, reusing Theia's own @theia/ai-chat-ui chat renderer
+// (splitMermaidSegments + MermaidViewer) rather than reimplementing the lazy
+// `import('mermaid')` + sanitize + toolbar/zoom/pan machinery a second time.
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure markdown -> segment-list split, exported for direct unit testing without
+ * a DOM or a widget instance. Wraps {@link splitMermaidSegments} with the same
+ * "drop a blank markdown segment between two mermaid fences" filter the
+ * upstream `MarkdownWithMermaid` applies, so an adjacent pair of diagrams never
+ * renders an empty (and pointlessly re-rendered) Markdown segment between them.
+ */
+export function segmentPreviewMarkdown(markdown: string): MarkdownMermaidSegment[] {
+  return splitMermaidSegments(markdown).filter(
+    segment => segment.type === 'mermaid' || segment.content.trim().length > 0
+  );
+}
+
 @injectable()
 export class SemanticMarkdownPreviewWidget extends ReactWidget implements ExtractableWidget {
   static readonly ID = 'ai-focused-editor.semantic-markdown.preview';
@@ -209,6 +236,19 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
 
   @inject(WorkspaceService)
   protected readonly workspaceService!: WorkspaceService;
+
+  /** DI services required by {@link MermaidViewer} (theme sync, copy-source, source-view editor). */
+  @inject(ThemeService)
+  protected readonly themeService!: ThemeService;
+
+  @inject(ClipboardService)
+  protected readonly clipboardService!: ClipboardService;
+
+  @inject(MonacoEditorProvider)
+  protected readonly editorProvider!: MonacoEditorProvider;
+
+  @inject(UntitledResourceResolver)
+  protected readonly untitledResourceResolver!: UntitledResourceResolver;
 
   protected editorDisposables = new DisposableCollection();
   protected previewMarkdown = '';
@@ -260,8 +300,9 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
       this.previewMarkdown = '';
       this.semanticTags = [];
       this.svgSentinels = new Map();
-      // Cancel any in-flight image resolution so it cannot repopulate the cleared preview.
+      // Cancel any in-flight image/math resolution so it cannot repopulate the cleared preview.
       this.imageRenderGeneration++;
+      this.mathRenderGeneration++;
       this.sourceLabel = nls.localize(
         'ai-focused-editor/editor/source-open-file',
         'Open a Markdown manuscript file to preview semantic tags.'
@@ -284,6 +325,17 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
     this.previewMarkdown = preview;
     this.svgSentinels = new Map();
     this.imageRenderGeneration++;
+    // Bumped ONCE per document-level render pass (not per segment): segmenting
+    // the preview into one `Markdown` instance per non-mermaid run (§render)
+    // means `handlePreviewRender` now fires once PER SEGMENT within the same
+    // pass. Bumping this counter inside that per-segment callback (as the single
+    // pre-segmentation call used to) would make each segment's KaTeX load race
+    // its SIBLING segments' calls — later segments in the same pass would flag
+    // earlier ones as "superseded" and silently drop their math. Bumping here
+    // instead means every segment of ONE render pass shares one generation
+    // value, so the guard only ever fires across two genuinely different
+    // document renders, exactly as {@link renderMath}'s guard intends.
+    this.mathRenderGeneration++;
     this.update();
     void this.resolveImagesAndUpdate(editor, preview, this.imageRenderGeneration);
   }
@@ -426,11 +478,20 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
    * `$`, lazily load KaTeX and render `$$…$$` / `$…$` math over the live DOM.
    * Bound once so the memoized Markdown component's `onRender` prop stays
    * referentially stable across updates.
+   *
+   * Since the preview segments the markdown around ```mermaid fences
+   * ({@link segmentPreviewMarkdown}), this hook now fires once PER MARKDOWN
+   * SEGMENT of one document render (a document with N non-mermaid runs mounts
+   * N independent `Markdown` instances, each of which calls `onRender`
+   * independently — see `Markdown`'s `useMarkdown`). It reads the CURRENT
+   * {@link mathRenderGeneration} rather than incrementing it (that happens once
+   * per document render, in {@link updatePreview}) so sibling segments of the
+   * same pass never flag each other as stale.
    */
   protected readonly handlePreviewRender = (element?: HTMLElement): void => {
     this.patchPreviewImages(element);
     if (element) {
-      void this.renderMath(element, ++this.mathRenderGeneration);
+      void this.renderMath(element, this.mathRenderGeneration);
     }
   };
 
@@ -468,18 +529,46 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
       React.createElement('div', { className: 'afe-semantic-markdown-preview-source' }, this.sourceLabel),
       this.showTagChips ? this.renderTagSummary() : undefined,
       this.previewMarkdown
-        ? React.createElement(Markdown, {
-            markdown: this.previewMarkdown,
-            markdownRenderer: this.markdownRenderer,
-            className: 'afe-semantic-markdown-preview-content',
-            onRender: this.handlePreviewRender
-          })
+        ? React.createElement(
+            'div',
+            { className: 'afe-semantic-markdown-preview-content' },
+            ...segmentPreviewMarkdown(this.previewMarkdown).map((segment, index) => this.renderPreviewSegment(segment, index))
+          )
         : React.createElement(
             'div',
             { className: 'afe-semantic-markdown-preview-empty' },
             nls.localize('ai-focused-editor/editor/no-preview-content', 'No preview content.')
           )
     );
+  }
+
+  /**
+   * One preview segment ({@link segmentPreviewMarkdown}): a ```mermaid fence
+   * becomes a {@link MermaidViewer} (the exact toolbar/zoom/pan/source-toggle
+   * component the AI chat uses, so the UX is consistent); everything else stays
+   * on the EXISTING `Markdown` component — unchanged from before segmentation —
+   * so the KaTeX `onRender` postprocessing keeps running per segment (each
+   * `Markdown` instance calls `onRender` independently; see
+   * `handlePreviewRender`).
+   */
+  protected renderPreviewSegment(segment: MarkdownMermaidSegment, index: number): React.ReactNode {
+    if (segment.type === 'mermaid') {
+      return React.createElement(MermaidViewer, {
+        key: index,
+        code: segment.content,
+        isComplete: true,
+        themeService: this.themeService,
+        clipboardService: this.clipboardService,
+        editorProvider: this.editorProvider,
+        untitledResourceResolver: this.untitledResourceResolver
+      });
+    }
+    return React.createElement(Markdown, {
+      key: index,
+      markdown: segment.content,
+      markdownRenderer: this.markdownRenderer,
+      onRender: this.handlePreviewRender
+    });
   }
 
   protected renderTagSummary(): React.ReactNode {

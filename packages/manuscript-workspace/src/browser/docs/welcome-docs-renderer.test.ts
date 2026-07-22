@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { DocsPage } from '../../common/docs/docs-contract';
-import { DocsRenderContext, WelcomeDocsRenderer } from './welcome-docs-renderer';
+import {
+  DocsRenderContext,
+  MERMAID_MARKER_ATTRIBUTE,
+  MERMAID_MARKER_CLASS,
+  WelcomeDocsRenderer
+} from './welcome-docs-renderer';
 
 /**
  * EMISSION-side tests (tech_spec §F.5). Everything here runs over the pure
@@ -331,5 +336,59 @@ describe('directives inside prose and inside containers', () => {
   test('a leaf directive on its own line renders as a button', () => {
     const html = render('текст\n\n::action[Пуск]{command="app.run"}\n\nещё');
     expect(html).toContain('data-afe-directive="action"');
+  });
+});
+
+describe('the mermaid fence rule (TASK-011)', () => {
+  test('a ```mermaid fence emits the marker element, not a code block', () => {
+    const html = render('```mermaid\ngraph TD;\n  A-->B;\n```');
+    expect(html).toContain(`class="${MERMAID_MARKER_CLASS}"`);
+    expect(html).toContain(`${MERMAID_MARKER_ATTRIBUTE}="true"`);
+    expect(html).not.toContain('<code');
+  });
+
+  test('the raw diagram source survives as the marker\'s text content, unescaped by the reader', () => {
+    // `<` and `"` in a diagram definition (e.g. an HTML label or a quoted node
+    // id) must round-trip through `escapeHtml` -> `textContent` unharmed, since
+    // the widget's DOM postprocessing reads the source back via `textContent`.
+    const html = render('```mermaid\ngraph TD;\n  A["<b>x</b>"] --> B;\n```');
+    expect(html).toContain('&lt;b&gt;');
+    expect(html).toContain('&quot;');
+    expect(html).not.toContain('<b>x</b>');
+  });
+
+  test('a NON-mermaid fence is completely unaffected — still a normal code block', () => {
+    const html = render('```js\nconst x = 1;\n```');
+    expect(html).not.toContain(MERMAID_MARKER_CLASS);
+    expect(html).toContain('<code');
+    expect(html).toContain('class="language-js"');
+  });
+
+  test('a bare (unlabelled) fence is unaffected too', () => {
+    const html = render('```\nplain text\n```');
+    expect(html).not.toContain(MERMAID_MARKER_CLASS);
+    expect(html).toContain('<code>');
+  });
+
+  test('text with no fence at all carries no mermaid marker — the postprocessing pass never scans for one to import mermaid over', () => {
+    const html = render('Обычный абзац без диаграмм и без кода.');
+    expect(html).not.toContain(MERMAID_MARKER_ATTRIBUTE);
+    expect(html).not.toContain(MERMAID_MARKER_CLASS);
+  });
+
+  test('a directive-looking string INSIDE a mermaid fence is not parsed as a directive (code is never scanned)', () => {
+    const html = render('```mermaid\ngraph TD;\n  A[":action{command=x}"] --> B;\n```');
+    expect(html).not.toContain('data-afe-directive');
+  });
+
+  test('mermaid info-string with trailing whitespace/attributes still matches (only the first word counts)', () => {
+    const html = render('```mermaid \ngraph TD;\n  A-->B;\n```');
+    expect(html).toContain(MERMAID_MARKER_CLASS);
+  });
+
+  test('"mermaidjs" or any other near-miss info string is NOT treated as mermaid', () => {
+    const html = render('```mermaidjs\ngraph TD;\n  A-->B;\n```');
+    expect(html).not.toContain(MERMAID_MARKER_CLASS);
+    expect(html).toContain('<code');
   });
 });

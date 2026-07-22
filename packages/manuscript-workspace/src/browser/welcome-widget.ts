@@ -3,6 +3,7 @@ import { CommandRegistry } from '@theia/core/lib/common/command';
 import { PreferenceScope, PreferenceService } from '@theia/core/lib/common/preferences';
 import { LabelProvider, StatefulWidget } from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { ThemeService } from '@theia/core/lib/browser/theming';
 import { FileDialogService } from '@theia/filesystem/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import URI from '@theia/core/lib/common/uri';
@@ -35,6 +36,7 @@ import {
   resolveDocsPage
 } from '../common/docs/docs-lang';
 import { DocsRenderContext, WelcomeDocsRenderer } from './docs/welcome-docs-renderer';
+import { renderMermaidMarkers } from './docs/welcome-docs-mermaid';
 
 /**
  * Commands surfaced by the welcome page. Defined here (not in the frontend
@@ -176,6 +178,10 @@ export class WelcomeWidget extends ReactWidget implements StatefulWidget {
   @inject(WelcomeDocsRenderer)
   protected readonly docsRenderer!: WelcomeDocsRenderer;
 
+  /** Theme sync for the guide's mermaid diagrams (see {@link renderMermaidMarkers}). */
+  @inject(ThemeService)
+  protected readonly themeService!: ThemeService;
+
   /** Newest-first recent workspace URIs, loaded asynchronously after construction. */
   protected recent: string[] = [];
 
@@ -212,6 +218,15 @@ export class WelcomeWidget extends ReactWidget implements StatefulWidget {
         this.update();
       } else if (change.preferenceName === AI_FOCUSED_EDITOR_LIBRARY_PATH) {
         void this.loadCatalog();
+      }
+    }));
+    // Re-mount the guide page on a workbench theme change so its mermaid
+    // diagrams (see `renderMermaidMarkers`) re-render themed — `update()`
+    // re-invokes `mountDocs`'s ref callback, which re-runs the postprocessing
+    // pass. A no-op while on the home route (no page container to re-render).
+    this.toDispose.push(this.themeService.onDidColorThemeChange(() => {
+      if (this.route.kind === 'docs') {
+        this.update();
       }
     }));
 
@@ -859,6 +874,10 @@ export class WelcomeWidget extends ReactWidget implements StatefulWidget {
     }));
     node.textContent = '';
     node.appendChild(this.docsRenderer.renderPage(page, this.docsRenderContext(page)));
+    // DOM postprocessing pass (KaTeX-pattern): replaces every mermaid marker the
+    // renderer's fence rule emitted with a rendered SVG. A no-op — and no
+    // `import('mermaid')` — on a page with no ```mermaid fence (see its guard).
+    renderMermaidMarkers(node, this.themeService);
   }
 
   /** What the renderer is allowed to ask the widget about (§D.3). */

@@ -262,6 +262,59 @@
   color: var(--theia-textLink-foreground);
 }
 
+/* ---------- mermaid diagrams inside a guide page ---------- */
+
+/*
+ * The INERT marker `WelcomeDocsRenderer`'s fence rule emits (before the
+ * widget's DOM postprocessing replaces it with a rendered SVG) and its
+ * fallback if postprocessing never runs (e.g. a substituted content provider
+ * that skips the widget's mount path entirely) — shown as a normal code block
+ * rather than raw unstyled text.
+ */
+.afe-docs-mermaid {
+  display: block;
+  overflow-x: auto;
+  background: var(--theia-textCodeBlock-background);
+  border-radius: 4px;
+  padding: 10px 12px;
+  white-space: pre;
+}
+
+.afe-docs-mermaid-diagram {
+  margin: 12px 0;
+  overflow-x: auto;
+}
+
+.afe-docs-mermaid-diagram.afe-docs-mermaid-pending {
+  color: var(--theia-descriptionForeground);
+  font-style: italic;
+}
+
+.afe-docs-mermaid-diagram svg {
+  max-width: 100%;
+}
+
+.afe-docs-mermaid-diagram.afe-docs-mermaid-error {
+  border-left: 3px solid var(--theia-editorWarning-foreground);
+  padding-left: 10px;
+}
+
+.afe-docs-mermaid-error-message {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--theia-editorWarning-foreground);
+  margin-bottom: 6px;
+}
+
+.afe-docs-mermaid-source {
+  overflow-x: auto;
+  background: var(--theia-textCodeBlock-background);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 0;
+}
+
 /* ---------- guide cards on the HOME route ---------- */
 
 .afe-welcome-scenario-grid {

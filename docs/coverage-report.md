@@ -22,7 +22,7 @@
 | Glob absorption ceiling (N) | 8 |
 | Pending exception requests | 0 |
 | Passed via pending external request | 0 |
-| Docs content size | 287.8 KB |
+| Docs content size | 292.6 KB |
 
 ## Covered by directive occurrence
 
