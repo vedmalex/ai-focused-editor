@@ -1,0 +1,316 @@
+/* ---------------------------------------------------------------------------
+ * In-app guide (WP-4). A separate file, not an addition to index.css: that file
+ * is a ~2000-line package-wide sheet several work units edit, whereas these are
+ * one unit's compact block. Imported explicitly by welcome-frontend-module.ts —
+ * the existing `.afe-welcome*` rules only arrive because six OTHER frontend
+ * modules import index.css, and new styles must not depend on that side effect.
+ *
+ * Colours come exclusively from Theia theme variables: this repository ships
+ * its own colour themes, and a page with hard-coded colours goes unreadable in
+ * the dark one — a defect no test in this task can catch.
+ * ------------------------------------------------------------------------- */
+
+/* ---------- guide route ---------- */
+
+.afe-docs {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  align-items: start;
+  gap: 32px;
+  max-width: 900px;
+}
+
+.afe-docs-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: sticky;
+  top: 0;
+}
+
+.afe-docs-nav-home {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--theia-textLink-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.afe-docs-nav-home:hover {
+  background: var(--theia-list-hoverBackground);
+}
+
+.afe-docs-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 12px;
+}
+
+.afe-docs-nav-section {
+  padding: 4px 8px;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.afe-docs-nav-item {
+  padding: 5px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--theia-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.afe-docs-nav-item:hover:not(:disabled) {
+  background: var(--theia-list-hoverBackground);
+}
+
+.afe-docs-nav-item--current {
+  background: var(--theia-list-activeSelectionBackground);
+  color: var(--theia-list-activeSelectionForeground);
+  cursor: default;
+  opacity: 1;
+}
+
+/* ---------- page body ---------- */
+
+.afe-docs-page {
+  min-width: 0;
+  line-height: 1.55;
+}
+
+.afe-docs-title {
+  margin: 0 0 16px;
+  font-size: 1.5em;
+  font-weight: 600;
+}
+
+.afe-docs-page pre,
+.afe-docs-page table {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.afe-docs-page code {
+  background: var(--theia-textCodeBlock-background);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+.afe-docs-page a[data-afe-directive='doc'] {
+  color: var(--theia-textLink-foreground);
+  cursor: pointer;
+}
+
+/* ---------- steps checklist ---------- */
+
+.afe-docs-steps {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.afe-docs-step {
+  display: block;
+  width: 100%;
+  padding: 6px 8px 6px 28px;
+  position: relative;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--theia-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.afe-docs-step:hover {
+  background: var(--theia-list-hoverBackground);
+}
+
+.afe-docs-step:focus-visible {
+  outline: 1px solid var(--theia-focusBorder);
+  outline-offset: 1px;
+}
+
+/* The box. */
+.afe-docs-step::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 9px;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--theia-checkbox-border);
+  border-radius: 3px;
+  background: var(--theia-checkbox-background);
+  box-sizing: border-box;
+}
+
+/*
+ * THE TICK — a GLYPH, and the reason the checked state is legible in every
+ * theme (ISS-095).
+ *
+ * The previous indicator was colour ONLY:
+ * `background: var(--theia-checkbox-selectBackground, var(--theia-button-background))`.
+ * The CSS fallback never fires, because a fallback applies to an UNDEFINED
+ * variable — and `checkbox.selectBackground` is registered UNCONDITIONALLY by
+ * the colour registry (`monaco-editor-core/.../colors/inputColors.js:55`,
+ * defaulting to `editorWidget.background`), so the variable is always defined
+ * whatever the theme says. It also does not mean what the name suggests: its
+ * documented sense is "background of the checkbox when the element IT IS IN is
+ * selected", not "checked". Measured in the running app it resolved to the same
+ * `rgb(238, 232, 213)` as `--theia-checkbox-background`: the state was real, the
+ * indication was not. Any theme can repeat that coincidence, so no choice of
+ * theme colour variables can be trusted to carry the distinction on its own.
+ *
+ * A character can: `\eab2` is `codicon-check`, and the checked row differs from
+ * the unchecked one by the PRESENCE OF A MARK, not by a colour. The colours
+ * below stay — they make it look right where the theme cooperates — but nothing
+ * depends on them.
+ */
+.afe-docs-step::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 9px;
+  width: 12px;
+  height: 12px;
+  font-family: codicon, monospace;
+  font-size: 10px;
+  line-height: 12px;
+  text-align: center;
+}
+
+.afe-docs-step[aria-checked='true']::before {
+  background: var(--theia-button-background);
+  border-color: var(--theia-button-foreground);
+}
+
+.afe-docs-step[aria-checked='true']::after {
+  content: '\eab2';
+  color: var(--theia-button-foreground);
+}
+
+.afe-docs-step--checked {
+  color: var(--theia-descriptionForeground);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/* ---------- requires block ---------- */
+
+.afe-docs-requires {
+  margin: 16px 0;
+  padding: 12px 16px;
+  border-left: 3px solid var(--theia-textBlockQuote-border);
+  background: var(--theia-textBlockQuote-background);
+  border-radius: 0 4px 4px 0;
+}
+
+.afe-docs-requires-title {
+  margin: 0 0 6px;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+/* ---------- scenario card (guide root page) ---------- */
+
+.afe-docs-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  margin: 8px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--theia-editorWidget-border);
+  border-radius: 6px;
+  background: var(--theia-editorWidget-background);
+  color: var(--theia-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.afe-docs-card:hover {
+  border-color: var(--theia-focusBorder);
+}
+
+.afe-docs-card > *:not(.afe-docs-card-icon) {
+  margin: 0;
+  min-width: 0;
+}
+
+.afe-docs-card-icon {
+  flex: none;
+  font-size: 1.3em;
+  color: var(--theia-textLink-foreground);
+}
+
+/* ---------- guide cards on the HOME route ---------- */
+
+.afe-welcome-scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.afe-welcome-scenario-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--theia-editorWidget-border);
+  border-radius: 6px;
+  background: var(--theia-editorWidget-background);
+  color: var(--theia-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.afe-welcome-scenario-card:hover {
+  border-color: var(--theia-focusBorder);
+}
+
+.afe-welcome-scenario-icon {
+  font-size: 1.2em;
+  color: var(--theia-textLink-foreground);
+}
+
+.afe-welcome-scenario-title {
+  font-weight: 600;
+}
+
+.afe-welcome-scenario-section {
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+}
+
+/* Narrow main area: the navigation stacks above the page instead of beside it. */
+@media (max-width: 720px) {
+  .afe-docs {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .afe-docs-nav {
+    position: static;
+  }
+}

@@ -28,3 +28,11 @@ examples/sample-book/ai/context-snapshots/
 
 # MB3 memory-bank
 memory-bank/
+
+# generated documentation inputs/outputs (tech_spec §1.6)
+# derived from every `id:`/preference declaration — noise in the diff of any
+# unrelated change; `docs/coverage-report.md` IS committed, on purpose.
+packages/manuscript-workspace/docs-inventory.generated.json
+# derived from content/**; committing it invites "edited the .md, forgot to
+# regenerate" drift.
+packages/manuscript-workspace/src/browser/docs/docs-content.generated.ts

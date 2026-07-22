@@ -1,3 +1,4 @@
+import '../../src/browser/style/docs.css';
 import {
   CommandContribution,
   CommandRegistry,
@@ -33,8 +34,11 @@ import {
   slugifyBookFolderName
 } from '../common/book-scaffold';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
-import { WelcomeCommands, WelcomeWidget } from './welcome-widget';
+import { DOCS_HOME_PAGE_ID, WelcomeCommands, WelcomeWidget } from './welcome-widget';
 import { AI_FOCUSED_EDITOR_WELCOME_SHOW_ON_STARTUP } from './ai-focused-editor-preferences';
+import { DocsContentProvider } from '../common/docs/docs-contract';
+import { generatedDocsContentProvider } from './docs/docs-content.generated';
+import { WelcomeDocsRenderer } from './docs/welcome-docs-renderer';
 
 /**
  * Group for the Welcome action, placed after every existing Manuscript-menu
@@ -138,12 +142,19 @@ export class WelcomeContribution
     commands.registerCommand(WelcomeCommands.NEW_BOOK, {
       execute: () => this.runNewBookWizard()
     });
+    commands.registerCommand(WelcomeCommands.OPEN_DOCS, {
+      execute: (pageId?: string) => this.openWelcomeDocs(typeof pageId === 'string' ? pageId : DOCS_HOME_PAGE_ID)
+    });
   }
 
   registerMenus(menus: MenuModelRegistry): void {
     menus.registerMenuAction(WELCOME_MENU, {
       commandId: WelcomeCommands.OPEN.id,
       order: '0'
+    });
+    menus.registerMenuAction(WELCOME_MENU, {
+      commandId: WelcomeCommands.OPEN_DOCS.id,
+      order: '1'
     });
     menus.registerMenuAction(CREATE_MENU, {
       commandId: WelcomeCommands.NEW_BOOK.id,
@@ -185,6 +196,18 @@ export class WelcomeContribution
     } else {
       await this.shell.revealWidget(widget.id);
     }
+  }
+
+  /**
+   * Open the welcome page and switch it to a guide page. Goes through the
+   * widget's own {@link WelcomeWidget.openDocs}, so a page id that does not
+   * exist is refused exactly the same way here as it is on a click — the
+   * command palette gets no privileged path to a broken route.
+   */
+  protected async openWelcomeDocs(pageId: string): Promise<void> {
+    await this.openWelcome(true);
+    const widget = await this.widgetManager.getOrCreateWidget<WelcomeWidget>(WelcomeWidget.ID);
+    widget.openDocs(pageId);
   }
 
   // ===========================================================================
@@ -547,6 +570,22 @@ export class WelcomeContribution
  * wires commands, menus and the startup auto-open.
  */
 export default new ContainerModule(bind => {
+  // The content source of the guide — the substitution point of the design,
+  // and the one line that decides which implementation the app runs against.
+  //
+  // Now bound to the GENERATED module (WP-5): `docs/docs-content.generated.ts`
+  // is git-ignored, but it is produced by the FIRST step of both `build` and
+  // `build:dev`, and `compile` is only ever reached through one of them — so
+  // `tsc` never runs without it. A clean checkout that invokes bare `tsc`
+  // would fail, which is why the package has no such entry point.
+  //
+  // `EMPTY_DOCS_CONTENT_PROVIDER` stays in the tree as the second, non-generated
+  // implementation of the same interface: readiness criterion 8 asks for proof
+  // that the source can be swapped without editing a single `.md`, and a
+  // substitution point with only one implementation proves nothing.
+  bind(DocsContentProvider).toConstantValue(generatedDocsContentProvider);
+  bind(WelcomeDocsRenderer).toSelf().inSingletonScope();
+
   bind(WelcomeWidget).toSelf().inSingletonScope();
   bind(WidgetFactory).toDynamicValue(ctx => ({
     id: WelcomeWidget.ID,
