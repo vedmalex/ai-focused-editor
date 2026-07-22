@@ -1614,6 +1614,22 @@ describe('emission and the report (§B.2, §B.6)', () => {
     expect(metric(result.report, 'Inventory packages')).toContain('manuscript-workspace');
   });
 
+  /**
+   * F-QA9-4. There is no fenced ceiling on the generated module's size — this
+   * is VISIBILITY, not a hard gate, same rationale as the namespace/package
+   * rows above one level down (bytes instead of scope): silent growth of the
+   * bundle now shows up as a diff line in the committed report.
+   */
+  test('the report NAMES the generated docs-content module size (visibility, not a hard gate)', async () => {
+    const repoRoot = await richRepo('content-size-visible');
+    const result = await strict(repoRoot);
+    expect(result.exitCode).toBe(0);
+    const reportedKB = Number.parseFloat(metric(result.report, 'Docs content size'));
+    expect(reportedKB).toBeGreaterThan(0);
+    const actualKB = Buffer.byteLength(result.module ?? '', 'utf8') / 1024;
+    expect(reportedKB).toBeCloseTo(actualKB, 1);
+  });
+
   test('the report has NO timestamp: two runs over one input are byte-identical', async () => {
     const repoRoot = await richRepo('determinism');
     const first = await strict(repoRoot);
@@ -1657,20 +1673,29 @@ describe('control numbers on the REAL tree (§1.7, F-D8-5)', () => {
     expect(metric(result.report, 'Uncovered')).toBe('0');
   });
 
-  test('what is NOT described is deferred to a task, visibly and by name', async () => {
-    // The honest half of the green build above: `Uncovered: 0` is only truthful
-    // if the ids that carry no page are ACCOUNTED FOR SOMEWHERE VISIBLE. Assert
-    // the debt is non-zero, separated from every `Covered …` row, and carries
-    // the task that owes each page — a `deferred` entry that stopped naming its
-    // owner would be the same open-ended excuse `exempt` is policed against.
+  test('the TASK-010 deferred debt is paid off: zero deferred, and the section stays empty-but-present', async () => {
+    // This assertion USED to require `deferred > 0` with one row per id, back
+    // when the six TASK-010 pages (tools/git, tools/office, tools/diagrams,
+    // tools/mcp, settings, remote) did not exist yet and their 18 ids sat in
+    // `coverage-exceptions.jsonc` under `kind:"deferred"`. The transition is
+    // over: those six pages are written, WP-13 adjudicated every deferred
+    // entry into real coverage, and the allowlist no longer carries any
+    // `kind:"deferred"` row. `Deferred to a task` is honestly `0` — not because
+    // the debt was hidden (that would be the `exempt`-style lie §2a polices
+    // against), but because it was paid. The section HEADER still renders with
+    // zero rows, so a future regression (a new deferred entry landing without
+    // a page) is still visible as a diff on this exact assertion, not a silent
+    // reinterpretation of an empty table.
     const result = await run(REPO_ROOT, '--coverage=warn', ...scratch('real-deferred'));
     const deferred = Number(metric(result.report, 'Deferred to a task'));
-    expect(deferred).toBeGreaterThan(0);
+    expect(deferred).toBe(0);
 
     const section = (result.report ?? '').split('## Deferred coverage')[1]?.split('\n## ')[0] ?? '';
     const rows = section.trim().split('\n').slice(2);
-    expect(rows).toHaveLength(deferred);
+    expect(rows).toHaveLength(0);
     for (const row of rows) {
+      // Kept for symmetry / future regression: if a deferred entry ever comes
+      // back, each row still has to name its owning task by pattern.
       expect(row.split('|')[2]?.trim()).toMatch(/^TASK-\d+$/);
     }
   });

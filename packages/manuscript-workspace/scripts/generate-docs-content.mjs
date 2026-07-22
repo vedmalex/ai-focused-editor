@@ -1102,6 +1102,14 @@ export const generatedDocsContentProvider: DocsContentProvider = {
 // Report (§B.6)
 // --------------------------------------------------------------------------
 
+/**
+ * Human-readable KB, rounded to one decimal — deterministic (no locale, no
+ * thousands separator) so the row stays byte-identical across runs (§B.6).
+ */
+function formatKB(bytes) {
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
 function table(header, alignment, rows) {
   if (rows.length === 0) {
     return [`| ${header.join(' | ')} |`, `|${alignment.join('|')}|`].join('\n');
@@ -1120,7 +1128,7 @@ function table(header, alignment, rows) {
  * meaning "coverage changed" — which is the only reason F-D3-1 asked for a
  * committed artifact instead of a build log line.
  */
-function renderReport(model, coverage, allowlist, allowlistMatches, queue, ceiling, passedViaQueue) {
+function renderReport(model, coverage, allowlist, allowlistMatches, queue, ceiling, passedViaQueue, docsContentSizeBytes) {
   const { buckets } = coverage;
   const universe = model.units.length;
   const exemptShare = universe === 0 ? 0 : (buckets.exempt.length / universe) * 100;
@@ -1137,8 +1145,8 @@ function renderReport(model, coverage, allowlist, allowlistMatches, queue, ceili
       // extract-feature-inventory.mjs). A product command registered in a THIRD
       // namespace is not merely uncovered — it never enters the inventory, so it
       // is never required to be described AND, unlike a template-literal id, it
-      // does not even surface under `Skipped declarations`. That is the one
-      // completely SILENT way out from under the guarantee. Printing the active
+      // does not even surface under `Skipped declarations`. That is one of the
+      // completely SILENT ways out from under the guarantee. Printing the active
       // list here does not close the hole, but it makes any change to it show up
       // as a diff line in this committed report instead of passing unnoticed.
       //
@@ -1146,7 +1154,8 @@ function renderReport(model, coverage, allowlist, allowlistMatches, queue, ceili
       // source traversal itself (`INVENTORY_SOURCE_ROOTS` in
       // extract-feature-inventory.mjs). A package added to the walk without a
       // matching entry here would be a silent widening of what the whole
-      // guarantee even looks at.
+      // guarantee even looks at — the OTHER of the two completely silent ways
+      // out (namespace freeze above being the first).
       ['Inventory packages', model.packages.length ? model.packages.map(p => `\`${p}\``).join(', ') : '(none declared)'],
       ['Inventory namespaces', model.namespaces.length ? model.namespaces.map(n => `\`${n}\``).join(', ') : '(none declared)'],
       ['Inventory ids (commands)', model.commandIds.length],
@@ -1167,7 +1176,12 @@ function renderReport(model, coverage, allowlist, allowlistMatches, queue, ceili
       ['Uncovered', buckets.uncovered.length],
       ['Glob absorption ceiling (N)', ceiling],
       ['Pending exception requests', queue.length],
-      ['Passed via pending external request', passedViaQueue]
+      ['Passed via pending external request', passedViaQueue],
+      // VISIBILITY, not a hard gate (F-QA9-4): there is no fenced ceiling on the
+      // generated module's size, so this row is the only thing that turns
+      // silent growth into a diff line in the committed report — same rationale
+      // as the namespace/package rows above, one level down (bytes, not scope).
+      ['Docs content size', formatKB(docsContentSizeBytes)]
     ]
   );
 
@@ -1380,10 +1394,12 @@ async function main(argv) {
     );
   }
 
-  await writeFile(outputPath(argv, 'module', repoRoot, MODULE_RELATIVE_PATH), renderModule(pages));
+  const moduleContent = renderModule(pages);
+  const docsContentSizeBytes = Buffer.byteLength(moduleContent, 'utf8');
+  await writeFile(outputPath(argv, 'module', repoRoot, MODULE_RELATIVE_PATH), moduleContent);
   await writeFile(
     outputPath(argv, 'report', repoRoot, REPORT_RELATIVE_PATH),
-    renderReport(model, coverage, allowlist, allowlistMatches, queue, ceiling, passedViaQueue)
+    renderReport(model, coverage, allowlist, allowlistMatches, queue, ceiling, passedViaQueue, docsContentSizeBytes)
   );
 
   // Mode-dependent teeth, LAST: both artifacts are written either way, so a

@@ -9,19 +9,20 @@
 | Inventory namespaces | `ai-focused-editor.`, `ai-connect.` |
 | Inventory ids (commands) | 167 |
 | Inventory keys (preferences) | 22 |
-| Covered by exact id | 170 |
+| Covered by exact id | 188 |
 | Covered by directive occurrence | 0 |
 | Absorbed by glob | 0 |
 | Allowlisted: external | 0 |
 | Allowlisted: dynamic | 0 |
 | Allowlisted: exempt | 1 |
 | Exempt share of inventory | 0.5% |
-| Deferred to a task | 18 |
-| Deferred share of inventory | 9.5% |
+| Deferred to a task | 0 |
+| Deferred share of inventory | 0.0% |
 | Uncovered | 0 |
 | Glob absorption ceiling (N) | 8 |
 | Pending exception requests | 0 |
 | Passed via pending external request | 0 |
+| Docs content size | 287.8 KB |
 
 ## Covered by directive occurrence
 
@@ -37,26 +38,8 @@
 
 | Pattern | Kind | Matches | Reason |
 |---|---|---:|---|
-| ai-focused-editor.auth.show-login-qr | deferred | 1 | QR-код для входа, когда редактор открыт через браузер — страница remote (удалённый режим) |
-| ai-focused-editor.excalidraw.boxSelected | deferred | 1 | операция над холстом: обвести выбранное рамкой — страница tools/diagrams |
-| ai-focused-editor.excalidraw.canvasActions | deferred | 1 | общий пикер операций над холстом — страница tools/diagrams |
-| ai-focused-editor.excalidraw.canvasActions.toolbar | deferred | 1 | тот же пикер кнопкой в полоске редактора схем — страница tools/diagrams |
-| ai-focused-editor.excalidraw.connectArrow | deferred | 1 | операция над холстом: соединить выбранное стрелкой — страница tools/diagrams |
-| ai-focused-editor.excalidraw.exportPng | deferred | 1 | экспорт схемы в PNG — описывается на странице tools/diagrams (редактор схем на холсте) |
-| ai-focused-editor.excalidraw.exportPng.toolbar | deferred | 1 | та же команда кнопкой в полоске редактора схем — страница tools/diagrams |
-| ai-focused-editor.excalidraw.exportSvg | deferred | 1 | экспорт схемы в SVG — страница tools/diagrams |
-| ai-focused-editor.excalidraw.exportSvg.toolbar | deferred | 1 | та же команда кнопкой в полоске редактора схем — страница tools/diagrams |
-| ai-focused-editor.excalidraw.mergeText | deferred | 1 | операция над холстом: слить текстовые блоки — страница tools/diagrams |
-| ai-focused-editor.excalidraw.splitText | deferred | 1 | операция над холстом: разбить текстовый блок на строки — страница tools/diagrams |
-| ai-focused-editor.excalidraw.textToSticky | deferred | 1 | операция над холстом: превратить текст в стикер — страница tools/diagrams |
-| ai-focused-editor.git.addToGitignore | deferred | 1 | исключить файл из-под контроля версий — страница tools/git |
-| ai-focused-editor.git.initRepository | deferred | 1 | завести репозиторий для книги — страница tools/git (версии и история) |
-| ai-focused-editor.image.openAsText | deferred | 1 | тот же запасной выход для картинок (посмотреть, например, разметку SVG) — страница tools/office, рядом с офисным просмотрщиком |
 | ai-focused-editor.manuscript-tree.root | exempt | 1 | id КОРНЕВОГО УЗЛА дерева рукописи (MANUSCRIPT_TREE_ROOT_ID, manuscript-tree.ts:5), а не команда: узел создаётся в manuscript-tree-item-factory.ts:98 со `visible: false` и служит только держателем разделов. В инвентарь попал ветвью резолва константы (§C.2) — нажать его нельзя, вызвать нельзя, описывать нечего |
-| ai-focused-editor.mcp.manageServers | deferred | 1 | управление MCP-серверами — страница tools/mcp |
 | ai-focused-editor.mode.run.* | dynamic | 1 | команды режимов регистрируются в рантайме по контенту пользователя (ai-mode-dynamic-contribution.ts:201); документируются прозой в ai/writing-tools |
-| ai-focused-editor.office.openAsText | deferred | 1 | тот же файл сырым текстом, в обход просмотрщика — страница tools/office |
-| ai-focused-editor.office.openPreview | deferred | 1 | просмотр офисного документа из папки источников — страница tools/office |
 | preferences:open | external | 1 | команда Theia (@theia/core common-commands.js:246); вызывается из openSettingsQuery (§D.4), а не значением директивы |
 | workbench.action.openGlobalSettings | external | 1 | фолбэк Theia, когда preferences:open не зарегистрирован (mcp-controls-contribution.ts:353); тоже из кода |
 
@@ -64,24 +47,6 @@
 
 | Id | Deferred to | Pattern | Reason |
 |---|---|---|---|
-| ai-focused-editor.auth.show-login-qr | TASK-010 | ai-focused-editor.auth.show-login-qr | QR-код для входа, когда редактор открыт через браузер — страница remote (удалённый режим) |
-| ai-focused-editor.excalidraw.boxSelected | TASK-010 | ai-focused-editor.excalidraw.boxSelected | операция над холстом: обвести выбранное рамкой — страница tools/diagrams |
-| ai-focused-editor.excalidraw.canvasActions | TASK-010 | ai-focused-editor.excalidraw.canvasActions | общий пикер операций над холстом — страница tools/diagrams |
-| ai-focused-editor.excalidraw.canvasActions.toolbar | TASK-010 | ai-focused-editor.excalidraw.canvasActions.toolbar | тот же пикер кнопкой в полоске редактора схем — страница tools/diagrams |
-| ai-focused-editor.excalidraw.connectArrow | TASK-010 | ai-focused-editor.excalidraw.connectArrow | операция над холстом: соединить выбранное стрелкой — страница tools/diagrams |
-| ai-focused-editor.excalidraw.exportPng | TASK-010 | ai-focused-editor.excalidraw.exportPng | экспорт схемы в PNG — описывается на странице tools/diagrams (редактор схем на холсте) |
-| ai-focused-editor.excalidraw.exportPng.toolbar | TASK-010 | ai-focused-editor.excalidraw.exportPng.toolbar | та же команда кнопкой в полоске редактора схем — страница tools/diagrams |
-| ai-focused-editor.excalidraw.exportSvg | TASK-010 | ai-focused-editor.excalidraw.exportSvg | экспорт схемы в SVG — страница tools/diagrams |
-| ai-focused-editor.excalidraw.exportSvg.toolbar | TASK-010 | ai-focused-editor.excalidraw.exportSvg.toolbar | та же команда кнопкой в полоске редактора схем — страница tools/diagrams |
-| ai-focused-editor.excalidraw.mergeText | TASK-010 | ai-focused-editor.excalidraw.mergeText | операция над холстом: слить текстовые блоки — страница tools/diagrams |
-| ai-focused-editor.excalidraw.splitText | TASK-010 | ai-focused-editor.excalidraw.splitText | операция над холстом: разбить текстовый блок на строки — страница tools/diagrams |
-| ai-focused-editor.excalidraw.textToSticky | TASK-010 | ai-focused-editor.excalidraw.textToSticky | операция над холстом: превратить текст в стикер — страница tools/diagrams |
-| ai-focused-editor.git.addToGitignore | TASK-010 | ai-focused-editor.git.addToGitignore | исключить файл из-под контроля версий — страница tools/git |
-| ai-focused-editor.git.initRepository | TASK-010 | ai-focused-editor.git.initRepository | завести репозиторий для книги — страница tools/git (версии и история) |
-| ai-focused-editor.image.openAsText | TASK-010 | ai-focused-editor.image.openAsText | тот же запасной выход для картинок (посмотреть, например, разметку SVG) — страница tools/office, рядом с офисным просмотрщиком |
-| ai-focused-editor.mcp.manageServers | TASK-010 | ai-focused-editor.mcp.manageServers | управление MCP-серверами — страница tools/mcp |
-| ai-focused-editor.office.openAsText | TASK-010 | ai-focused-editor.office.openAsText | тот же файл сырым текстом, в обход просмотрщика — страница tools/office |
-| ai-focused-editor.office.openPreview | TASK-010 | ai-focused-editor.office.openPreview | просмотр офисного документа из папки источников — страница tools/office |
 
 ## Uncovered ids
 
