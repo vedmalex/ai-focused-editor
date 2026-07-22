@@ -1,0 +1,23 @@
+{
+  // Queue of coverage-exception REQUESTS (tech_spec §4.1).
+  //
+  // A content unit that needs an exception appends an entry here instead of
+  // editing `coverage-exceptions.jsonc` (whose owner is WP-2). The shape is the
+  // shape of an applied exception plus `requestedBy`, so adjudication is a MOVE
+  // between files and never a rewrite of somebody else's `reason`.
+  //
+  //   { "pattern": "git.*", "kind": "external",
+  //     "reason": "команды форка theia-git-fork — чужой namespace, вне §C.1",
+  //     "requestedBy": "WP-11", "added": "2026-07-22" }
+  //
+  // `kind` ∈ external | dynamic | exempt. A pending `external`/`dynamic` entry
+  // satisfies the `command=`/`query=` fences in `--coverage=warn` only (§4.4),
+  // so content work is never deadlocked on adjudication — and `strict` refuses
+  // to build at all while this queue is non-empty (§4.3), so the loosening
+  // cannot reach a release.
+  //
+  // WP-13 empties this file: every request is accepted into the allowlist,
+  // rejected in favour of a page, or rejected together with the directive that
+  // caused it (§4.3).
+  "requests": []
+}

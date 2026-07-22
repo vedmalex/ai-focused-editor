@@ -50,9 +50,16 @@
     "typescript": "~5.8.3"
   },
   "scripts": {
-    "build": "rm -rf lib && tsc && mkdir -p lib/browser/themes && cp src/browser/themes/*.json lib/browser/themes/ && mkdir -p lib/node/i18n/ru && cp src/node/i18n/ru/*.json lib/node/i18n/ru/ && mkdir -p lib/node/ai && cp src/node/ai/*.yaml lib/node/ai/",
-    "clean": "rm -rf lib *.tsbuildinfo",
-    "watch": "tsc -w"
+    "docs:inventory": "bun scripts/extract-feature-inventory.mjs",
+    "docs:gen:strict": "bun scripts/generate-docs-content.mjs --coverage=strict",
+    "docs:gen:warn": "bun scripts/generate-docs-content.mjs --coverage=warn",
+    "docs:strict": "bun run docs:inventory && bun run docs:gen:strict",
+    "docs:dev": "bun run docs:inventory && bun run docs:gen:warn",
+    "compile": "rm -rf lib && tsc && mkdir -p lib/browser/themes && cp src/browser/themes/*.json lib/browser/themes/ && mkdir -p lib/node/i18n/ru && cp src/node/i18n/ru/*.json lib/node/i18n/ru/ && mkdir -p lib/node/ai && cp src/node/ai/*.yaml lib/node/ai/",
+    "build": "bun run docs:strict && bun run compile",
+    "build:dev": "bun run docs:dev && bun run compile",
+    "clean": "rm -rf lib *.tsbuildinfo docs-inventory.generated.json src/browser/docs/docs-content.generated.ts",
+    "watch": "bun run docs:dev && tsc -w"
   },
   "theiaExtensions": [
     {

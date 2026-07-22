@@ -64,8 +64,8 @@
   "theia": {
     "target": "browser",
     "frontend": {
-      "applicationName": "AI Focused Editor",
       "config": {
+        "applicationName": "AI Focused Editor",
         "defaultIconTheme": "afe-writer-icons",
         "preferences": {
           "files.autoSave": "afterDelay",

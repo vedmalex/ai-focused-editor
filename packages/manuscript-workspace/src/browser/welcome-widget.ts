@@ -1,7 +1,7 @@
-import { Command, MessageService } from '@theia/core/lib/common';
+import { Command, Disposable, DisposableCollection, MessageService } from '@theia/core/lib/common';
 import { CommandRegistry } from '@theia/core/lib/common/command';
 import { PreferenceScope, PreferenceService } from '@theia/core/lib/common/preferences';
-import { LabelProvider } from '@theia/core/lib/browser';
+import { LabelProvider, StatefulWidget } from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { FileDialogService } from '@theia/filesystem/lib/browser';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
@@ -25,6 +25,16 @@ import {
   AI_FOCUSED_EDITOR_LIBRARY_PATH,
   AI_FOCUSED_EDITOR_WELCOME_SHOW_ON_STARTUP
 } from './ai-focused-editor-preferences';
+import {
+  DocsContentProvider,
+  DocsManifestEntry,
+  DocsPage
+} from '../common/docs/docs-contract';
+import {
+  resolveDocsManifest,
+  resolveDocsPage
+} from '../common/docs/docs-lang';
+import { DocsRenderContext, WelcomeDocsRenderer } from './docs/welcome-docs-renderer';
 
 /**
  * Commands surfaced by the welcome page. Defined here (not in the frontend
@@ -54,7 +64,46 @@ export namespace WelcomeCommands {
     'ai-focused-editor/welcome/new-book',
     'ai-focused-editor/welcome/category'
   );
+
+  /**
+   * Open the in-app guide, optionally at a given page id. Declared HERE (next
+   * to its siblings) so the feature-inventory extractor picks it up by the same
+   * rule that finds every other command of this package.
+   */
+  export const OPEN_DOCS: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.welcome.openDocs',
+      category: 'AI Focused Editor',
+      label: 'Documentation'
+    },
+    'ai-focused-editor/welcome/open-docs',
+    'ai-focused-editor/welcome/category'
+  );
 }
+
+/**
+ * What the welcome page is currently showing. `home` is the existing screen
+ * (pure React, no markdown); `docs` is one page of the guide, rendered by
+ * {@link WelcomeDocsRenderer} — two DIFFERENT things that both used to be
+ * called "home".
+ */
+export type WelcomeRoute =
+  | { readonly kind: 'home' }
+  | { readonly kind: 'docs'; readonly pageId: string };
+
+/** Shape persisted into the saved layout by {@link WelcomeWidget.storeState}. */
+export interface WelcomeWidgetState {
+  readonly route: WelcomeRoute;
+  /** `${pageId}::${stepsId}` → checked indices. */
+  readonly checklists: Readonly<Record<string, number[]>>;
+}
+
+/** Command ids of the Settings view, used by the `:settings` directive. */
+const OPEN_PREFERENCES_COMMAND_ID = 'preferences:open';
+const OPEN_GLOBAL_PREFERENCES_COMMAND_ID = 'workbench.action.openGlobalSettings';
+
+/** The guide's root page — where the menu entry and the nav's Back button lead. */
+export const DOCS_HOME_PAGE_ID = 'home';
 
 /**
  * Command id for the parallel "Book Doctor" contribution. Referenced as a bare
@@ -96,7 +145,7 @@ function bytesToBase64(bytes: Uint8Array): string {
  * `welcome-frontend-module.ts`.
  */
 @injectable()
-export class WelcomeWidget extends ReactWidget {
+export class WelcomeWidget extends ReactWidget implements StatefulWidget {
   static readonly ID = 'ai-focused-editor.welcome';
   static readonly LABEL = 'Welcome';
 
@@ -121,6 +170,12 @@ export class WelcomeWidget extends ReactWidget {
   @inject(FileDialogService)
   protected readonly fileDialogService!: FileDialogService;
 
+  @inject(DocsContentProvider)
+  protected readonly docs!: DocsContentProvider;
+
+  @inject(WelcomeDocsRenderer)
+  protected readonly docsRenderer!: WelcomeDocsRenderer;
+
   /** Newest-first recent workspace URIs, loaded asynchronously after construction. */
   protected recent: string[] = [];
 
@@ -129,6 +184,19 @@ export class WelcomeWidget extends ReactWidget {
 
   /** False until the first library scan settles (drives the "Scanning…" line). */
   protected catalogLoaded = false;
+
+  /** Which of the two screens is showing; `home` is the pre-existing one. */
+  protected route: WelcomeRoute = { kind: 'home' };
+
+  /** `${pageId}::${stepsId}` → checked step indices, persisted with the layout. */
+  protected checklists = new Map<string, Set<number>>();
+
+  /**
+   * The single delegated click listener of the mounted guide page. Held here
+   * (and not pushed onto `toDispose` on every render) so a re-render swaps it
+   * instead of stacking a new one on top of the old.
+   */
+  protected readonly docsListeners = new DisposableCollection();
 
   @postConstruct()
   protected init(): void {
@@ -251,11 +319,15 @@ export class WelcomeWidget extends ReactWidget {
   }
 
   protected render(): React.ReactNode {
+    if (this.route.kind === 'docs') {
+      return this.renderDocs(this.route.pageId);
+    }
     return React.createElement(
       'div',
       { className: 'afe-welcome-body', tabIndex: -1 },
       this.renderHeader(),
       this.renderStart(),
+      this.renderScenarioCards(),
       this.renderCatalog(),
       this.renderRecent(),
       this.renderFooter()
@@ -331,6 +403,59 @@ export class WelcomeWidget extends ReactWidget {
           !doctorRegistered
         )
       )
+    );
+  }
+
+  /**
+   * The entry point into the guide, placed between Start ("do it now") and My
+   * Books ("come back to what you have"): both Start and the cards address the
+   * new user, whereas the catalog and Recent address the returning one. Putting
+   * the cards below Recent would hide the guide from the only person who needs
+   * it.
+   *
+   * Source of truth is the MANIFEST, resolved through {@link resolveDocsManifest}
+   * rather than read straight off the provider: with English explicitly
+   * selected the `en` manifest is empty, and a direct `getManifest` would leave
+   * this section blank. Only entries that belong to a guide section become
+   * cards; the top-level pages (`home`, `start`, …) are reachable from the
+   * guide's own navigation.
+   */
+  protected renderScenarioCards(): React.ReactNode {
+    const entries = resolveDocsManifest(this.docs, nls.locale).entries.filter(entry => entry.section);
+    if (entries.length === 0) {
+      return undefined;
+    }
+    return React.createElement(
+      'section',
+      { className: 'afe-welcome-section afe-welcome-scenarios' },
+      React.createElement(
+        'h2',
+        { className: 'afe-welcome-section-title' },
+        nls.localize('ai-focused-editor/welcome/section-guide', 'Guide')
+      ),
+      React.createElement(
+        'div',
+        { className: 'afe-welcome-scenario-grid' },
+        ...entries.map(entry => this.renderScenarioCard(entry))
+      )
+    );
+  }
+
+  protected renderScenarioCard(entry: DocsManifestEntry): React.ReactNode {
+    return React.createElement(
+      'button',
+      {
+        key: entry.id,
+        className: 'afe-welcome-scenario-card',
+        type: 'button',
+        title: entry.title,
+        onClick: () => this.openDocs(entry.id)
+      },
+      React.createElement('span', { className: 'afe-welcome-scenario-icon codicon codicon-book' }),
+      React.createElement('span', { className: 'afe-welcome-scenario-title' }, entry.title),
+      entry.section
+        ? React.createElement('span', { className: 'afe-welcome-scenario-section' }, entry.section)
+        : undefined
     );
   }
 
@@ -592,5 +717,343 @@ export class WelcomeWidget extends ReactWidget {
   /** Reload the window into the given workspace folder/file (recent row click). */
   protected openWorkspace(uriString: string): void {
     this.workspaceService.open(new URI(uriString));
+  }
+
+  // ===========================================================================
+  // Guide route
+  // ===========================================================================
+
+  /**
+   * One guide page: the permanent navigation (a React node) plus the page body
+   * (foreign HTML mounted outside React, see {@link mountDocs}).
+   *
+   * A page id that no longer resolves — a stale saved layout, a swapped
+   * provider — degrades to the home route instead of showing an empty shell.
+   */
+  protected renderDocs(pageId: string): React.ReactNode {
+    const page = resolveDocsPage(this.docs, nls.locale, pageId);
+    if (!page) {
+      this.route = { kind: 'home' };
+      return this.render();
+    }
+    return React.createElement(
+      'div',
+      { className: 'afe-welcome-body afe-docs', tabIndex: -1 },
+      this.renderDocsNav(page),
+      React.createElement('div', {
+        className: 'afe-docs-page',
+        ref: (node: HTMLDivElement | null) => this.mountDocs(node, page)
+      })
+    );
+  }
+
+  /**
+   * The only permanent surface of the guide route: a guaranteed way back to the
+   * welcome screen, the guide's root page, and every other page grouped by its
+   * `section`.
+   *
+   * The page list comes from the same {@link resolveDocsManifest} the scenario
+   * cards use — a second, hand-maintained list is exactly how a navigation
+   * starts disagreeing with the pages that actually exist.
+   *
+   * Handlers are plain React `onClick` here (unlike the page body): this node
+   * belongs to React, and a second native listener for it would only add a
+   * disposable to leak. The `data-afe-nav*` attributes exist for tests and
+   * debugging; the delegated handler listens on `.afe-docs-page` and never sees
+   * them.
+   */
+  protected renderDocsNav(page: DocsPage): React.ReactNode {
+    const entries = resolveDocsManifest(this.docs, nls.locale).entries;
+    const root = entries.find(entry => entry.id === DOCS_HOME_PAGE_ID);
+    const groups = new Map<string | undefined, DocsManifestEntry[]>();
+    for (const entry of entries) {
+      if (entry.id === DOCS_HOME_PAGE_ID) {
+        continue;
+      }
+      const bucket = groups.get(entry.section);
+      if (bucket) {
+        bucket.push(entry);
+      } else {
+        groups.set(entry.section, [entry]);
+      }
+    }
+    return React.createElement(
+      'nav',
+      { className: 'afe-docs-nav' },
+      React.createElement(
+        'button',
+        {
+          className: 'afe-docs-nav-home',
+          type: 'button',
+          'data-afe-nav': 'home',
+          onClick: () => {
+            this.route = { kind: 'home' };
+            this.update();
+          }
+        },
+        React.createElement('span', { className: 'codicon codicon-arrow-left' }),
+        React.createElement(
+          'span',
+          undefined,
+          nls.localize('ai-focused-editor/welcome/docs-nav-home', 'Back to Welcome')
+        )
+      ),
+      root ? this.renderDocsNavItem(root, page) : undefined,
+      ...[...groups.entries()].map(([section, items], index) => React.createElement(
+        'div',
+        { key: section ?? `#${index}`, className: 'afe-docs-nav-group' },
+        section
+          ? React.createElement('div', { className: 'afe-docs-nav-section' }, section)
+          : undefined,
+        ...items.map(entry => this.renderDocsNavItem(entry, page))
+      ))
+    );
+  }
+
+  /**
+   * One navigation row. The entry for the page being shown is `disabled` and
+   * marked `aria-current`: it both says "you are here" and blocks a navigation
+   * to self, which would re-render and throw the reader's scroll position away.
+   */
+  protected renderDocsNavItem(entry: DocsManifestEntry, page: DocsPage): React.ReactNode {
+    const current = entry.id === page.id;
+    return React.createElement(
+      'button',
+      {
+        key: entry.id,
+        className: `afe-docs-nav-item${current ? ' afe-docs-nav-item--current' : ''}`,
+        type: 'button',
+        disabled: current,
+        'aria-current': current ? 'page' : undefined,
+        'data-afe-nav': 'page',
+        'data-afe-nav-page': entry.id,
+        onClick: () => this.openDocs(entry.id)
+      },
+      entry.title
+    );
+  }
+
+  /**
+   * Replace the page container's content with the rendered fragment and keep
+   * exactly ONE delegated click listener on it. React hands `null` when the
+   * node goes away, which is when the listener is dropped.
+   */
+  protected mountDocs(node: HTMLDivElement | null, page: DocsPage): void {
+    this.docsListeners.dispose();
+    if (!node) {
+      return;
+    }
+    // Bound HERE rather than as arrow-function class properties: a class
+    // property only exists on an INSTANCE, and the DOM-less tests of §F.7 reach
+    // the widget through `Object.create(WelcomeWidget.prototype)` — a handler
+    // that lives on the instance is unreachable there, i.e. untestable. The
+    // listeners keep their identity through these two constants, which is what
+    // `removeEventListener` needs.
+    const onClick = (event: MouseEvent): void => this.onDocsClick(event);
+    const onKeydown = (event: KeyboardEvent): void => this.onDocsKeydown(event);
+    node.addEventListener('click', onClick);
+    node.addEventListener('keydown', onKeydown);
+    this.docsListeners.push(Disposable.create(() => {
+      node.removeEventListener('click', onClick);
+      node.removeEventListener('keydown', onKeydown);
+    }));
+    node.textContent = '';
+    node.appendChild(this.docsRenderer.renderPage(page, this.docsRenderContext(page)));
+  }
+
+  /** What the renderer is allowed to ask the widget about (§D.3). */
+  protected docsRenderContext(page: DocsPage): DocsRenderContext {
+    return {
+      pageId: page.id,
+      lang: page.lang,
+      isCommandRegistered: id => this.commandRegistry.getCommand(id) !== undefined,
+      commandLabel: id => this.commandRegistry.getCommand(id)?.label,
+      isStepChecked: (checklistId, index) => this.checkedSteps(page.id, checklistId).has(index)
+    };
+  }
+
+  /**
+   * The one delegated handler for every affordance of every guide page. It is a
+   * native listener (not React's) because the page body is inserted outside
+   * React's tree: relying on synthetic-event dispatch into foreign nodes would
+   * make every button on every page silently dead if it did not hold.
+   */
+  protected onDocsClick(event: MouseEvent): void {
+    const element = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-afe-directive]');
+    if (!element) {
+      return;
+    }
+    event.preventDefault();
+    switch (element.dataset.afeDirective) {
+      case 'action':
+        return this.invokeDocsCommand(element.dataset.afeCommand ?? '');
+      case 'settings':
+        return this.openSettingsQuery(element.dataset.afeQuery ?? '');
+      case 'doc':
+      case 'scenario':
+        return this.openDocs(element.dataset.afePage ?? '');
+      case 'step':
+        return this.toggleStep(element.dataset.afeStep ?? '', Number(element.dataset.afeStepIndex));
+      default:
+        return;
+    }
+  }
+
+  /**
+   * Keyboard activation for the ONE affordance that is not a native control.
+   *
+   * Every other directive emits a `<button>` or an `<a>`, which the browser
+   * already activates on Enter/Space by SYNTHESISING A CLICK — handling those
+   * here would fire them twice. A checklist row is a `<span role="checkbox">`
+   * (ISS-094: a `<button>` row cannot legally contain the `::action` button an
+   * author naturally puts inside a step), so it gets nothing for free and is
+   * the only case this handler answers.
+   *
+   * Space is the WAI-ARIA activation key for `role="checkbox"`; Enter is
+   * accepted too because a reader ticking off steps does not consult the
+   * spec. `preventDefault` on Space stops the page from scrolling under them.
+   */
+  protected onDocsKeydown(event: KeyboardEvent): void {
+    if (event.key !== ' ' && event.key !== 'Spacebar' && event.key !== 'Enter') {
+      return;
+    }
+    const element = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-afe-directive]');
+    if (!element || element.dataset.afeDirective !== 'step') {
+      return;
+    }
+    event.preventDefault();
+    this.toggleStep(element.dataset.afeStep ?? '', Number(element.dataset.afeStepIndex));
+  }
+
+  /**
+   * The single place the route changes, shared by the navigation, the page
+   * body's `:doc`/`:::scenario` affordances and the `welcome.openDocs` command
+   * — so a missing page is refused identically no matter who asked.
+   */
+  openDocs(pageId: string): void {
+    if (!resolveDocsPage(this.docs, nls.locale, pageId)) {
+      void this.messages.warn(nls.localize(
+        'ai-focused-editor/welcome/docs-page-missing',
+        'This guide page is not available: {0}',
+        pageId
+      ));
+      return;
+    }
+    this.route = { kind: 'docs', pageId };
+    this.update();
+  }
+
+  /**
+   * Line 2 of the "no dead buttons" contract: an unregistered command is
+   * silently ignored (the button already rendered `disabled`), while a
+   * registered-but-currently-disabled one warns instead of executing — running
+   * it would throw NO_ACTIVE_HANDLER. Same shape as {@link runBookDoctor}.
+   */
+  protected invokeDocsCommand(id: string): void {
+    if (!id || !this.commandRegistry.getCommand(id)) {
+      return;
+    }
+    if (!this.commandRegistry.isEnabled(id)) {
+      void this.messages.warn(nls.localize(
+        'ai-focused-editor/welcome/docs-command-disabled',
+        'This action is not available right now: {0}',
+        id
+      ));
+      return;
+    }
+    void this.commandRegistry.executeCommand(id);
+  }
+
+  /** Open the Settings view filtered by `query`, degrading the same way `mcp-controls` does. */
+  protected openSettingsQuery(query: string): void {
+    if (this.commandRegistry.getCommand(OPEN_PREFERENCES_COMMAND_ID)) {
+      void this.commandRegistry.executeCommand(OPEN_PREFERENCES_COMMAND_ID, query);
+      return;
+    }
+    if (this.commandRegistry.getCommand(OPEN_GLOBAL_PREFERENCES_COMMAND_ID)) {
+      void this.commandRegistry.executeCommand(OPEN_GLOBAL_PREFERENCES_COMMAND_ID);
+      return;
+    }
+    void this.messages.warn(nls.localize(
+      'ai-focused-editor/welcome/docs-settings-unavailable',
+      'The Settings view is not available in this build.'
+    ));
+  }
+
+  /**
+   * Toggle one checklist step. The index arrives as a `dataset` STRING, so
+   * `Number()` can hand back `NaN`; anything that is not a non-negative integer
+   * is ignored rather than written into the persisted state.
+   */
+  protected toggleStep(checklistId: string, index: number): void {
+    if (!checklistId || !Number.isInteger(index) || index < 0) {
+      return;
+    }
+    const pageId = this.route.kind === 'docs' ? this.route.pageId : DOCS_HOME_PAGE_ID;
+    const checked = this.checkedSteps(pageId, checklistId);
+    if (checked.has(index)) {
+      checked.delete(index);
+    } else {
+      checked.add(index);
+    }
+    this.update();
+  }
+
+  /** The live checked-index set for one checklist, created on first use. */
+  protected checkedSteps(pageId: string, checklistId: string): Set<number> {
+    const key = `${pageId}::${checklistId}`;
+    let checked = this.checklists.get(key);
+    if (!checked) {
+      checked = new Set<number>();
+      this.checklists.set(key, checked);
+    }
+    return checked;
+  }
+
+  // --- StatefulWidget (route + checklists survive a layout restore) ---
+
+  storeState(): WelcomeWidgetState {
+    const checklists: Record<string, number[]> = {};
+    for (const [key, checked] of this.checklists) {
+      if (checked.size > 0) {
+        checklists[key] = [...checked].sort((left, right) => left - right);
+      }
+    }
+    return { route: this.route, checklists };
+  }
+
+  /**
+   * Restore, VALIDATING everything: the state comes from a saved layout that a
+   * previous build may have written, where the stored page id need not exist
+   * any more. Without the existence check the widget would come back into an
+   * empty guide route — a user whose Welcome "stopped opening".
+   */
+  restoreState(state: object | undefined): void {
+    const stored = state as Partial<WelcomeWidgetState> | undefined;
+    this.checklists = new Map<string, Set<number>>();
+    const checklists = stored?.checklists;
+    if (checklists && typeof checklists === 'object') {
+      for (const [key, indices] of Object.entries(checklists)) {
+        if (!Array.isArray(indices)) {
+          continue;
+        }
+        const valid = indices.filter(index => Number.isInteger(index) && index >= 0);
+        if (valid.length > 0) {
+          this.checklists.set(key, new Set<number>(valid));
+        }
+      }
+    }
+    const route = stored?.route;
+    this.route = route?.kind === 'docs'
+      && typeof route.pageId === 'string'
+      && resolveDocsPage(this.docs, nls.locale, route.pageId) !== undefined
+      ? { kind: 'docs', pageId: route.pageId }
+      : { kind: 'home' };
+    this.update();
+  }
+
+  override dispose(): void {
+    this.docsListeners.dispose();
+    super.dispose();
   }
 }
