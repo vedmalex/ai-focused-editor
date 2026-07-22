@@ -422,16 +422,42 @@ export function splitMathSegments(text: string): MathSegment[] {
   return segments;
 }
 
+/**
+ * True for a bare/unlabeled `[[...]]` candidate (no `|`) that is a valid entity
+ * reference: `[[id]]` or `[[kind:id]]`, optionally with a `#anchor` segment
+ * folded into the id (e.g. `[[page-slug#Anchor-Slug]]`). Mirrors the split-by-
+ * first-colon + non-empty-id acceptance rule of `parseBareEntityTags`
+ * (link-navigation.ts, `@ai-focused-editor/manuscript-workspace` — kept in sync
+ * by hand since the validator cannot depend on that browser-facing package).
+ * Unlike the labeled `kind:id|label` form, bare ids/anchors are NOT restricted
+ * to ASCII — Unicode (e.g. Cyrillic anchors) is allowed anywhere in the token.
+ * The only rejects are: empty content, an embedded bracket/pipe, or embedded
+ * whitespace (whitespace signals stray prose caught between `[[`/`]]`, not a
+ * real single-token bare reference, e.g. `[[char:krishna Krishna]]`).
+ */
+function isValidBareEntityTag(raw: string): boolean {
+  const inner = raw.slice(2, -2);
+  if (inner.length === 0) {
+    return false;
+  }
+  if (/[[\]|\s]/.test(inner)) {
+    return false;
+  }
+  const colon = inner.indexOf(':');
+  const id = colon >= 0 ? inner.slice(colon + 1) : inner;
+  return id.length > 0;
+}
+
 export function validateSemanticMarkdown(text: string): SemanticMarkdownDiagnostic[] {
   const lineStarts = computeLineStarts(text);
   const diagnostics: SemanticMarkdownDiagnostic[] = [];
   let offset = 0;
 
   while (offset < text.length) {
-    const startOffset = text.indexOf('[[', offset);[]
+    const startOffset = text.indexOf('[[', offset);
     if (startOffset === -1) {
       break;
-    }[]
+    }
 
     const endOffset = text.indexOf(']]', startOffset + 2);
     if (endOffset === -1) {
@@ -447,7 +473,15 @@ export function validateSemanticMarkdown(text: string): SemanticMarkdownDiagnost
     }
 
     const raw = text.slice(startOffset, endOffset + 2);
-    if (!SEMANTIC_TAG_EXACT_PATTERN.test(raw)) {
+    // Labeled `kind:id|label` candidates keep the original strict/ASCII check;
+    // pipe-less candidates are bare `[[id]]` / `[[kind:id]]` references, which
+    // are intentionally first-class (see `isValidBareEntityTag` above) rather
+    // than a malformed labeled tag missing its `|`.
+    const isValid = raw.includes('|')
+      ? SEMANTIC_TAG_EXACT_PATTERN.test(raw)
+      : isValidBareEntityTag(raw);
+
+    if (!isValid) {
       diagnostics.push({
         severity: 'error',
         message: 'Invalid semantic Markdown tag. Expected [[kind:id|label]] with single-line label and ASCII id.',

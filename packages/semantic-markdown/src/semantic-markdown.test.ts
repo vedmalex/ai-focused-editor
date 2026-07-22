@@ -83,6 +83,60 @@ test('validates malformed semantic tag candidates', () => {
   });
 });
 
+test('does not flag bare [[id]] references', () => {
+  expect(validateSemanticMarkdown('See [[krishna]] for context.')).toHaveLength(0);
+});
+
+test('does not flag bare [[kind:id]] references', () => {
+  expect(validateSemanticMarkdown('See [[char:krishna]] for context.')).toHaveLength(0);
+});
+
+test('does not flag bare [[id#anchor]] references with a Cyrillic anchor', () => {
+  // Bare-form anchors are not ASCII-restricted (TASK-012, UR-002): the id/anchor
+  // token may hold Unicode, unlike the labeled kind:id|label form.
+  expect(validateSemanticMarkdown('See [[sharan-domain-relation-map#Полный-baseline-обзор]] for context.'))
+    .toHaveLength(0);
+});
+
+test('does not flag bare [[kind:id#anchor]] references with a Cyrillic anchor', () => {
+  expect(validateSemanticMarkdown('See [[doc:sharan-domain-relation-map#Полный-baseline-обзор]] here.'))
+    .toHaveLength(0);
+});
+
+test('still validates the labeled kind:id|label form with ASCII id', () => {
+  expect(validateSemanticMarkdown('Meet [[char:krishna|Krishna]].')).toHaveLength(0);
+});
+
+test('still flags a malformed pipe-less candidate with embedded whitespace as invalid', () => {
+  // Regression guard: `krishna Krishna` is not a valid bare id (embedded
+  // whitespace is stray prose, not a single-token bare reference) — this must
+  // keep failing exactly like the pre-existing malformed-tag test above.
+  const diagnostics = validateSemanticMarkdown('A [[char:krishna Krishna]]');
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatchObject({
+    severity: 'error',
+    message: 'Invalid semantic Markdown tag. Expected [[kind:id|label]] with single-line label and ASCII id.'
+  });
+});
+
+test('still flags an unclosed semantic Markdown tag', () => {
+  const diagnostics = validateSemanticMarkdown('B [[term:dharma|dharma');
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatchObject({
+    severity: 'error',
+    message: 'Unclosed semantic Markdown tag. Expected closing ]].'
+  });
+});
+
+test('still flags a multiline label inside the labeled kind:id|label form', () => {
+  const diagnostics = validateSemanticMarkdown('A [[term:dharma|multi\nline]] end');
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatchObject({
+    severity: 'error',
+    message: 'Invalid semantic Markdown tag. Expected [[kind:id|label]] with single-line label and ASCII id.'
+  });
+});
+
 test('normalizes valid semantic tag label spacing', () => {
   expect(normalizeSemanticMarkdownTags('[[char:krishna|  Krishna   Govinda ]]')).toBe('[[char:krishna|Krishna Govinda]]');
 });
