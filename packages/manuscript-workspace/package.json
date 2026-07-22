@@ -24,6 +24,7 @@
     "@theia/ai-mcp": "1.73.1",
     "@theia/core": "1.73.1",
     "@theia/editor": "1.73.1",
+    "@theia/file-search": "1.73.1",
     "@theia/filesystem": "1.73.1",
     "@theia/markers": "1.73.1",
     "@theia/monaco": "1.73.1",

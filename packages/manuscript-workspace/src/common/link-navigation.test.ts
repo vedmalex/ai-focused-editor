@@ -3,7 +3,11 @@ import { parseSemanticMarkdown } from '@ai-focused-editor/semantic-markdown';
 import {
   findHeadingLine,
   isSkippableLinkTarget,
+  noteCreateContent,
+  noteCreatePath,
   parseBareEntityTags,
+  parseWikiLinks,
+  resolveNoteLink,
   resolveRelativeLink,
   semanticTagLinkRange,
   slugifyBase,
@@ -52,10 +56,15 @@ describe('semanticTagLinkRange', () => {
   });
 });
 
-describe('parseBareEntityTags', () => {
-  test('parses a bare [[id]] reference', () => {
+describe('parseBareEntityTags (deprecated wrapper)', () => {
+  // Plan §9/ISS-138: a colon-less bare token like `[[frodo]]` now classifies as
+  // `note` under the parseWikiLinks entity/note discriminator (no `:` in the
+  // content), so it is intentionally EXCLUDED from this deprecated wrapper —
+  // that is the goal of TASK-013 (distinguishing notes from entities), not a
+  // regression. Pre-TASK-013 this asserted `[{ id: 'frodo', start: 5, end: 14 }]`.
+  test('no longer returns a colon-less bare token (now classified as note, ISS-138)', () => {
     const matches = parseBareEntityTags('meet [[frodo]] now');
-    expect(matches).toEqual([{ id: 'frodo', start: 5, end: 14 }]);
+    expect(matches).toEqual([]);
   });
 
   test('parses an unlabeled [[kind:id]] reference', () => {
@@ -67,13 +76,158 @@ describe('parseBareEntityTags', () => {
     expect(parseBareEntityTags('[[char:frodo|Frodo]]')).toEqual([]);
   });
 
-  test('handles a mix and multiple matches', () => {
+  // Plan §9/ISS-138: `[[frodo]]` (no colon) is now `note`-classified and
+  // excluded; only the `[[location:shire]]` bare entity remains. Pre-TASK-013
+  // this asserted both `{kind: undefined, id: 'frodo'}` and the location entry.
+  test('handles a mix, excluding the now-note-classified colon-less token', () => {
     const text = '[[frodo]] and [[term:ring|the ring]] and [[location:shire]]';
     const matches = parseBareEntityTags(text);
-    expect(matches.map(m => ({ kind: m.kind, id: m.id }))).toEqual([
-      { kind: undefined, id: 'frodo' },
-      { kind: 'location', id: 'shire' }
-    ]);
+    expect(matches.map(m => ({ kind: m.kind, id: m.id }))).toEqual([{ kind: 'location', id: 'shire' }]);
+  });
+});
+
+describe('parseWikiLinks', () => {
+  test('classifies a labeled entity tag (ASCII kind)', () => {
+    const [link] = parseWikiLinks('[[char:krishna|Кришна]]');
+    expect(link).toEqual({
+      class: 'entity',
+      kind: 'char',
+      id: 'krishna',
+      alias: 'Кришна',
+      raw: '[[char:krishna|Кришна]]',
+      range: { start: 0, end: 23 }
+    });
+  });
+
+  test('classifies a labeled entity tag with a Cyrillic kind (ISS-136)', () => {
+    const [link] = parseWikiLinks('[[персонаж:ivan|Иван]]');
+    expect(link.class).toBe('entity');
+    expect(link.kind).toBe('персонаж');
+    expect(link.id).toBe('ivan');
+    expect(link.alias).toBe('Иван');
+  });
+
+  test('classifies a bare (unlabeled) entity tag', () => {
+    const [link] = parseWikiLinks('[[char:krishna]]');
+    expect(link).toEqual({
+      class: 'entity',
+      kind: 'char',
+      id: 'krishna',
+      alias: undefined,
+      anchor: undefined,
+      raw: '[[char:krishna]]',
+      range: { start: 0, end: 16 }
+    });
+  });
+
+  test('classifies a colon-less bare token as a note (not an entity) — ISS-138', () => {
+    const [link] = parseWikiLinks('[[sharan-108]]');
+    expect(link.class).toBe('note');
+    expect(link.notePath).toBe('sharan-108');
+    expect(link.kind).toBeUndefined();
+    expect(link.id).toBeUndefined();
+  });
+
+  test('keeps the regression-guard Invalid case: kind-shaped prefix + whitespace in the id', () => {
+    const [link] = parseWikiLinks('[[char:krishna Krishna]]');
+    expect(link.class).toBe('invalid');
+    expect(link.kind).toBe('char');
+    expect(link.id).toBeUndefined();
+  });
+
+  test('entity id must stay ASCII even when the kind is Cyrillic (UR-002(2))', () => {
+    const [link] = parseWikiLinks('[[персонаж:иван]]');
+    expect(link.class).toBe('invalid');
+    expect(link.kind).toBe('персонаж');
+    expect(link.id).toBeUndefined();
+  });
+
+  test('a kind-shaped token with an out-of-charset id is invalid in BOTH classifiers (plan §1/ISS-140 trade-off, seam sync)', () => {
+    // `/` is outside the strict entity-id charset [A-Za-z0-9_.:-] — the
+    // validator flags this token, so the parser must NOT treat it as a live
+    // entity link (validator/parser seam agreement).
+    const [link] = parseWikiLinks('[[c:some/path]]');
+    expect(link.class).toBe('invalid');
+    expect(link.kind).toBe('c');
+    expect(link.id).toBeUndefined();
+  });
+
+  test('a space-containing kind-shaped id is Invalid (заметка: хвост)', () => {
+    const [link] = parseWikiLinks('[[заметка: хвост]]');
+    expect(link.class).toBe('invalid');
+    expect(link.kind).toBe('заметка');
+    expect(link.id).toBeUndefined();
+  });
+
+  test('classifies a plain note reference (spaces/Unicode allowed)', () => {
+    const [link] = parseWikiLinks('[[Моя заметка]]');
+    expect(link).toEqual({
+      class: 'note',
+      notePath: 'Моя заметка',
+      alias: undefined,
+      anchor: undefined,
+      raw: '[[Моя заметка]]',
+      range: { start: 0, end: 15 }
+    });
+  });
+
+  test('classifies a note path with a folder segment', () => {
+    const [link] = parseWikiLinks('[[folder/Моя заметка]]');
+    expect(link.class).toBe('note');
+    expect(link.notePath).toBe('folder/Моя заметка');
+  });
+
+  test('splits a note + #anchor', () => {
+    const [link] = parseWikiLinks('[[page#Заголовок]]');
+    expect(link.class).toBe('note');
+    expect(link.notePath).toBe('page');
+    expect(link.anchor).toBe('Заголовок');
+  });
+
+  test('splits a note + |alias (display-only)', () => {
+    const [link] = parseWikiLinks('[[Моя заметка|Подпись]]');
+    expect(link.class).toBe('note');
+    expect(link.notePath).toBe('Моя заметка');
+    expect(link.alias).toBe('Подпись');
+  });
+
+  test('an uppercase/space-led colon prefix is not kind-shaped, so it stays a note', () => {
+    const [link] = parseWikiLinks('[[Some Note: Subtitle]]');
+    expect(link.class).toBe('note');
+    expect(link.notePath).toBe('Some Note: Subtitle');
+  });
+
+  test('reports offsets for a token not starting at index 0', () => {
+    const text = 'See [[char:frodo|Frodo]] now';
+    const [link] = parseWikiLinks(text);
+    expect(link.range).toEqual({ start: 4, end: 24 });
+    expect(text.slice(link.range.start, link.range.end)).toBe('[[char:frodo|Frodo]]');
+  });
+
+  test('scans multiple mixed tokens in one pass', () => {
+    const text = '[[frodo]] and [[term:ring|the ring]] and [[location:shire]]';
+    const links = parseWikiLinks(text);
+    expect(links.map(l => l.class)).toEqual(['note', 'entity', 'entity']);
+  });
+
+  // ISS-146: `classifyWikiLinkToken` must trim `path` exactly like
+  // `classifyWikiLinkCandidate` (`@ai-focused-editor/semantic-markdown`) does —
+  // same whitespace-only and padded-note cases pinned in both packages.
+  test('a whitespace-only [[ ]] candidate is invalid, same as [[]] (ISS-146)', () => {
+    const [link] = parseWikiLinks('[[ ]]');
+    expect(link.class).toBe('invalid');
+  });
+
+  test('trims surrounding whitespace before classifying a padded note path (ISS-146)', () => {
+    const [link] = parseWikiLinks('[[ x ]]');
+    expect(link.class).toBe('note');
+    expect(link.notePath).toBe('x');
+  });
+
+  test('trims surrounding whitespace before classifying a padded Cyrillic note path (ISS-146)', () => {
+    const [link] = parseWikiLinks('[[  Моя заметка  ]]');
+    expect(link.class).toBe('note');
+    expect(link.notePath).toBe('Моя заметка');
   });
 });
 
@@ -202,5 +356,179 @@ describe('findHeadingLine', () => {
   test('returns undefined when no heading matches', () => {
     expect(findHeadingLine(doc, 'missing')).toBeUndefined();
     expect(findHeadingLine(doc, '')).toBeUndefined();
+  });
+});
+
+describe('resolveNoteLink', () => {
+  test('resolves a bare name by lowercased basename, case-insensitively', () => {
+    const index = new Map([['note', ['notes/note.md']]]);
+    expect(resolveNoteLink('Note', '/chapters/ch1.md', index)).toEqual({ path: 'notes/note.md' });
+  });
+
+  test('resolves a bare name whether or not the query carries .md', () => {
+    const index = new Map([['note', ['notes/note.md']]]);
+    expect(resolveNoteLink('note.md', '/chapters/ch1.md', index)).toEqual({ path: 'notes/note.md' });
+  });
+
+  test('returns undefined for a basename with no index entry', () => {
+    const index = new Map<string, string[]>();
+    expect(resolveNoteLink('missing', 'ch1.md', index)).toBeUndefined();
+  });
+
+  test('a target containing / resolves as a vault-relative path, not a doc-relative one', () => {
+    // Same basename index as flat lookup, but the query carries a folder segment —
+    // only candidates whose full path ends with that (case-insensitive, .md
+    // optional) suffix are considered (plan §3: UR-004(1) supersedes "current
+    // folder or above" with full Obsidian vault-relative-path parity).
+    const index = new Map([['note', ['a/notes/note.md', 'unrelated/note.md']]]);
+    expect(resolveNoteLink('notes/Note', 'x/ch1.md', index)).toEqual({ path: 'a/notes/note.md' });
+  });
+
+  test('duplicate basenames resolve to the candidate closest to documentPath', () => {
+    const index = new Map([['note', ['a/notes/note.md', 'b/notes/note.md']]]);
+    expect(resolveNoteLink('note', 'a/chapters/ch1.md', index)).toEqual({ path: 'a/notes/note.md' });
+  });
+
+  test('an equal-distance tie resolves to the alphabetically-first path, flagged ambiguous', () => {
+    const index = new Map([['note', ['b/note.md', 'a/note.md']]]);
+    const result = resolveNoteLink('note', 'root.md', index);
+    expect(result).toEqual({ path: 'a/note.md', ambiguous: true, candidates: ['a/note.md', 'b/note.md'] });
+  });
+
+  test('a clear single closest candidate is NOT flagged ambiguous (UR-005(1) refinement)', () => {
+    const index = new Map([['note', ['a/notes/note.md', 'b/notes/note.md']]]);
+    const result = resolveNoteLink('note', 'a/chapters/ch1.md', index);
+    expect(result?.ambiguous).toBeUndefined();
+    expect(result?.candidates).toBeUndefined();
+  });
+
+  test('falls back to titleIndex when the basename lookup misses (title/H1 fallback, UR-005(2))', () => {
+    const index = new Map<string, string[]>();
+    // Modelled as two titleIndex entries under the same lookup key — building
+    // the FM-title-over-H1 PRIORITY into which paths land here is
+    // NoteIndexService's job (browser layer, U3); this proves resolveNoteLink
+    // applies the exact same generic lookup+tie-break to a title hit as it does
+    // to a basename hit (no separate code path).
+    const titleIndex = new Map([['welcome', ['docs/a.md', 'docs/other/b.md']]]);
+    expect(resolveNoteLink('Welcome', 'docs/x/ch1.md', index, titleIndex)).toEqual({ path: 'docs/a.md' });
+  });
+
+  test('a basename hit wins over a titleIndex entry for the same key (basename before title/H1 in the chain)', () => {
+    const index = new Map([['welcome', ['welcome.md']]]);
+    const titleIndex = new Map([['welcome', ['docs/other-welcome.md']]]);
+    expect(resolveNoteLink('Welcome', 'ch1.md', index, titleIndex)).toEqual({ path: 'welcome.md' });
+  });
+
+  test('returns undefined when neither index nor titleIndex has a match', () => {
+    const index = new Map<string, string[]>();
+    const titleIndex = new Map<string, string[]>();
+    expect(resolveNoteLink('missing', 'ch1.md', index, titleIndex)).toBeUndefined();
+  });
+
+  test('returns undefined for an empty/whitespace-only note path', () => {
+    const index = new Map([['note', ['note.md']]]);
+    expect(resolveNoteLink('', 'ch1.md', index)).toBeUndefined();
+    expect(resolveNoteLink('   ', 'ch1.md', index)).toBeUndefined();
+  });
+});
+
+// ISS-144: every real consumer (`SemanticLinkContribution.collectWikiLinks`
+// via `resolveWikiToken`, and `SemanticMarkdownPreviewWidget.updatePreview` via
+// `resolveNoteLinkForPreview`) calls `resolveNoteLink` with `documentPath` set
+// to the FULL `model.uri.toString()` / `editor.uri.toString()`, because
+// `NoteIndexService`'s index candidates are themselves full `file://...` URI
+// strings (`FileSearchService.find` results) — never a bare, scheme-less path.
+// `pathDistance`/`directorySegments` are plain string-segment arithmetic, so
+// BOTH sides of the comparison must share the same representation for the
+// "closest to this chapter" tie-break to mean anything; these cases pin that
+// contract for full `file://` URIs (the editor and preview paths share this
+// exact `resolveNoteLink` call, so one test covers both consumers' resolution
+// engine).
+describe('resolveNoteLink with full file:// URI representation (ISS-144)', () => {
+  test('duplicate basenames resolve to the file:// candidate closest to a file:// documentPath', () => {
+    const index = new Map([['note', [
+      'file:///ws/proj/a/notes/note.md',
+      'file:///ws/proj/b/notes/note.md'
+    ]]]);
+    expect(resolveNoteLink('note', 'file:///ws/proj/a/chapters/ch1.md', index)).toEqual({
+      path: 'file:///ws/proj/a/notes/note.md'
+    });
+  });
+
+  test('an equal-distance tie among file:// candidates resolves alphabetically, flagged ambiguous', () => {
+    const index = new Map([['note', [
+      'file:///ws/proj/b/note.md',
+      'file:///ws/proj/a/note.md'
+    ]]]);
+    const result = resolveNoteLink('note', 'file:///ws/proj/root.md', index);
+    expect(result).toEqual({
+      path: 'file:///ws/proj/a/note.md',
+      ambiguous: true,
+      candidates: ['file:///ws/proj/a/note.md', 'file:///ws/proj/b/note.md']
+    });
+  });
+
+  test('regression guard: a scheme-less documentPath against full file:// candidates degrades the tie-break to a bare alphabetical pick (the pre-fix ISS-144 bug)', () => {
+    // This is the EXACT mismatch `SemanticLinkContribution.collectWikiLinks`
+    // used to produce (`model.uri.path`, scheme-less, against the full-URI
+    // index): `directorySegments` sees the candidate's leading `file:`
+    // segment and the document's leading real directory segment mismatch
+    // immediately, so `pathDistance` finds NO common ancestor for either
+    // candidate and both come out equidistant — "closest to this chapter"
+    // silently degenerates into "alphabetically first", even though `a/` is
+    // the obviously nearer folder. Pinned here so a reintroduced
+    // representation mismatch anywhere in the call chain is caught by this
+    // test turning `ambiguous` unexpectedly true again.
+    const index = new Map([['note', [
+      'file:///ws/proj/a/notes/note.md',
+      'file:///ws/proj/b/notes/note.md'
+    ]]]);
+    const result = resolveNoteLink('note', '/ws/proj/a/chapters/ch1.md', index);
+    expect(result?.ambiguous).toBe(true);
+  });
+});
+
+describe('noteCreatePath', () => {
+  const root = '/ws/proj';
+  const doc = '/ws/proj/chapters/ch1.md';
+
+  test('a bare note name creates alongside the current chapter', () => {
+    expect(noteCreatePath('New Note', doc, root)).toBe('/ws/proj/chapters/New Note.md');
+  });
+
+  test('a path in the link wins over the chapter folder, resolved against the root', () => {
+    expect(noteCreatePath('appendix/New Note', doc, root)).toBe('/ws/proj/appendix/New Note.md');
+  });
+
+  test('appends .md only when missing', () => {
+    expect(noteCreatePath('Note.md', doc, root)).toBe('/ws/proj/chapters/Note.md');
+    expect(noteCreatePath('Note', doc, root)).toBe('/ws/proj/chapters/Note.md');
+  });
+});
+
+describe('noteCreateContent', () => {
+  test('produces a single # Name heading line, no front-matter', () => {
+    expect(noteCreateContent('New Note')).toBe('# New Note\n');
+  });
+
+  test('uses only the last path segment for a folder-qualified link', () => {
+    expect(noteCreateContent('appendix/New Note')).toBe('# New Note\n');
+  });
+
+  test('strips a .md suffix from the name', () => {
+    expect(noteCreateContent('Note.md')).toBe('# Note\n');
+  });
+});
+
+describe('parseWikiLinks + findHeadingLine integration (Cyrillic anchor)', () => {
+  // Plan §5: the note+anchor split reuses the existing slugifyBase/findHeadingLine
+  // infrastructure unchanged — this proves the two compose end-to-end for a
+  // Cyrillic heading rather than re-testing slugifyBase itself.
+  test('a note #anchor with a Cyrillic heading resolves via the existing slugify infra', () => {
+    const doc = ['# Глава первая', '', 'Текст.', '', '## Второй раздел', '', 'Ещё текст.'].join('\n');
+    const [link] = parseWikiLinks('[[page#Второй раздел]]');
+    expect(link.class).toBe('note');
+    expect(link.anchor).toBe('Второй раздел');
+    expect(findHeadingLine(doc, link.anchor!)).toBe(4);
   });
 });

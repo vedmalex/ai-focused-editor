@@ -78,6 +78,7 @@ import { DiagramAuthorPromptFragmentContribution } from './diagram-author-prompt
 import { MarkdownLanguageContribution } from './markdown-language-contribution';
 import { AiModePromptFragmentContribution } from './ai-mode-prompt-fragment-contribution';
 import { EntityTypeRegistryService } from './entity-type-registry-service';
+import { NoteIndexService } from './note-index-service';
 import { ManuscriptTreeItemFactory } from './manuscript-tree-item-factory';
 import { ManuscriptTreeLabelProvider } from './manuscript-tree-label-provider';
 import { ManuscriptTreeModel } from './manuscript-tree-model';
@@ -160,6 +161,11 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
   bind(NarrativeEntityService).to(BrowserNarrativeEntityService).inSingletonScope();
   bind(SourceLibraryService).to(BrowserSourceLibraryService).inSingletonScope();
   bind(EntityTypeRegistryService).toSelf().inSingletonScope();
+  // Vault-wide markdown note index for Obsidian-style [[note]] link resolution
+  // (TASK-013 U3). No consumers yet (U4-U7 land afterwards) — this only
+  // starts the index building/watching.
+  bind(NoteIndexService).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(NoteIndexService);
   bind(ManuscriptTreeItemFactory).toSelf().inSingletonScope();
   bind(ManuscriptTreeLabelProvider).toSelf().inSingletonScope();
   bind(ManuscriptAiContextAssembler).toSelf().inSingletonScope();

@@ -4,7 +4,14 @@ import {
   splitMathSegments,
   SemanticTag
 } from '@ai-focused-editor/semantic-markdown';
-import { Disposable, DisposableCollection, UntitledResourceResolver } from '@theia/core/lib/common';
+import {
+  Disposable,
+  DisposableCollection,
+  MessageService,
+  QuickInputService,
+  QuickPickItem,
+  UntitledResourceResolver
+} from '@theia/core/lib/common';
 import { nls } from '@theia/core/lib/common/nls';
 import URI from '@theia/core/lib/common/uri';
 import { PreferenceService } from '@theia/core/lib/common/preferences';
@@ -32,12 +39,29 @@ import {
 } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
 import { AI_FOCUSED_EDITOR_PREVIEW_SHOW_TAG_CHIPS } from './ai-focused-editor-preferences';
-import { resolveRelativeLink } from '../common/link-navigation';
+import {
+  findHeadingLine,
+  noteCreateContent,
+  noteCreatePath,
+  resolveNoteLink,
+  resolveRelativeLink
+} from '../common/link-navigation';
 import {
   classifyImageTarget,
   extractImageTargets,
   rewriteImageTargets
 } from '../common/preview-images';
+import {
+  decodeNoteLinkPayload,
+  encodeNoteLinkPayload,
+  noteLinkSentinelForAnchor,
+  NOTE_LINK_ATTRIBUTE,
+  NOTE_LINK_CLASS,
+  NOTE_LINK_UNRESOLVED_CLASS,
+  rewriteNoteLinksForPreview,
+  type NoteLinkPayload,
+  type NoteLinkResolverOutcome
+} from '../common/preview-note-links';
 import { imageMimeForPath } from '../common/image-mime';
 import {
   parseChapterFrontMatter,
@@ -47,6 +71,7 @@ import {
 } from '../common/chapter-front-matter';
 import type { EntityMention, EntityMentionSegment, NarrativeEntity } from '../common';
 import { NarrativeEntityService } from '../common';
+import { NoteIndexService } from './note-index-service';
 
 /** Skip inlining any single image whose bytes exceed this, and cap the total per render. */
 const MAX_SINGLE_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -266,6 +291,16 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
   @inject(OpenerService)
   protected readonly openerService!: OpenerService;
 
+  /** DI services required for note-link resolution/click-to-open/create (TASK-013 U7, plan §9/ISS-137). */
+  @inject(NoteIndexService)
+  protected readonly noteIndexService!: NoteIndexService;
+
+  @inject(QuickInputService)
+  protected readonly quickInput!: QuickInputService;
+
+  @inject(MessageService)
+  protected readonly messageService!: MessageService;
+
   protected editorDisposables = new DisposableCollection();
   protected previewMarkdown = '';
   protected sourceLabel = nls.localize('ai-focused-editor/editor/source-none', 'No Markdown editor selected');
@@ -282,6 +317,21 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
 
   /** Current render's SVG sentinel token -> data URI, consumed by {@link patchPreviewImages}. */
   protected svgSentinels = new Map<string, string>();
+
+  /**
+   * Current render's note-link sentinel token (also the rewritten link's
+   * `href`) -> payload, consumed by {@link patchPreviewNoteLinks}. Mirrors
+   * {@link svgSentinels}'s pattern exactly (TASK-013 U7, plan §9/ISS-137).
+   */
+  protected noteLinkSentinels = new Map<string, NoteLinkPayload>();
+
+  /**
+   * ONE delegated click listener on the stable preview-content container
+   * (F-U7-2: dispose-and-rebind, never accumulated per render pass — see
+   * {@link mountPreviewContent}). Precedent: `WelcomeWidget.mountDocs`'s
+   * `docsListeners`.
+   */
+  protected previewContentListeners = new DisposableCollection();
 
   /** Monotonic token so a slow async image resolution never overwrites a newer render. */
   protected imageRenderGeneration = 0;
@@ -300,6 +350,7 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
 
     this.toDispose.push(this.editorManager.onCurrentEditorChanged(() => this.refresh()));
     this.toDispose.push(Disposable.create(() => this.editorDisposables.dispose()));
+    this.toDispose.push(Disposable.create(() => this.previewContentListeners.dispose()));
     this.toDispose.push(this.preferenceService.onPreferenceChanged(change => {
       if (change.preferenceName === AI_FOCUSED_EDITOR_PREVIEW_SHOW_TAG_CHIPS) {
         this.update();
@@ -322,6 +373,7 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
       this.semanticTags = [];
       this.frontMatter = { present: false, fields: [], body: '' };
       this.svgSentinels = new Map();
+      this.noteLinkSentinels = new Map();
       // Cancel any in-flight image/math resolution so it cannot repopulate the cleared preview.
       this.imageRenderGeneration++;
       this.mathRenderGeneration++;
@@ -348,7 +400,21 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
     this.frontMatter = parseChapterFrontMatter(text);
     const bodyText = this.frontMatter.body;
     this.semanticTags = parseSemanticMarkdown(bodyText).tags;
-    const preview = renderSemanticMarkdownPreview(bodyText);
+    // Rewrite Obsidian-style `[[note]]` links (note-class tokens ONLY — entity
+    // tags are untouched) into plain `[label](sentinel)` links BEFORE
+    // `renderSemanticMarkdownPreview` runs, so its `SEMANTIC_TAG_PATTERN` scan
+    // never sees them. `documentUri` (the FULL, percent-encoded URI string —
+    // NOT the bare `.path`) matches the convention `NoteIndexService`'s index
+    // candidates are stored in (`FileSearchService.find` returns `file://...`
+    // strings), keeping `resolveNoteLink`'s directory-distance tie-break
+    // meaningful (plan §2 duplicate-basename rule).
+    const documentUri = editor.uri.toString();
+    const { markdown: bodyWithNoteLinks, sentinels } = rewriteNoteLinksForPreview(
+      bodyText,
+      notePath => this.resolveNoteLinkForPreview(notePath, documentUri)
+    );
+    this.noteLinkSentinels = sentinels;
+    const preview = renderSemanticMarkdownPreview(bodyWithNoteLinks);
     // Show text + tags immediately; images resolve asynchronously and swap in.
     this.previewMarkdown = preview;
     this.svgSentinels = new Map();
@@ -398,6 +464,46 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
     } catch {
       // Keep the last known index when the knowledge base is unavailable.
     }
+  }
+
+  /**
+   * Resolve one note-class `[[...]]` token's reference text to a
+   * {@link NoteLinkResolverOutcome}, called once per token by
+   * {@link rewriteNoteLinksForPreview} inside {@link updatePreview}
+   * (TASK-013 plan §3's note-resolution chain).
+   *
+   * QA-fix (ISS-151, UR-003(a)): entity resolution now runs FIRST, exactly
+   * like the editor's `resolveWikiToken`/`findEntityById` no-kind branch — a
+   * note-class token never carries a `kind:` prefix (that shape classifies as
+   * `entity` in `parseWikiLinks`), so the bare-id key (`id:<id>`) is the only
+   * one relevant here. Reuses the SAME {@link mentionIndex} the front-matter
+   * mention chips already read (5s TTL, TASK-014's `loadMentionIndex`) rather
+   * than a second entity lookup — an in-memory `Map.get`, so this stays off
+   * the filesystem entirely, same as the note-path branch below. A match
+   * answers `'entity'`, telling {@link rewriteNoteLinksForPreview} to leave
+   * the token completely untouched rather than ever treating it as an
+   * unresolved note (which would have offered a bogus "click to create").
+   *
+   * Falls through to `NoteIndexService.getIndex()` (an in-memory `Map.get`,
+   * same "off the keystroke hot path" discipline as the plan's
+   * decoration-service design) — never triggers a filesystem read.
+   * Title/H1-fallback (plan §3/UR-005(2)) is a byproduct: it only hits when
+   * some other consumer has already lazily resolved and registered that
+   * note's title via `NoteIndexService.resolveTitleLazily`; this method
+   * itself never populates `titleIndex`.
+   */
+  protected resolveNoteLinkForPreview(notePath: string, documentUri: string): NoteLinkResolverOutcome {
+    if (this.mentionIndex.has(`id:${notePath}`)) {
+      return 'entity';
+    }
+    const index = this.noteIndexService.getIndex();
+    const resolved = resolveNoteLink(notePath, documentUri, index.byBasename, index.titleIndex);
+    if (!resolved) {
+      return { status: 'unresolved' };
+    }
+    return resolved.ambiguous
+      ? { status: 'ambiguous', path: resolved.path, candidates: resolved.candidates ?? [resolved.path] }
+      : { status: 'resolved', path: resolved.path };
   }
 
   /**
@@ -533,8 +639,59 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
   };
 
   /**
+   * After the MarkdownRenderer produces the preview DOM, attach the real
+   * `data-afe-note-link=<encoded payload>` attribute plus the
+   * resolved/unresolved CSS class DIRECTLY onto each rewritten note-link
+   * anchor (TASK-013 plan §9/ISS-137's working fallback mechanism — see
+   * `preview-note-links.ts`'s module doc for why embedding the marker
+   * attribute in the Markdown SOURCE does NOT survive `markdown-it`'s default
+   * `html: false` preset, while THIS post-render DOM assignment does, exactly
+   * like {@link patchPreviewImages}'s SVG `data:` URI swap). The sentinel
+   * `href` itself is left in place (never stripped) so the anchor stays a
+   * real, keyboard-focusable `<a>` — {@link onPreviewContentClick} always
+   * calls `preventDefault()`, so the sentinel never actually navigates.
+   */
+  protected readonly patchPreviewNoteLinks = (element?: HTMLElement): void => {
+    if (!element || this.noteLinkSentinels.size === 0) {
+      return;
+    }
+    for (const anchor of Array.from(element.querySelectorAll('a'))) {
+      // The live Monaco/VS Code renderer moves the sentinel to `data-href` and
+      // empties `href`; a bare markdown-it renderer keeps it on `href`. Match on
+      // either (ISS-149 — see `noteLinkSentinelForAnchor`).
+      const sentinel = noteLinkSentinelForAnchor(anchor.getAttribute('href'), anchor.getAttribute('data-href'));
+      const payload = sentinel ? this.noteLinkSentinels.get(sentinel) : undefined;
+      if (!payload) {
+        continue;
+      }
+      // Strip `data-href` so VS Code's own delegated link opener
+      // (`a[data-href]` -> `openerService.open`) never tries to navigate our
+      // opaque sentinel; note-link clicks are driven solely by
+      // `onPreviewContentClick` via the `data-afe-note-link` marker below.
+      anchor.removeAttribute('data-href');
+      anchor.setAttribute(NOTE_LINK_ATTRIBUTE, encodeNoteLinkPayload(payload));
+      anchor.classList.add(NOTE_LINK_CLASS);
+      if (payload.status === 'unresolved') {
+        anchor.classList.add(NOTE_LINK_UNRESOLVED_CLASS);
+        anchor.title = nls.localize(
+          'ai-focused-editor/editor/note-link-unresolved',
+          'Note not found — click to create "{0}"',
+          payload.notePath
+        );
+      } else if (payload.status === 'ambiguous') {
+        anchor.title = nls.localize(
+          'ai-focused-editor/editor/note-link-ambiguous',
+          'Ambiguous note link ("{0}" matches more than one file) — click to choose',
+          payload.notePath
+        );
+      }
+    }
+  };
+
+  /**
    * `onRender` hook for the preview Markdown component: swap SVG sentinels
-   * (see {@link patchPreviewImages}) and, when the rendered text contains any
+   * (see {@link patchPreviewImages}), attach note-link markers (see
+   * {@link patchPreviewNoteLinks}), and, when the rendered text contains any
    * `$`, lazily load KaTeX and render `$$…$$` / `$…$` math over the live DOM.
    * Bound once so the memoized Markdown component's `onRender` prop stays
    * referentially stable across updates.
@@ -550,6 +707,7 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
    */
   protected readonly handlePreviewRender = (element?: HTMLElement): void => {
     this.patchPreviewImages(element);
+    this.patchPreviewNoteLinks(element);
     if (element) {
       void this.renderMath(element, this.mathRenderGeneration);
     }
@@ -582,6 +740,157 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
     return editor.uri.path.ext.toLowerCase() === '.md' || editor.document.languageId === 'markdown';
   }
 
+  // ---------------------------------------------------------------------------
+  // Note-link click handling (TASK-013 U7, plan §9/ISS-137, §2/UR-004/UR-005).
+  // ---------------------------------------------------------------------------
+
+  /**
+   * `ref` callback for the preview-content container: attaches ONE delegated
+   * native click listener (F-U7-2 — dispose-and-rebind, NEVER accumulated per
+   * render pass). React only invokes a callback ref when the underlying DOM
+   * node is attached/detached, not on every re-render (the callback identity
+   * here is a stable class field, and the container element itself is not
+   * recreated across keystroke-driven re-renders) — so `handlePreviewRender`
+   * firing on every keystroke does NOT re-attach this listener. Mirrors
+   * `WelcomeWidget.mountDocs`'s `docsListeners` precedent (dispose-then-push,
+   * native listener because the markdown-rendered content lives outside
+   * React's own synthetic-event tree).
+   */
+  protected readonly mountPreviewContent = (node: HTMLDivElement | null): void => {
+    this.previewContentListeners.dispose();
+    this.previewContentListeners = new DisposableCollection();
+    if (!node) {
+      return;
+    }
+    const onClick = (event: MouseEvent): void => this.onPreviewContentClick(event);
+    node.addEventListener('click', onClick);
+    this.previewContentListeners.push(Disposable.create(() => node.removeEventListener('click', onClick)));
+  };
+
+  /** The one delegated handler for every rewritten note-link anchor in the preview body. */
+  protected onPreviewContentClick(event: MouseEvent): void {
+    const target = event.target as HTMLElement | null;
+    const anchor = target?.closest<HTMLElement>(`[${NOTE_LINK_ATTRIBUTE}]`);
+    if (!anchor) {
+      return;
+    }
+    const encoded = anchor.getAttribute(NOTE_LINK_ATTRIBUTE);
+    const payload = encoded ? decodeNoteLinkPayload(encoded) : undefined;
+    if (!payload) {
+      return;
+    }
+    // The sentinel `href` is never a real navigable URL (see
+    // `patchPreviewNoteLinks`) — always prevent the browser's default
+    // navigation before acting.
+    event.preventDefault();
+    void this.handleNoteLinkClick(payload);
+  }
+
+  /**
+   * Dispatch on the payload's resolution status (plan §2 chain, entity step
+   * excluded): `unresolved` creates the file (UR-004(3)/UR-005(4)); `ambiguous`
+   * with 2+ tied candidates opens a picker (UR-005(1)); otherwise opens the
+   * already-resolved (or alphabetically-first tied) path directly.
+   */
+  protected async handleNoteLinkClick(payload: NoteLinkPayload): Promise<void> {
+    if (payload.status === 'unresolved') {
+      await this.createAndOpenNote(payload);
+      return;
+    }
+    if (payload.status === 'ambiguous' && payload.candidates && payload.candidates.length > 1) {
+      const picked = await this.pickAmbiguousNote(payload.candidates);
+      if (!picked) {
+        return;
+      }
+      await this.openNoteTarget(picked, payload.anchor);
+      return;
+    }
+    if (payload.path) {
+      await this.openNoteTarget(payload.path, payload.anchor);
+    }
+  }
+
+  /** One entry in the equal-distance-duplicate picker (plan §2/UR-005(1)). */
+  protected noteCandidatePicks(candidates: string[]): QuickPickItem[] {
+    return candidates.map(path => ({ label: new URI(path).path.base, description: path }));
+  }
+
+  /** QuickPick over a set of equal-distance tied note candidates; `undefined` on cancel. */
+  protected async pickAmbiguousNote(candidates: string[]): Promise<string | undefined> {
+    const picks = this.noteCandidatePicks(candidates);
+    const picked = await this.quickInput.showQuickPick(picks, {
+      title: nls.localize('ai-focused-editor/editor/note-link-picker-title', 'Ambiguous Note Link'),
+      placeholder: nls.localize('ai-focused-editor/editor/note-link-picker-placeholder', 'Choose which file to open')
+    });
+    if (!picked) {
+      return undefined;
+    }
+    const index = picks.indexOf(picked);
+    return index >= 0 ? candidates[index] : undefined;
+  }
+
+  /**
+   * Open `uriString` (a full workspace file URI, as stored in
+   * `NoteIndexService`'s index — see `resolveNoteLinkForPreview`) and, with an
+   * `anchor`, reveal the matching heading. Reuses the EXACT open+scroll
+   * mechanism `SemanticLinkContribution.openTarget` already uses for entity/
+   * relative-link navigation, so note-link clicks behave identically.
+   */
+  protected async openNoteTarget(uriString: string, anchor?: string): Promise<void> {
+    const target = new URI(uriString);
+    if (anchor) {
+      const widget = await this.editorManager.open(target, { mode: 'reveal' });
+      const editor = widget?.editor;
+      if (editor) {
+        const line = findHeadingLine(editor.document.getText(), anchor);
+        if (line !== undefined) {
+          const position = { line, character: 0 };
+          editor.cursor = position;
+          editor.revealPosition(position);
+        }
+      }
+      return;
+    }
+    await open(this.openerService, target);
+  }
+
+  /**
+   * Create a new note file for an unresolved `[[note]]` click (plan
+   * §2/UR-004(3)/UR-005(4)): a path IN the link wins ({@link noteCreatePath}
+   * resolves it against the workspace root); a bare `[[note]]` creates
+   * alongside the CURRENT chapter. Uses the CURRENT editor/workspace root at
+   * click time (not whatever was open when the preview last rendered) — same
+   * "always operate against current state" discipline as
+   * {@link resolveImagesAndUpdate}. Content is a single `# <Name>` heading,
+   * no front matter ({@link noteCreateContent}). A creation failure (e.g. a
+   * race where the file appeared between render and click) is swallowed —
+   * the click still opens whatever now exists at that path, matching the
+   * writer's "open my note" intent rather than surfacing a hard error.
+   */
+  protected async createAndOpenNote(payload: NoteLinkPayload): Promise<void> {
+    const editor = this.editorManager.currentEditor?.editor ?? this.editorManager.activeEditor?.editor;
+    const root = this.workspaceService.tryGetRoots()[0]?.resource;
+    if (!editor || !root) {
+      return;
+    }
+    const documentPath = editor.uri.path.toString();
+    const rootPath = root.path.toString();
+    const createPath = noteCreatePath(payload.notePath, documentPath, rootPath);
+    const target = root.withPath(createPath);
+    try {
+      await this.fileService.createFolder(target.parent);
+      await this.fileService.create(target, noteCreateContent(payload.notePath), { overwrite: false });
+    } catch (error) {
+      this.messageService.warn(nls.localize(
+        'ai-focused-editor/editor/note-link-create-failed',
+        'Could not create "{0}": {1}',
+        payload.notePath,
+        error instanceof Error ? error.message : String(error)
+      ));
+    }
+    await this.openNoteTarget(target.toString(), payload.anchor);
+  }
+
   protected render(): React.ReactNode {
     return React.createElement(
       'div',
@@ -592,7 +901,7 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
       this.previewMarkdown
         ? React.createElement(
             'div',
-            { className: 'afe-semantic-markdown-preview-content' },
+            { className: 'afe-semantic-markdown-preview-content', ref: this.mountPreviewContent },
             ...segmentPreviewMarkdown(this.previewMarkdown).map((segment, index) => this.renderPreviewSegment(segment, index))
           )
         : React.createElement(
