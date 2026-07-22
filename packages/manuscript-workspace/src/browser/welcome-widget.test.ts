@@ -50,6 +50,11 @@ const stubElement = (): Record<string, unknown> => {
     getAttribute: () => null,
     removeAttribute() {},
     appendChild(child: unknown) { node.children.push(child); return child; },
+    // `monaco-editor-core`'s GPU decoration extractor calls `Element.append`
+    // at MODULE LOAD (reached transitively once `semantic-markdown-preview-
+    // widget.ts` — imported below for `segmentPreviewMarkdown` — pulls in
+    // `MonacoEditorProvider`); without it that import throws before any test runs.
+    append(...items: unknown[]) { node.children.push(...items); },
     removeChild() {},
     addEventListener() {},
     removeEventListener() {},
@@ -89,6 +94,9 @@ const stubDocument: any = {
 const globals = globalThis as any;
 globals.document = stubDocument;
 globals.window = globalThis;
+// `monaco-editor-core`'s dom.js reads `mainWindow.location.href` at module
+// load, reached the same way `append` above is (via `MonacoEditorProvider`).
+globals.location = globals.location ?? { href: 'http://localhost/' };
 globals.navigator = globals.navigator ?? { userAgent: 'bun', platform: 'bun', language: 'en' };
 globals.localStorage = { getItem: () => null, setItem() {}, removeItem() {}, clear() {} };
 globals.getComputedStyle = () => ({ getPropertyValue: () => '' });
@@ -120,6 +128,7 @@ const { DocsContentProvider, DocsLang, DocsManifest, DocsPage } =
 const { sortDocsManifestEntries } = await import('../common/docs/docs-lang');
 const { WelcomeDocsRenderer } = await import('./docs/welcome-docs-renderer');
 const { WelcomeWidget, WelcomeCommands } = await import('./welcome-widget');
+const { segmentPreviewMarkdown } = await import('./semantic-markdown-preview-widget');
 const React = (await import('@theia/core/shared/react')).default;
 const { Container } = await import('@theia/core/shared/inversify');
 const { DisposableCollection } = await import('@theia/core/lib/common');
@@ -616,7 +625,11 @@ describe('the delegated listeners of a mounted guide page', () => {
       textContent: 'stale',
       addEventListener: (type: string) => log.push(`+${type}`),
       removeEventListener: (type: string) => log.push(`-${type}`),
-      appendChild: () => undefined
+      appendChild: () => undefined,
+      // `mountDocs` also runs the mermaid marker scan (`renderMermaidMarkers`)
+      // after mounting; an empty result is the "no ```mermaid on this page"
+      // case, which this fixture always is.
+      querySelectorAll: () => []
     };
   }
 
@@ -691,5 +704,64 @@ describe('React.createElement only — the package compiles without JSX', () => 
     const { widget } = harness();
     const node = widget.render();
     expect(React.isValidElement(node)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `segmentPreviewMarkdown` (chapter preview mermaid segmentation, TASK-011).
+//
+// WHY THIS LIVES HERE. `semantic-markdown-preview-widget.ts` imports
+// `ReactWidget` and (for `MermaidViewer`'s DI props) `MonacoEditorProvider`,
+// both of which touch `document`/`mainWindow` at MODULE LOAD — the same
+// reason `welcome-widget.ts` needs the shim above (see the file header). This
+// file already pays that cost and is already routed through the isolated
+// `test:widget` run, so the segmentation function is tested here rather than
+// in a third file that would reintroduce the cross-file Theia-browser-barrel
+// load-order hazard the file header describes for `test:packages`.
+// ---------------------------------------------------------------------------
+
+describe('segmentPreviewMarkdown (chapter preview mermaid segmentation)', () => {
+  test('markdown with no mermaid fence stays a single markdown segment, byte-identical', () => {
+    const markdown = '# Заголовок\n\nАбзац с **текстом** и формулой $E=mc^2$.\n';
+    const segments = segmentPreviewMarkdown(markdown);
+    expect(segments).toEqual([{ type: 'markdown', content: markdown }]);
+  });
+
+  test('one mermaid fence splits into markdown / mermaid / markdown', () => {
+    const before = 'До диаграммы.\n\n';
+    const diagram = 'graph TD;\n  A-->B;';
+    const after = '\n\nПосле диаграммы.';
+    const markdown = `${before}\`\`\`mermaid\n${diagram}\n\`\`\`${after}`;
+    const segments = segmentPreviewMarkdown(markdown);
+    expect(segments.map(segment => segment.type)).toEqual(['markdown', 'mermaid', 'markdown']);
+    expect(segments[0].content).toBe(before);
+    expect(segments[1].content).toBe(diagram);
+    expect(segments[2].content).toBe(after);
+  });
+
+  test('a mermaid fence at the very start of the document has no leading markdown segment', () => {
+    const markdown = '```mermaid\ngraph TD;\n  A-->B;\n```\nПосле.';
+    const segments = segmentPreviewMarkdown(markdown);
+    expect(segments[0].type).toBe('mermaid');
+    expect(segments).toHaveLength(2);
+  });
+
+  test('two adjacent mermaid fences separated only by blank lines drop the blank markdown segment between them', () => {
+    // The filter `segmentPreviewMarkdown` adds over the raw `splitMermaidSegments`
+    // (a blank-after-trim markdown run is dropped) — without it, an empty
+    // `Markdown` component would mount uselessly between the two diagrams.
+    const markdown = '```mermaid\ngraph TD;\n  A-->B;\n```\n\n\n```mermaid\ngraph TD;\n  C-->D;\n```';
+    const segments = segmentPreviewMarkdown(markdown);
+    expect(segments.map(segment => segment.type)).toEqual(['mermaid', 'mermaid']);
+  });
+
+  test('a mermaid fence is never produced from an indented / non-fence code block', () => {
+    const markdown = 'Текст.\n\n```js\nconst mermaid = 1;\n```\n\nЕщё текст.';
+    const segments = segmentPreviewMarkdown(markdown);
+    expect(segments).toEqual([{ type: 'markdown', content: markdown }]);
+  });
+
+  test('an EMPTY document degrades to an empty segment list, not a single blank markdown segment', () => {
+    expect(segmentPreviewMarkdown('')).toEqual([]);
   });
 });

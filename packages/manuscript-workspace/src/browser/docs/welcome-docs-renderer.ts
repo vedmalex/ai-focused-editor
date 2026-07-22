@@ -33,6 +33,16 @@ const DIRECTIVE_TOKEN = 'afe_directive';
 /** Icon used by a `:::scenario` card that names none (§A.6). */
 const DEFAULT_SCENARIO_ICON = 'codicon-book';
 
+/**
+ * Class of the marker element a ```mermaid fence renders to, and the attribute
+ * the widget's DOM postprocessing scans for. NOT `data-afe-directive`: that
+ * attribute is the delegated CLICK contract (§D.4 of the docs design) — a
+ * mermaid diagram is not clickable, and reusing it would route diagram clicks
+ * through `WelcomeWidget.onDocsClick`'s directive switch for no reason.
+ */
+export const MERMAID_MARKER_CLASS = 'afe-docs-mermaid';
+export const MERMAID_MARKER_ATTRIBUTE = 'data-afe-mermaid';
+
 /** What a markdown-it env carries for our renderer rules. */
 interface DirectiveEnv {
   readonly ctx: DocsRenderContext;
@@ -98,7 +108,41 @@ export class WelcomeDocsRenderer {
   protected createEngine(): MarkdownIt {
     const md = new MarkdownIt({ html: false, linkify: false, typographer: false });
     this.installDirectiveRules(md);
+    this.installMermaidFenceRule(md);
     return md;
+  }
+
+  /**
+   * Overrides ONLY the `mermaid` info-string case of the `fence` rule; every
+   * other fenced block (including a bare ` ``` ` or `js`/`ts`/anything-else)
+   * falls straight through to markdown-it's own default renderer, unchanged.
+   *
+   * WHY A MARKER, NOT A DIAGRAM. This engine runs with `html:false` and has no
+   * DOM (§ renderPageHtml is a pure string function, tested with no jsdom —
+   * see the class doc). Mermaid's `render()` is async and needs a live DOM, so
+   * it cannot run here; the fence rule instead emits an INERT marker element
+   * (the raw diagram source as its text content) for the widget's DOM
+   * postprocessing ({@link WelcomeWidget}'s mermaid pass) to find and replace
+   * with a rendered SVG after `renderPage`'s fragment is mounted — the same
+   * split the KaTeX math rendering uses in the chapter preview.
+   *
+   * The code is `escapeHtml`-ed into the element's TEXT content (never an
+   * attribute): the postprocessing reads it back via `textContent`, which the
+   * browser un-escapes for free, so no double-escaping bookkeeping is needed
+   * and a diagram containing `"` or `<` cannot break out of a marker attribute.
+   */
+  protected installMermaidFenceRule(md: MarkdownIt): void {
+    const defaultFence = md.renderer.rules.fence!;
+    md.renderer.rules.fence = (tokens, index, options, env, self) => {
+      const token = tokens[index];
+      const info = token.info ? md.utils.unescapeAll(token.info).trim() : '';
+      const language = info.split(/\s+/)[0];
+      if (language !== 'mermaid') {
+        return defaultFence(tokens, index, options, env, self);
+      }
+      return `<pre class="${MERMAID_MARKER_CLASS}" ${MERMAID_MARKER_ATTRIBUTE}="true">`
+        + `${md.utils.escapeHtml(token.content)}</pre>`;
+    };
   }
 
   /**
