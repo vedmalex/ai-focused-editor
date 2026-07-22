@@ -14,6 +14,7 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import type { ExtractableWidget } from '@theia/core/lib/browser/widgets/extractable-widget';
 import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 import { ThemeService } from '@theia/core/lib/browser/theming';
+import { open, OpenerService } from '@theia/core/lib/browser';
 import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import type { TextEditor } from '@theia/editor/lib/browser/editor';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
@@ -38,6 +39,14 @@ import {
   rewriteImageTargets
 } from '../common/preview-images';
 import { imageMimeForPath } from '../common/image-mime';
+import {
+  parseChapterFrontMatter,
+  type ChapterFrontMatterField,
+  type ChapterFrontMatterResult,
+  type ChapterFrontMatterValue
+} from '../common/chapter-front-matter';
+import type { EntityMention, EntityMentionSegment, NarrativeEntity } from '../common';
+import { NarrativeEntityService } from '../common';
 
 /** Skip inlining any single image whose bytes exceed this, and cap the total per render. */
 const MAX_SINGLE_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -250,10 +259,22 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
   @inject(UntitledResourceResolver)
   protected readonly untitledResourceResolver!: UntitledResourceResolver;
 
+  /** DI services required for the front-matter panel's `[[...]]` click-to-open (FR: UR-002/REQ-007). */
+  @inject(NarrativeEntityService)
+  protected readonly entityService!: NarrativeEntityService;
+
+  @inject(OpenerService)
+  protected readonly openerService!: OpenerService;
+
   protected editorDisposables = new DisposableCollection();
   protected previewMarkdown = '';
   protected sourceLabel = nls.localize('ai-focused-editor/editor/source-none', 'No Markdown editor selected');
   protected semanticTags: SemanticTag[] = [];
+  /** Parsed front-matter of the current chapter (UR-002/REQ-007); `body` is the markdown with the fence stripped. */
+  protected frontMatter: ChapterFrontMatterResult = { present: false, fields: [], body: '' };
+  /** Lookup for resolving `[[kind:id|label]]` / `[[id]]` mentions inside front-matter values to entities. */
+  protected mentionIndex = new Map<string, NarrativeEntity>();
+  protected mentionIndexExpiresAt = 0;
 
   /** Absolute-path (URI string) -> resolved data URI, keyed by file mtime so a
    * re-render on every keystroke re-reads/re-encodes an image only when it changed. */
@@ -299,6 +320,7 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
     if (!editor || !this.isMarkdownEditor(editor)) {
       this.previewMarkdown = '';
       this.semanticTags = [];
+      this.frontMatter = { present: false, fields: [], body: '' };
       this.svgSentinels = new Map();
       // Cancel any in-flight image/math resolution so it cannot repopulate the cleared preview.
       this.imageRenderGeneration++;
@@ -319,8 +341,14 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
 
   protected updatePreview(editor: TextEditor): void {
     const text = editor.document.getText();
-    this.semanticTags = parseSemanticMarkdown(text).tags;
-    const preview = renderSemanticMarkdownPreview(text);
+    // Front matter (UR-002/REQ-007) is stripped BEFORE semantic-tag parsing and
+    // markdown rendering: the YAML fence is metadata, not prose, and must never
+    // show up as a dirty text block in the rendered body (nor get scanned for
+    // semantic tags). `renderFrontMatterPanel` renders the typed fields instead.
+    this.frontMatter = parseChapterFrontMatter(text);
+    const bodyText = this.frontMatter.body;
+    this.semanticTags = parseSemanticMarkdown(bodyText).tags;
+    const preview = renderSemanticMarkdownPreview(bodyText);
     // Show text + tags immediately; images resolve asynchronously and swap in.
     this.previewMarkdown = preview;
     this.svgSentinels = new Map();
@@ -338,6 +366,38 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
     this.mathRenderGeneration++;
     this.update();
     void this.resolveImagesAndUpdate(editor, preview, this.imageRenderGeneration);
+    // Cheap on the hot (every-keystroke) path: the 5s TTL cache in
+    // `loadMentionIndex` makes this a no-op on all but the first call in a while.
+    void this.loadMentionIndex();
+  }
+
+  /**
+   * Refresh the entity lookup used to resolve `[[...]]` mentions inside
+   * front-matter values (UR-002/REQ-007), cached for 5s like the other
+   * manuscript widgets so typing does not spam the backend.
+   */
+  protected async loadMentionIndex(): Promise<void> {
+    const now = Date.now();
+    if (now < this.mentionIndexExpiresAt) {
+      return;
+    }
+    this.mentionIndexExpiresAt = now + 5000;
+    try {
+      const snapshot = await this.entityService.getSnapshot();
+      const index = new Map<string, NarrativeEntity>();
+      for (const entity of snapshot.entities) {
+        index.set(`${entity.kind}:${entity.id}`, entity);
+        index.set(`${entity.kind === 'character' ? 'char' : entity.kind}:${entity.id}`, entity);
+        const bareKey = `id:${entity.id}`;
+        if (!index.has(bareKey)) {
+          index.set(bareKey, entity);
+        }
+      }
+      this.mentionIndex = index;
+      this.update();
+    } catch {
+      // Keep the last known index when the knowledge base is unavailable.
+    }
   }
 
   /**
@@ -527,6 +587,7 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
       'div',
       { className: 'afe-semantic-markdown-preview' },
       React.createElement('div', { className: 'afe-semantic-markdown-preview-source' }, this.sourceLabel),
+      this.renderFrontMatterPanel(),
       this.showTagChips ? this.renderTagSummary() : undefined,
       this.previewMarkdown
         ? React.createElement(
@@ -614,5 +675,174 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
 
   protected normalizeKind(kind: string): string {
     return kind.replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Front-matter "Properties" panel (UR-002/REQ-007) — read-only, Obsidian-style.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The typed front-matter panel, rendered at the very TOP of the preview (above
+   * the tag summary and the rendered body). Renders NOTHING — not even an empty
+   * frame — when the chapter has no front matter, or when the fence enclosed no
+   * keys at all; a malformed fence still renders a panel (an error notice plus
+   * the raw YAML block) rather than silently disappearing.
+   */
+  protected renderFrontMatterPanel(): React.ReactNode {
+    const frontMatter = this.frontMatter;
+    if (!frontMatter.present) {
+      return undefined;
+    }
+    if (frontMatter.fields.length === 0 && !frontMatter.parseError) {
+      return undefined;
+    }
+    return React.createElement(
+      'div',
+      { className: 'afe-chapter-front-matter' },
+      frontMatter.parseError
+        ? this.renderFrontMatterError(frontMatter)
+        : React.createElement(
+            'dl',
+            { className: 'afe-chapter-front-matter-list' },
+            ...frontMatter.fields.flatMap((field, index) => this.renderFrontMatterField(field, index))
+          )
+    );
+  }
+
+  /**
+   * Graceful fallback for a fence that was found but whose YAML failed to parse
+   * (or was not a mapping): an explanatory notice plus the raw block, so the
+   * writer can see and fix it without the whole preview breaking.
+   */
+  protected renderFrontMatterError(frontMatter: ChapterFrontMatterResult): React.ReactNode {
+    return React.createElement(
+      'div',
+      { className: 'afe-chapter-front-matter-error' },
+      React.createElement(
+        'div',
+        { className: 'afe-chapter-front-matter-error-message' },
+        nls.localize(
+          'ai-focused-editor/editor/front-matter-parse-error',
+          'Front matter could not be parsed: {0}',
+          frontMatter.parseError ?? ''
+        )
+      ),
+      frontMatter.rawBlock
+        ? React.createElement('pre', { className: 'afe-chapter-front-matter-raw' }, frontMatter.rawBlock)
+        : undefined
+    );
+  }
+
+  protected renderFrontMatterField(field: ChapterFrontMatterField, index: number): React.ReactNode[] {
+    return [
+      React.createElement(
+        'dt',
+        { key: `fm-label-${index}`, className: `afe-chapter-front-matter-label${field.known ? ' known' : ' passthrough'}` },
+        field.label
+      ),
+      React.createElement(
+        'dd',
+        { key: `fm-value-${index}`, className: 'afe-chapter-front-matter-value' },
+        this.renderFrontMatterValue(field.value, `fm-${index}`)
+      )
+    ];
+  }
+
+  /** Render one typed value, recursing into list items (a list of dates/links renders each item typed). */
+  protected renderFrontMatterValue(value: ChapterFrontMatterValue, keyPrefix: string): React.ReactNode {
+    switch (value.kind) {
+      case 'date':
+        return React.createElement(
+          'span',
+          { className: 'afe-chapter-front-matter-date' },
+          React.createElement('i', { className: 'fa fa-calendar', 'aria-hidden': 'true' }),
+          ` ${value.display}`
+        );
+      case 'list':
+        return React.createElement(
+          'ul',
+          { className: 'afe-chapter-front-matter-list-value' },
+          ...value.items.map((item, index) => React.createElement(
+            'li',
+            { key: `${keyPrefix}-${index}` },
+            this.renderFrontMatterValue(item, `${keyPrefix}-${index}`)
+          ))
+        );
+      case 'text':
+        return this.renderMentionSegments(value.segments, keyPrefix);
+      case 'empty':
+        return React.createElement(
+          'span',
+          { className: 'afe-chapter-front-matter-empty' },
+          nls.localize('ai-focused-editor/editor/front-matter-empty-value', '(empty)')
+        );
+      case 'raw':
+        return React.createElement('span', undefined, value.display);
+      default:
+        return undefined;
+    }
+  }
+
+  /**
+   * Render a front-matter text value, turning any `[[...]]` wiki-link segments
+   * into clickable spans that open the referenced entity — the same
+   * mention-chip UX the entity cards and entity form widgets use for
+   * narrative-entity text fields, reused here so a chapter's `summary:` (or any
+   * other field) links out exactly like it would inside an entity card.
+   * Read-only: this never edits the front matter, only resolves and opens.
+   */
+  protected renderMentionSegments(segments: EntityMentionSegment[], keyPrefix: string): React.ReactNode[] {
+    return segments.map((segment, index) => {
+      if (segment.type === 'text') {
+        return segment.value;
+      }
+      const { mention } = segment;
+      const entity = this.resolveMention(mention);
+      const display = mention.label ?? entity?.label ?? mention.id;
+      const key = `${keyPrefix}-mention-${index}`;
+      if (!entity) {
+        return React.createElement(
+          'span',
+          {
+            key,
+            className: 'afe-entity-mention unknown',
+            title: nls.localize(
+              'ai-focused-editor/entities/unknown-entity',
+              'Unknown entity: {0}',
+              `${mention.kind ? `${mention.kind}:` : ''}${mention.id}`
+            )
+          },
+          display
+        );
+      }
+      return React.createElement(
+        'span',
+        {
+          key,
+          className: 'afe-entity-mention',
+          title: nls.localize('ai-focused-editor/entities/open-entity', 'Open {0}: {1}', entity.kind, entity.label),
+          role: 'link',
+          tabIndex: 0,
+          onClick: () => { void this.openMention(entity); },
+          onKeyDown: (event: React.KeyboardEvent) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              void this.openMention(entity);
+            }
+          }
+        },
+        display
+      );
+    });
+  }
+
+  protected resolveMention(mention: EntityMention): NarrativeEntity | undefined {
+    return mention.kind
+      ? this.mentionIndex.get(`${mention.kind}:${mention.id}`)
+      : this.mentionIndex.get(`id:${mention.id}`);
+  }
+
+  protected async openMention(entity: NarrativeEntity): Promise<void> {
+    await open(this.openerService, new URI(entity.uri));
   }
 }
