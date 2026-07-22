@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
@@ -9,8 +10,12 @@ import {
   toInventoryRelativePath
 } from './source-scan';
 
-const TEST_ROOT =
-  '/private/tmp/claude-501/-Users-vedmalex-work-ai-editor-3/0ae4fd16-6296-484d-9a67-9e560dc1a5ce/scratchpad/source-scan-test';
+/**
+ * Fixture trees live in the OS temp directory, never in the working tree: a
+ * test that leaves an artefact behind shows up in `git status`, misleads the
+ * next reader and invites an accidental commit.
+ */
+const TEST_ROOT = join(tmpdir(), 'source-scan-test');
 
 /** The three package roots the traversal declares, as bare directory paths. */
 const PACKAGE_SOURCE_DIRS = [

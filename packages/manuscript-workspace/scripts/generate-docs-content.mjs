@@ -295,6 +295,7 @@ function buildInventoryModel(inventory) {
     unitSet,
     dynamicPrefixes: inventory.dynamicPrefixes ?? [],
     codeReferencedIds: inventory.codeReferencedIds ?? [],
+    packages: inventory.packages ?? [],
     namespaces: inventory.namespaces ?? [],
     skipped: inventory.skipped ?? []
   };
@@ -1140,6 +1141,13 @@ function renderReport(model, coverage, allowlist, allowlistMatches, queue, ceili
       // completely SILENT way out from under the guarantee. Printing the active
       // list here does not close the hole, but it makes any change to it show up
       // as a diff line in this committed report instead of passing unnoticed.
+      //
+      // Same rationale, one layer up: the package list is the SCOPE of the
+      // source traversal itself (`INVENTORY_SOURCE_ROOTS` in
+      // extract-feature-inventory.mjs). A package added to the walk without a
+      // matching entry here would be a silent widening of what the whole
+      // guarantee even looks at.
+      ['Inventory packages', model.packages.length ? model.packages.map(p => `\`${p}\``).join(', ') : '(none declared)'],
       ['Inventory namespaces', model.namespaces.length ? model.namespaces.map(n => `\`${n}\``).join(', ') : '(none declared)'],
       ['Inventory ids (commands)', model.commandIds.length],
       ['Inventory keys (preferences)', model.preferenceKeys.length],

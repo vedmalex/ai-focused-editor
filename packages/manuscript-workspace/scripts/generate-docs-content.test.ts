@@ -21,12 +21,17 @@
  */
 
 import { promises as fs } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { computeSourceFingerprint } from '../src/node/docs/source-scan';
 
-const TEST_ROOT =
-  '/private/tmp/claude-501/-Users-vedmalex-work-ai-editor-3/0ae4fd16-6296-484d-9a67-9e560dc1a5ce/scratchpad/generate-docs-test';
+/**
+ * Fixture trees and generator output live in the OS temp directory, never in the
+ * working tree: a test that leaves an artefact behind shows up in `git status`,
+ * misleads the next reader and invites an accidental commit.
+ */
+const TEST_ROOT = join(tmpdir(), 'generate-docs-content-test');
 
 const SCRIPT_PATH = join(import.meta.dir, 'generate-docs-content.mjs');
 
@@ -1594,6 +1599,19 @@ describe('emission and the report (§B.2, §B.6)', () => {
     const result = await strict(repoRoot);
     expect(result.exitCode).toBe(0);
     expect(metric(result.report, 'Inventory namespaces')).toContain('ai-focused-editor.');
+  });
+
+  /**
+   * Same rationale one layer up (§F.9): the package list is the SCOPE of the
+   * source traversal itself. A package added to the walk without a matching
+   * entry here would be a silent widening of what the whole guarantee looks
+   * at, so it must show up as a diff line in the committed report too.
+   */
+  test('the report NAMES the scanned inventory packages (scope is visible in the diff)', async () => {
+    const repoRoot = await richRepo('packages-visible');
+    const result = await strict(repoRoot);
+    expect(result.exitCode).toBe(0);
+    expect(metric(result.report, 'Inventory packages')).toContain('manuscript-workspace');
   });
 
   test('the report has NO timestamp: two runs over one input are byte-identical', async () => {
