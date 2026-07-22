@@ -129,6 +129,7 @@ const { sortDocsManifestEntries } = await import('../common/docs/docs-lang');
 const { WelcomeDocsRenderer } = await import('./docs/welcome-docs-renderer');
 const { WelcomeWidget, WelcomeCommands } = await import('./welcome-widget');
 const { segmentPreviewMarkdown } = await import('./semantic-markdown-preview-widget');
+const { removeStrayMermaidNodes } = await import('./docs/welcome-docs-mermaid');
 const React = (await import('@theia/core/shared/react')).default;
 const { Container } = await import('@theia/core/shared/inversify');
 const { DisposableCollection } = await import('@theia/core/lib/common');
@@ -763,5 +764,50 @@ describe('segmentPreviewMarkdown (chapter preview mermaid segmentation)', () => 
 
   test('an EMPTY document degrades to an empty segment list, not a single blank markdown segment', () => {
     expect(segmentPreviewMarkdown('')).toEqual([]);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// `removeStrayMermaidNodes` (guide mermaid cleanup, TASK-011 reopen / UR-005).
+// The bug it pins: mermaid.render(id, ...) returns an <svg> carrying that SAME
+// id, and by cleanup time it is already INSIDE the result container — a bare
+// remove-by-id deleted the just-rendered diagram (silent zero-height blank).
+// ---------------------------------------------------------------------------
+
+describe('removeStrayMermaidNodes (guide mermaid cleanup, UR-005)', () => {
+  function fakeElement(): { removed: boolean; remove(): void } {
+    const el = { removed: false, remove: () => { el.removed = true; } };
+    return el;
+  }
+
+  test('the rendered SVG INSIDE the container survives cleanup (the UR-005 blank-diagram bug)', () => {
+    const svg = fakeElement();
+    const doc = { getElementById: (lookup: string) => (lookup === 'afe-id' ? svg : null) };
+    const container = { contains: () => true };
+    removeStrayMermaidNodes(doc as never, 'afe-id', container as never);
+    expect(svg.removed).toBe(false);
+  });
+
+  test('a stray measurement node OUTSIDE the container is removed', () => {
+    const stray = fakeElement();
+    const doc = { getElementById: (lookup: string) => (lookup === 'afe-id' ? stray : null) };
+    const container = { contains: () => false };
+    removeStrayMermaidNodes(doc as never, 'afe-id', container as never);
+    expect(stray.removed).toBe(true);
+  });
+
+  test("mermaid's failed-render d-prefixed temp node is also removed when outside", () => {
+    const dNode = fakeElement();
+    const doc = { getElementById: (lookup: string) => (lookup === 'dafe-id' ? dNode : null) };
+    const container = { contains: () => false };
+    removeStrayMermaidNodes(doc as never, 'afe-id', container as never);
+    expect(dNode.removed).toBe(true);
+  });
+
+  test('nothing to clean up: absent ids are a no-op, not a crash', () => {
+    const doc = { getElementById: () => null };
+    const container = { contains: () => { throw new Error('must not be consulted for a missing node'); } };
+    expect(() => removeStrayMermaidNodes(doc as never, 'afe-id', container as never)).not.toThrow();
   });
 });

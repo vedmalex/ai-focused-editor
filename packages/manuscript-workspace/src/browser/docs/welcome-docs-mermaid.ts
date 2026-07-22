@@ -105,9 +105,28 @@ async function renderOneMarker(marker: HTMLElement, themeMode: ThemeMode): Promi
   } catch (error) {
     renderMermaidError(container, code, error);
   } finally {
-    // Mermaid may leave temporary measurement nodes behind, especially on a failed render.
-    doc.getElementById(id)?.remove();
-    doc.getElementById(`d${id}`)?.remove();
+    removeStrayMermaidNodes(doc, id, container);
+  }
+}
+
+/**
+ * Mermaid may leave temporary measurement nodes behind, especially on a failed
+ * render — but the SUCCESSFUL render's own `<svg>` carries the very id passed
+ * to `render()`, and by cleanup time it already lives inside `container`. A
+ * bare remove-by-id would delete the just-rendered diagram (a silent
+ * zero-height blank, no console error — the exact UR-005 bug), so only strays
+ * OUTSIDE the container are cleanup targets.
+ */
+export function removeStrayMermaidNodes(
+  doc: Pick<Document, 'getElementById'>,
+  id: string,
+  container: Pick<HTMLElement, 'contains'>
+): void {
+  for (const strayId of [id, `d${id}`]) {
+    const stray = doc.getElementById(strayId);
+    if (stray && !container.contains(stray)) {
+      stray.remove();
+    }
   }
 }
 
