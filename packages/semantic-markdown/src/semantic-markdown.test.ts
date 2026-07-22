@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import {
+  classifyWikiLinkCandidate,
   nextFootnoteNumber,
   normalizeSemanticMarkdownTags,
   parseFootnotes,
@@ -135,6 +136,139 @@ test('still flags a multiline label inside the labeled kind:id|label form', () =
     severity: 'error',
     message: 'Invalid semantic Markdown tag. Expected [[kind:id|label]] with single-line label and ASCII id.'
   });
+});
+
+// ---------------------------------------------------------------------------
+// classifyWikiLinkCandidate / validateSemanticMarkdown — TASK-013 kind-grammar
+// table (§2): Obsidian-style [[note]] links vs [[kind:id]] entity references,
+// discriminated by whether the pre-`:` prefix matches the Unicode-lowercase
+// kind grammar (ISS-136).
+// ---------------------------------------------------------------------------
+
+test('parses a labeled entity tag with a Cyrillic kind (ISS-136 Unicode-lowercase kind grammar)', () => {
+  const document = parseSemanticMarkdown('Смотри [[персонаж:ivan|Иван]] тут.');
+  expect(document.tags).toHaveLength(1);
+  expect(document.tags[0]).toMatchObject({ kind: 'персонаж', id: 'ivan', label: 'Иван' });
+});
+
+test('classifies a labeled entity with a Cyrillic kind as valid', () => {
+  expect(classifyWikiLinkCandidate('[[персонаж:ivan|Иван]]')).toMatchObject({
+    kind: 'entity',
+    valid: true,
+    entityKind: 'персонаж',
+    id: 'ivan',
+    alias: 'Иван'
+  });
+  expect(validateSemanticMarkdown('[[персонаж:ivan|Иван]]')).toHaveLength(0);
+});
+
+test('classifies a bare entity with a Cyrillic kind as valid', () => {
+  expect(classifyWikiLinkCandidate('[[персонаж:ivan]]')).toMatchObject({
+    kind: 'entity',
+    valid: true,
+    entityKind: 'персонаж',
+    id: 'ivan'
+  });
+  expect(validateSemanticMarkdown('[[персонаж:ivan]]')).toHaveLength(0);
+});
+
+test('classifies [[sharan-108]] (bare, no colon) as a valid note-form reference (§2)', () => {
+  // No `:` in the path => note intent, even though it also happens to look
+  // like a bare entity id; resolution order (entity-first) is a studio
+  // concern outside this validator (TASK-013 §3/U4), not a grammar concern.
+  expect(classifyWikiLinkCandidate('[[sharan-108]]')).toMatchObject({ kind: 'note', valid: true, path: 'sharan-108' });
+  expect(validateSemanticMarkdown('[[sharan-108]]')).toHaveLength(0);
+});
+
+test('classifies a plain Obsidian-style note name with spaces as valid', () => {
+  expect(classifyWikiLinkCandidate('[[Моя заметка]]')).toMatchObject({
+    kind: 'note',
+    valid: true,
+    path: 'Моя заметка'
+  });
+  expect(validateSemanticMarkdown('See [[Моя заметка]] here.')).toHaveLength(0);
+});
+
+test('classifies a vault-relative note path (with /) as valid', () => {
+  expect(classifyWikiLinkCandidate('[[folder/Моя заметка]]')).toMatchObject({
+    kind: 'note',
+    valid: true,
+    path: 'folder/Моя заметка'
+  });
+  expect(validateSemanticMarkdown('[[folder/Моя заметка]]')).toHaveLength(0);
+});
+
+test('classifies a note + anchor reference with a Cyrillic heading', () => {
+  expect(classifyWikiLinkCandidate('[[page#Заголовок]]')).toMatchObject({
+    kind: 'note',
+    valid: true,
+    path: 'page',
+    anchor: 'Заголовок'
+  });
+  expect(validateSemanticMarkdown('[[page#Заголовок]]')).toHaveLength(0);
+});
+
+test('classifies a note + alias reference', () => {
+  expect(classifyWikiLinkCandidate('[[Моя заметка|Подпись]]')).toMatchObject({
+    kind: 'note',
+    valid: true,
+    path: 'Моя заметка',
+    alias: 'Подпись'
+  });
+  expect(validateSemanticMarkdown('[[Моя заметка|Подпись]]')).toHaveLength(0);
+});
+
+test('a colon preceded by an uppercase/space prefix does not match the kind grammar => note, not entity', () => {
+  // "Some Note" fails ^\p{Ll}[\p{L}\p{N}_-]*$ (uppercase first char + an
+  // embedded space), so the whole candidate is a note title that happens to
+  // contain a literal colon, not an entity kind:id split (TASK-013 §1/§2).
+  expect(classifyWikiLinkCandidate('[[Some Note: Subtitle]]')).toMatchObject({
+    kind: 'note',
+    valid: true,
+    path: 'Some Note: Subtitle'
+  });
+  expect(validateSemanticMarkdown('[[Some Note: Subtitle]]')).toHaveLength(0);
+});
+
+test('a lowercase-token + colon prefix is read as entity intent even for a note-like phrase (trade-off, §1/§9 ISS-140)', () => {
+  // "заметка" is all-lowercase (incl. Cyrillic), so it matches the kind
+  // grammar: the candidate is classified as an ENTITY attempt, and the
+  // space-containing remainder fails the ASCII id grammar => Invalid (NOT
+  // silently reclassified as a valid note — this is the documented trade-off).
+  expect(classifyWikiLinkCandidate('[[заметка: хвост]]')).toEqual({ kind: 'entity', valid: false });
+  const diagnostics = validateSemanticMarkdown('[[заметка: хвост]]');
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatchObject({
+    severity: 'error',
+    message: 'Invalid semantic Markdown tag. Expected [[kind:id|label]] with single-line label and ASCII id.'
+  });
+});
+
+test('rejects an empty [[]] candidate', () => {
+  expect(classifyWikiLinkCandidate('[[]]')).toEqual({ kind: 'note', valid: false });
+  expect(validateSemanticMarkdown('See [[]] here.')).toHaveLength(1);
+});
+
+// ISS-146: `classifyWikiLinkCandidate` must trim `path` exactly like
+// `classifyWikiLinkToken` (link-navigation.ts) does — same whitespace-only
+// and padded-note cases pinned in both packages' test suites.
+test('rejects a whitespace-only [[ ]] candidate the same way as [[]] (ISS-146)', () => {
+  expect(classifyWikiLinkCandidate('[[ ]]')).toEqual({ kind: 'note', valid: false });
+  expect(validateSemanticMarkdown('See [[ ]] here.')).toHaveLength(1);
+});
+
+test('trims surrounding whitespace before classifying a padded note path (ISS-146)', () => {
+  expect(classifyWikiLinkCandidate('[[ x ]]')).toMatchObject({ kind: 'note', valid: true, path: 'x' });
+  expect(validateSemanticMarkdown('[[ x ]]')).toHaveLength(0);
+});
+
+test('trims surrounding whitespace before classifying a padded Cyrillic note path (ISS-146)', () => {
+  expect(classifyWikiLinkCandidate('[[  Моя заметка  ]]')).toMatchObject({
+    kind: 'note',
+    valid: true,
+    path: 'Моя заметка'
+  });
+  expect(validateSemanticMarkdown('[[  Моя заметка  ]]')).toHaveLength(0);
 });
 
 test('normalizes valid semantic tag label spacing', () => {

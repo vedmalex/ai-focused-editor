@@ -27,8 +27,22 @@ export interface SemanticMarkdownDiagnostic {
   range: SemanticRange;
 }
 
-const SEMANTIC_TAG_PATTERN = /\[\[([a-z][\w-]*):([A-Za-z0-9_.:-]+)\|([^\]\n]+?)\]\]/g;
-const SEMANTIC_TAG_EXACT_PATTERN = /^\[\[([a-z][\w-]*):([A-Za-z0-9_.:-]+)\|([^\]\n]+?)\]\]$/;
+/**
+ * Studio-canonical `kind` grammar for every `[[kind:id...]]` entity spelling
+ * (labeled and bare): Unicode-lowercase first character, then any letter
+ * (any case/script), digit, `_`, or `-` (TASK-013 §1, ISS-136 — widens the
+ * TASK-012 ASCII-only `[a-z][\w-]*` to admit e.g. a `персонаж:` kind). This is
+ * a strict superset of the old ASCII grammar, so the pre-existing corpus/tests
+ * keep matching unchanged. Entity **ids** stay ASCII (`SEMANTIC_ENTITY_ID_PATTERN`
+ * below, UR-002(2) boundary unchanged) — only the kind fragment widens.
+ */
+const SEMANTIC_KIND_GRAMMAR = /^\p{Ll}[\p{L}\p{N}_-]*$/u;
+
+/** ASCII id grammar for entity references (kind:id / kind:id|label). */
+const SEMANTIC_ENTITY_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
+
+const SEMANTIC_TAG_PATTERN = /\[\[(\p{Ll}[\p{L}\p{N}_-]*):([A-Za-z0-9_.:-]+)\|([^\]\n]+?)\]\]/gu;
+const SEMANTIC_TAG_EXACT_PATTERN = /^\[\[(\p{Ll}[\p{L}\p{N}_-]*):([A-Za-z0-9_.:-]+)\|([^\]\n]+?)\]\]$/u;
 
 export function parseSemanticMarkdown(text: string): SemanticMarkdownDocument {
   const lineStarts = computeLineStarts(text);
@@ -423,29 +437,100 @@ export function splitMathSegments(text: string): MathSegment[] {
 }
 
 /**
- * True for a bare/unlabeled `[[...]]` candidate (no `|`) that is a valid entity
- * reference: `[[id]]` or `[[kind:id]]`, optionally with a `#anchor` segment
- * folded into the id (e.g. `[[page-slug#Anchor-Slug]]`). Mirrors the split-by-
- * first-colon + non-empty-id acceptance rule of `parseBareEntityTags`
- * (link-navigation.ts, `@ai-focused-editor/manuscript-workspace` — kept in sync
- * by hand since the validator cannot depend on that browser-facing package).
- * Unlike the labeled `kind:id|label` form, bare ids/anchors are NOT restricted
- * to ASCII — Unicode (e.g. Cyrillic anchors) is allowed anywhere in the token.
- * The only rejects are: empty content, an embedded bracket/pipe, or embedded
- * whitespace (whitespace signals stray prose caught between `[[`/`]]`, not a
- * real single-token bare reference, e.g. `[[char:krishna Krishna]]`).
+ * Discriminated classification of a `[[...]]` candidate (`raw` INCLUDES the
+ * surrounding `[[`/`]]`, e.g. as sliced by `validateSemanticMarkdown`'s scan).
+ * This is the STUDIO CANONICAL grammar for wiki-link intent (TASK-013 §1/§2):
+ *
+ * 1. Split off `|alias` at the FIRST `|` (whatever remains after it, verbatim).
+ * 2. From what is left, split off `#anchor` at the FIRST `#`.
+ * 3. What remains is trimmed to get `path` (ISS-146: matches
+ *    `classifyWikiLinkToken`'s `rawPath.trim()` in the by-hand-synced
+ *    `link-navigation.ts` classifier, so `[[ ]]` is invalid/note-invalid and
+ *    `[[ x ]]` classifies as path `'x'` in BOTH). If `path` contains `:` AND the substring before
+ *    the first `:` matches the kind grammar (`SEMANTIC_KIND_GRAMMAR`, Unicode-
+ *    lowercase) => ENTITY intent: the id after `:` must match the ASCII
+ *    `SEMANTIC_ENTITY_ID_PATTERN` with no embedded whitespace, or the
+ *    candidate is invalid — this is a deliberate regression guard, e.g.
+ *    `[[char:krishna Krishna]]` stays Invalid (TASK-012).
+ * 4. Otherwise => NOTE intent: `path` must be non-empty and free of `[`, `]`,
+ *    `|`, and embedded newlines — spaces, Unicode and `/` are all allowed
+ *    (Obsidian-style note names/paths, UR-002/UR-004), e.g. `[[Моя заметка]]`,
+ *    `[[folder/Моя заметка]]`, `[[page#Заголовок]]`.
+ *
+ * An alias (from step 1), when present, must also be non-empty and free of
+ * `]`/newlines for the WHOLE candidate to be valid (mirrors the historical
+ * single-line label rule for the labeled entity form) — this applies to both
+ * entity and note candidates uniformly.
+ *
+ * A pipe-including candidate that fully matches the historical
+ * `kind:id|label` shape (`SEMANTIC_TAG_EXACT_PATTERN`) short-circuits straight
+ * to a valid entity result; this is provably equivalent to running the
+ * general split above on the same input, kept as a named fast path so the
+ * long-tested labeled-entity grammar stays a single, directly-referenced
+ * source of truth.
+ *
+ * STUDIO-WIDE BY-HAND-SYNC SEAM (TASK-013 §1, ISS-138): this classification is
+ * mirrored BY HAND in `@ai-focused-editor/manuscript-workspace`'s
+ * `link-navigation.ts` (that browser-facing package cannot depend on this one).
+ * Any change to this function's rules must be ported there too.
  */
-function isValidBareEntityTag(raw: string): boolean {
+export type WikiLinkClassification =
+  | { kind: 'entity'; valid: true; entityKind: string; id: string; anchor?: string; alias?: string }
+  | { kind: 'entity'; valid: false }
+  | { kind: 'note'; valid: true; path: string; anchor?: string; alias?: string }
+  | { kind: 'note'; valid: false };
+
+export function classifyWikiLinkCandidate(raw: string): WikiLinkClassification {
+  if (raw.includes('|')) {
+    const labeledMatch = SEMANTIC_TAG_EXACT_PATTERN.exec(raw);
+    if (labeledMatch) {
+      const [, entityKind, id, alias] = labeledMatch;
+      return { kind: 'entity', valid: true, entityKind, id, alias };
+    }
+  }
+
   const inner = raw.slice(2, -2);
-  if (inner.length === 0) {
-    return false;
+  let rest = inner;
+
+  let alias: string | undefined;
+  const pipeIndex = rest.indexOf('|');
+  if (pipeIndex >= 0) {
+    alias = rest.slice(pipeIndex + 1);
+    rest = rest.slice(0, pipeIndex);
   }
-  if (/[[\]|\s]/.test(inner)) {
-    return false;
+  const aliasValid = alias === undefined || (alias.length > 0 && !/[\]\n]/.test(alias));
+
+  let anchor: string | undefined;
+  const hashIndex = rest.indexOf('#');
+  if (hashIndex >= 0) {
+    anchor = rest.slice(hashIndex + 1);
+    rest = rest.slice(0, hashIndex);
   }
-  const colon = inner.indexOf(':');
-  const id = colon >= 0 ? inner.slice(colon + 1) : inner;
-  return id.length > 0;
+  // Trim surrounding whitespace before classification (ISS-146): mirrors
+  // `classifyWikiLinkToken`'s `rawPath.trim()` in
+  // `@ai-focused-editor/manuscript-workspace`'s `link-navigation.ts` — the two
+  // by-hand-synced classifiers must agree on `[[ ]]` (whitespace-only =>
+  // invalid) and `[[ x ]]` (=> path `'x'`), not just on the non-whitespace
+  // grammar.
+  const path = rest.trim();
+
+  const colonIndex = path.indexOf(':');
+  const isEntityIntent = colonIndex >= 0 && SEMANTIC_KIND_GRAMMAR.test(path.slice(0, colonIndex));
+
+  if (isEntityIntent) {
+    const entityKind = path.slice(0, colonIndex);
+    const id = path.slice(colonIndex + 1);
+    if (aliasValid && SEMANTIC_ENTITY_ID_PATTERN.test(id)) {
+      return { kind: 'entity', valid: true, entityKind, id, anchor, alias };
+    }
+    return { kind: 'entity', valid: false };
+  }
+
+  const isValidNotePath = path.length > 0 && !/[[\]|\n]/.test(path);
+  if (aliasValid && isValidNotePath) {
+    return { kind: 'note', valid: true, path, anchor, alias };
+  }
+  return { kind: 'note', valid: false };
 }
 
 export function validateSemanticMarkdown(text: string): SemanticMarkdownDiagnostic[] {
@@ -473,13 +558,10 @@ export function validateSemanticMarkdown(text: string): SemanticMarkdownDiagnost
     }
 
     const raw = text.slice(startOffset, endOffset + 2);
-    // Labeled `kind:id|label` candidates keep the original strict/ASCII check;
-    // pipe-less candidates are bare `[[id]]` / `[[kind:id]]` references, which
-    // are intentionally first-class (see `isValidBareEntityTag` above) rather
-    // than a malformed labeled tag missing its `|`.
-    const isValid = raw.includes('|')
-      ? SEMANTIC_TAG_EXACT_PATTERN.test(raw)
-      : isValidBareEntityTag(raw);
+    // Entity (`kind:id[|label]`) vs. note (`[[Моя заметка]]`, `[[page#Anchor]]`,
+    // `[[note|alias]]`, …) intent is decided by `classifyWikiLinkCandidate`
+    // (TASK-013 §1/§2) — see its doc comment above for the full grammar.
+    const isValid = classifyWikiLinkCandidate(raw).valid;
 
     if (!isValid) {
       diagnostics.push({

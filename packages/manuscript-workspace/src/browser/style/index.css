@@ -87,6 +87,31 @@
   background: rgba(120, 83, 168, 0.16);
 }
 
+/* TASK-013 (U5): Obsidian-style [[note]] wiki-link decorations. Resolved vs
+   unresolved MUST differ by more than colour (ISS-139(a)) — a colour-only
+   distinction is exactly the failure mode that slipped past every prior
+   review once (see docs-style.test.ts's ISS-095 for the precedent this
+   guards against here too) — so the three states use a distinct
+   `border-bottom-style` (solid / dotted / dashed) as the non-colour
+   differentiator, on top of the colour accent. */
+
+.monaco-editor .afe-semantic-tag-note {
+  border-bottom: 1px solid rgba(84, 156, 214, 0.75);
+  background: rgba(84, 156, 214, 0.1);
+}
+
+/* Ambiguous (plan §2/UR-005(1)): resolves to a definite (alphabetically-first
+   tied) target like `-note`, but flags the tie with a dotted underline plus
+   the decoration's `hoverMessage` diagnostic — never colour-only either. */
+.monaco-editor .afe-semantic-tag-note-ambiguous {
+  border-bottom-style: dotted;
+}
+
+.monaco-editor .afe-semantic-tag-unresolved {
+  border-bottom: 1px dashed rgba(204, 167, 0, 0.85);
+  background: rgba(204, 167, 0, 0.08);
+}
+
 /* ---------- manuscript tree ---------- */
 
 .afe-drop-target {
@@ -1316,6 +1341,36 @@
   background: var(--theia-editorWidget-background, transparent);
   border: 1px dashed var(--theia-descriptionForeground);
   cursor: help;
+}
+
+/* ---------- note wiki-links (preview, TASK-013 U5 owns these — U7's preview
+   rewrite consumes them, never redefines them) ---------- */
+
+.afe-note-link {
+  color: var(--theia-textLink-foreground);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: solid;
+}
+
+.afe-note-link:hover {
+  color: var(--theia-textLink-activeForeground, var(--theia-textLink-foreground));
+}
+
+.afe-note-link:focus-visible {
+  outline: 1px solid var(--theia-focusBorder);
+  outline-offset: 1px;
+}
+
+/* Unresolved differs from resolved by more than colour (ISS-139(a), same
+   rationale as .afe-semantic-tag-unresolved above): a dotted underline, plus
+   `cursor: help` since clicking creates the missing file rather than opening
+   one (mirrors .afe-entity-mention.unknown's established pattern). */
+.afe-note-link-unresolved {
+  color: var(--theia-descriptionForeground);
+  cursor: help;
+  text-decoration: underline;
+  text-decoration-style: dotted;
 }
 
 /* ---------- entity editor: preserved (non-schema) keys ---------- */

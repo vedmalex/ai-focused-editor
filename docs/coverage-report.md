@@ -7,9 +7,9 @@
 |---|---|
 | Inventory packages | `manuscript-workspace`, `ai-connect-theia`, `document-preview-theia` |
 | Inventory namespaces | `ai-focused-editor.`, `ai-connect.` |
-| Inventory ids (commands) | 167 |
+| Inventory ids (commands) | 169 |
 | Inventory keys (preferences) | 22 |
-| Covered by exact id | 188 |
+| Covered by exact id | 190 |
 | Covered by directive occurrence | 0 |
 | Absorbed by glob | 0 |
 | Allowlisted: external | 0 |
@@ -22,7 +22,7 @@
 | Glob absorption ceiling (N) | 8 |
 | Pending exception requests | 0 |
 | Passed via pending external request | 0 |
-| Docs content size | 295.1 KB |
+| Docs content size | 302.9 KB |
 
 ## Covered by directive occurrence
 
