@@ -406,6 +406,78 @@
   font-style: italic;
 }
 
+/* ---------- chapter front-matter panel (UR-002/REQ-007, Obsidian-style "Properties") ---------- */
+
+.afe-chapter-front-matter {
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--theia-panel-border, var(--theia-editorWidget-border));
+  border-radius: 4px;
+  background: var(--theia-editorWidget-background, transparent);
+}
+
+.afe-chapter-front-matter-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 10px;
+  row-gap: 2px;
+  margin: 0;
+}
+
+.afe-chapter-front-matter-label {
+  grid-column: 1;
+  color: var(--theia-descriptionForeground);
+  font-size: var(--theia-ui-font-size0);
+  white-space: nowrap;
+  padding-top: 1px;
+}
+
+.afe-chapter-front-matter-label.known {
+  font-weight: 600;
+}
+
+.afe-chapter-front-matter-value {
+  grid-column: 2;
+  margin: 0;
+  font-size: var(--theia-ui-font-size0);
+  word-break: break-word;
+}
+
+.afe-chapter-front-matter-date {
+  color: var(--theia-foreground);
+}
+
+.afe-chapter-front-matter-date > .fa-calendar {
+  margin-right: 4px;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-chapter-front-matter-list-value {
+  list-style: disc;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.afe-chapter-front-matter-empty {
+  color: var(--theia-descriptionForeground);
+  font-style: italic;
+}
+
+.afe-chapter-front-matter-error-message {
+  color: var(--theia-errorForeground, #f85149);
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-chapter-front-matter-raw {
+  margin: 4px 0 0;
+  padding: 4px 6px;
+  font-size: var(--theia-ui-font-size0);
+  background: var(--theia-textCodeBlock-background, rgba(127, 127, 127, 0.1));
+  border-radius: 3px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
 /* KaTeX self-hosted stylesheet is injected at runtime (katex-assets/katex.min.css,
    EXCALIDRAW_ASSET_PATH-style). This only styles the raw-text fallback shown when
    a formula fails to parse — the message rides along as a `title` tooltip. */
