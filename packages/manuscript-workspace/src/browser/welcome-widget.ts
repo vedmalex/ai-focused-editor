@@ -37,6 +37,7 @@ import {
 } from '../common/docs/docs-lang';
 import { DocsRenderContext, WelcomeDocsRenderer } from './docs/welcome-docs-renderer';
 import { renderMermaidMarkers } from './docs/welcome-docs-mermaid';
+import { renderKatexMath } from './docs/welcome-docs-katex';
 
 /**
  * Commands surfaced by the welcome page. Defined here (not in the frontend
@@ -878,6 +879,10 @@ export class WelcomeWidget extends ReactWidget implements StatefulWidget {
     // renderer's fence rule emitted with a rendered SVG. A no-op — and no
     // `import('mermaid')` — on a page with no ```mermaid fence (see its guard).
     renderMermaidMarkers(node, this.themeService);
+    // Sibling KaTeX pass: renders every `$…$` / `$$…$$` in the page prose to a
+    // live formula (offline fonts, per-formula error fallback). A no-op — and no
+    // `import('katex')` — on a page with no `$` at all (see its guard).
+    renderKatexMath(node);
   }
 
   /** What the renderer is allowed to ask the widget about (§D.3). */

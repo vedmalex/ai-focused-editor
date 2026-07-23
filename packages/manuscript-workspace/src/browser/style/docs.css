@@ -315,6 +315,18 @@
   margin: 0;
 }
 
+/*
+ * A formula KaTeX could not parse (`renderKatexMath` in `welcome-docs-katex.ts`):
+ * the raw `$…$` source is shown in place, tinted with the warning colour and
+ * carrying the error message as a `title` tooltip — the reader sees WHERE the
+ * broken formula is instead of a blank, matching the mermaid error contract.
+ */
+.afe-docs-katex-error {
+  color: var(--theia-editorWarning-foreground);
+  border-bottom: 1px dotted var(--theia-editorWarning-foreground);
+  cursor: help;
+}
+
 /* ---------- guide cards on the HOME route ---------- */
 
 .afe-welcome-scenario-grid {
