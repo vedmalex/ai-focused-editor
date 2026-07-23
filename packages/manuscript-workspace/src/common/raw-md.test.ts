@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
   RawMdSourceFile,
+  flattenRawMdSegments,
   formatTimeAbsolute,
   generateRawMd,
   parseRawMdLines,
+  parseTimeAbsoluteToSeconds,
+  resolveRawMdTarget,
   sortRawMdFiles
 } from './raw-md';
 import { TranscriptSpeaker } from './transcript-speakers';
@@ -188,5 +191,113 @@ describe('parseRawMdLines — the reconcile surface', () => {
     expect(parsed[0].time).toBe('00:00:10.000');
     expect(parsed[1].time).toBeUndefined();
     expect(parsed[1].text).toBe('user added a note');
+  });
+});
+
+describe('flattenRawMdSegments — the RawMdWidget (TASK-016 U4b) target-resolution surface', () => {
+  const MULTI_FILE: RawMdSourceFile[] = [
+    {
+      // Second chunk listed FIRST — sortRawMdFiles must reorder it.
+      name: 'time[00:02:00].json',
+      offsetMs: 120_000,
+      segments: [
+        { _id: 's4', start: 0, end: 30, text: 'bob still' },
+        { _id: 's5', start: 30, end: 60, text: 'alice back', speakerId: 'a' }
+      ]
+    },
+    {
+      name: 'time[00:01:00].json',
+      offsetMs: 60_000,
+      segments: [
+        { _id: 's1', start: 0, end: 20, text: 'alice one', speakerId: 'a' },
+        { _id: 's2', start: 20, end: 40, text: 'alice two' },
+        { _id: 's3', start: 40, end: 60, text: 'bob one', speakerId: 'b' }
+      ]
+    }
+  ];
+
+  test('flattens in sortRawMdFiles order with localIndex reset per file and carried-forward speaker', () => {
+    const flat = flattenRawMdSegments(MULTI_FILE, SPEAKERS);
+    expect(flat.map(seg => ({ base: seg.base, localIndex: seg.localIndex }))).toEqual([
+      { base: 'time[00:01:00].json', localIndex: 0 },
+      { base: 'time[00:01:00].json', localIndex: 1 },
+      { base: 'time[00:01:00].json', localIndex: 2 },
+      { base: 'time[00:02:00].json', localIndex: 0 },
+      { base: 'time[00:02:00].json', localIndex: 1 }
+    ]);
+    expect(flat.map(seg => seg.absoluteTime)).toEqual([20, 40, 60, 90, 120]);
+    // Carry-forward: every entry's speakerLabel is the EFFECTIVE speaker
+    // (never '' once one has been established), unlike generateRawMd's
+    // change-only marker.
+    expect(flat.map(seg => seg.speakerLabel)).toEqual(['Alice', 'Alice', 'Bob', 'Bob', 'Alice']);
+  });
+
+  test('invariant: generateRawMd is exactly flattenRawMdSegments formatted change-only', () => {
+    const flat = flattenRawMdSegments(MULTI_FILE, SPEAKERS);
+    let lastEmitted = '';
+    const expectedLines = flat.map(seg => {
+      const changed = !!seg.speakerLabel && seg.speakerLabel !== lastEmitted;
+      const prefix = changed ? ` [${seg.speakerLabel}]` : '';
+      if (seg.speakerLabel) {
+        lastEmitted = seg.speakerLabel;
+      }
+      return `${formatTimeAbsolute(seg.absoluteTime)}${prefix}: ${seg.text}`;
+    });
+    expect(generateRawMd(MULTI_FILE, SPEAKERS)).toBe(expectedLines.join('\n') + '\n');
+  });
+
+  test('empty files/segments produce an empty flatten (mirrors generateRawMd emptiness)', () => {
+    expect(flattenRawMdSegments([], SPEAKERS)).toEqual([]);
+    expect(flattenRawMdSegments([{ name: 'empty.json', offsetMs: 0, segments: [] }], SPEAKERS)).toEqual([]);
+  });
+});
+
+describe('resolveRawMdTarget — positional-first, time-nearest fallback', () => {
+  const FLAT = flattenRawMdSegments(
+    [
+      {
+        name: 'time[00:01:00].json',
+        offsetMs: 60_000,
+        segments: [
+          { _id: 's1', start: 0, end: 20, text: 'alice one', speakerId: 'a' },
+          { _id: 's2', start: 20, end: 40, text: 'alice two' },
+          { _id: 's3', start: 40, end: 60, text: 'bob one', speakerId: 'b' }
+        ]
+      }
+    ],
+    SPEAKERS
+  );
+
+  test('in range: resolves positionally, ignoring timeSeconds entirely', () => {
+    expect(resolveRawMdTarget(1, 999_999, FLAT)).toEqual({ base: 'time[00:01:00].json', localIndex: 1 });
+  });
+
+  test('out of range with a usable timeSeconds: falls back to the nearest absoluteTime', () => {
+    // FLAT absoluteTimes are [20, 40, 60]; 41 is nearest to index 1 (40).
+    expect(resolveRawMdTarget(5, 41, FLAT)).toEqual({ base: 'time[00:01:00].json', localIndex: 1 });
+    // Nearest to the last segment (60).
+    expect(resolveRawMdTarget(5, 58, FLAT)).toEqual({ base: 'time[00:01:00].json', localIndex: 2 });
+  });
+
+  test('out of range with no timeSeconds: undefined (nothing sane to resolve to)', () => {
+    expect(resolveRawMdTarget(5, undefined, FLAT)).toBeUndefined();
+    expect(resolveRawMdTarget(5, Number.NaN, FLAT)).toBeUndefined();
+  });
+
+  test('empty segments: always undefined', () => {
+    expect(resolveRawMdTarget(0, 0, [])).toBeUndefined();
+  });
+});
+
+describe('parseTimeAbsoluteToSeconds — the inverse of formatTimeAbsolute', () => {
+  test('round-trips formatTimeAbsolute for whole and fractional seconds', () => {
+    expect(parseTimeAbsoluteToSeconds('00:00:00.000')).toBe(0);
+    expect(parseTimeAbsoluteToSeconds('01:02:03.456')).toBeCloseTo(3723.456, 6);
+    expect(formatTimeAbsolute(parseTimeAbsoluteToSeconds('01:02:03.456')!)).toBe('01:02:03.456');
+  });
+
+  test('non-matching input yields undefined', () => {
+    expect(parseTimeAbsoluteToSeconds('not-a-time')).toBeUndefined();
+    expect(parseTimeAbsoluteToSeconds('1:2:3.456')).toBeUndefined();
   });
 });

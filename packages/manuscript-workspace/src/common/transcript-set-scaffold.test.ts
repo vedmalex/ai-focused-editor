@@ -6,6 +6,7 @@ import {
   RAW_MD_FILE_NAME,
   TRANSCRIPTION_AREA,
   buildTranscriptsetSkeleton,
+  isRawMdPath,
   rawMdRelPath,
   seedFilesFromMediaNames,
   speakersRelPath,
@@ -91,5 +92,23 @@ describe('buildTranscriptsetSkeleton', () => {
     const { set: reparsed, problems } = parseTranscriptsetYaml(writeTranscriptsetYaml(undefined, set));
     expect(problems).toEqual([]);
     expect(reparsed).toEqual(set);
+  });
+});
+
+describe('isRawMdPath (mirror of isTranscriptsetPath — TASK-016 U4b RawMdOpenHandler predicate)', () => {
+  test('positive: raw.md under a transcription/ folder, any depth/casing, POSIX or file:// URI path', () => {
+    expect(isRawMdPath('transcription/june-talk/raw.md')).toBe(true);
+    expect(isRawMdPath('/book/transcription/june-talk/raw.md')).toBe(true);
+    expect(isRawMdPath('file:///book/transcription/nested/deep/raw.md')).toBe(true);
+    expect(isRawMdPath('TRANSCRIPTION/June-Talk/RAW.MD')).toBe(true);
+    expect(isRawMdPath('C:\\book\\transcription\\june-talk\\raw.md')).toBe(true);
+  });
+
+  test('negative: raw.md outside transcription/, or a different basename inside transcription/', () => {
+    expect(isRawMdPath('notes/raw.md')).toBe(false);
+    expect(isRawMdPath('/book/notes/raw.md')).toBe(false);
+    expect(isRawMdPath('transcription/june-talk/transcriptset.yaml')).toBe(false);
+    expect(isRawMdPath('transcription/june-talk/raw.md.bak')).toBe(false);
+    expect(isRawMdPath('raw.md')).toBe(false);
   });
 });

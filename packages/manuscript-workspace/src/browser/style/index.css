@@ -2464,6 +2464,87 @@
   color: var(--theia-errorForeground);
 }
 
+/* ---------- raw.md read-only structural viewer (TASK-016 U4b) ---------- */
+
+.afe-raw-md-widget {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.afe-raw-md {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.afe-raw-md-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--theia-editorWidget-border, var(--theia-panel-border));
+  flex-shrink: 0;
+}
+
+.afe-raw-md-toolbar-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.afe-raw-md-lines {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+.afe-raw-md-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.afe-raw-md-line:hover {
+  background: var(--theia-list-hoverBackground);
+}
+
+.afe-raw-md-line-time {
+  font-family: var(--theia-code-font-family, monospace);
+  color: var(--theia-descriptionForeground);
+  flex-shrink: 0;
+}
+
+.afe-raw-md-line-speaker {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--theia-badge-background);
+  color: var(--theia-badge-foreground);
+  font-size: 0.85em;
+}
+
+.afe-raw-md-line-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.afe-raw-md-empty,
+.afe-raw-md-status {
+  padding: 16px;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-raw-md-status.error {
+  color: var(--theia-errorForeground);
+}
+
 /* ============================================================================
    Writing Mode + mobile ergonomics (WritingModeContribution)
    ----------------------------------------------------------------------------

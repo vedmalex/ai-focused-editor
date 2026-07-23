@@ -31,6 +31,7 @@ import {
   ensureSegmentIds,
   ensureSpeakerByName,
   ensureTranscriptMetadata,
+  flattenRawMdSegments,
   generateRawMd,
   getSegmentHistory,
   getSegmentProofread,
@@ -43,6 +44,7 @@ import {
   parseTranscriptsetYaml,
   recordSegmentTextChange,
   resolveEffectiveSpeaker,
+  resolveRawMdTarget,
   restoreSegmentHistoryEntry,
   setSegmentProofreadResult,
   setSegmentTranscriptionResult,
@@ -2223,25 +2225,65 @@ export class TranscriptCheckWidget extends ReactWidget implements Navigatable, S
 
   // --- raw.md (explicit action — never on save, to avoid watcher churn) ---
 
+  /**
+   * Build the same {@link RawMdSourceFile}`[]` {@link generateRawMdFile} reads
+   * from (cached per-pair transcripts, reading from disk on a cache miss).
+   * Shared so `revealRawMdSegment` resolves against the CURRENT live segments,
+   * not a possibly-stale `raw.md` on disk.
+   */
+  protected async readAllRawMdSourceFiles(): Promise<RawMdSourceFile[]> {
+    const files: RawMdSourceFile[] = [];
+    for (const pair of this.pairs) {
+      let document = this.transcripts.get(pair.base);
+      if (!document) {
+        document = await this.readTranscriptFromDisk(pair);
+        if (document) {
+          this.transcripts.set(pair.base, document);
+        }
+      }
+      if (!document || document.segments.length === 0) {
+        continue;
+      }
+      files.push({ name: pair.base, offsetMs: pair.offsetMs, segments: document.segments });
+    }
+    return files;
+  }
+
+  /**
+   * The read-only `RawMdWidget`'s (TASK-016 U4b) click target: resolve a
+   * `raw.md` line (0-based, matching `parseRawMdLines`' non-empty-line order)
+   * to a segment in THIS set and jump to it. Thin public orchestration over
+   * already-public {@link selectFile}/{@link jumpToSegmentIndex} (ISS-160 —
+   * both were already public; this wrapper only encapsulates the
+   * flatten-and-resolve fallback in one place instead of duplicating the
+   * `RawMdSourceFile` assembly logic inside `RawMdWidget`).
+   *
+   * PRIMARILY POSITIONAL: `lineIndex` maps directly to the `flattenRawMdSegments`
+   * order. FALLBACK: when `raw.md` has drifted out of sync and `lineIndex` is
+   * out of range, resolves to the segment whose absolute end time is nearest
+   * `timeSeconds` (parsed by the caller from the clicked line's own timestamp).
+   * No-ops (silently) when the set isn't loaded yet or nothing resolves.
+   */
+  async revealRawMdSegment(lineIndex: number, timeSeconds: number | undefined): Promise<void> {
+    if (!this.set || !this.rootUri) {
+      return;
+    }
+    const files = await this.readAllRawMdSourceFiles();
+    const flat = flattenRawMdSegments(files, this.speakers);
+    const target = resolveRawMdTarget(lineIndex, timeSeconds, flat);
+    if (!target) {
+      return;
+    }
+    await this.selectFile(target.base);
+    this.jumpToSegmentIndex(target.localIndex, { seekInside: true });
+  }
+
   async generateRawMdFile(): Promise<void> {
     if (!this.set || !this.rootUri) {
       return;
     }
     try {
-      const files: RawMdSourceFile[] = [];
-      for (const pair of this.pairs) {
-        let document = this.transcripts.get(pair.base);
-        if (!document) {
-          document = await this.readTranscriptFromDisk(pair);
-          if (document) {
-            this.transcripts.set(pair.base, document);
-          }
-        }
-        if (!document || document.segments.length === 0) {
-          continue;
-        }
-        files.push({ name: pair.base, offsetMs: pair.offsetMs, segments: document.segments });
-      }
+      const files = await this.readAllRawMdSourceFiles();
       const text = generateRawMd(files, this.speakers);
       const target = this.uri.parent.resolve(RAW_MD_FILE_NAME);
       await this.fileService.write(target, text);
