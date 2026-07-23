@@ -56,7 +56,8 @@ covers:
 ::action[Собрать в HTML]{command="ai-focused-editor.bookBuild.buildHtml"}
 
 Самодостаточная страница со стилями, оглавлением, сносками, таблицами и
-формулами — открывается в любом браузере и никуда наружу не ходит.
+формулами — открывается в любом браузере и никуда наружу не ходит. Подробнее о
+формулах — на странице :doc[Формулы]{page="writing/formulas"}.
 
 ::action[Собрать в EPUB]{command="ai-focused-editor.bookBuild.epub"}
 

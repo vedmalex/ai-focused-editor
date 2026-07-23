@@ -392,3 +392,56 @@ describe('the mermaid fence rule (TASK-011)', () => {
     expect(html).toContain('<code');
   });
 });
+
+/**
+ * KaTeX math (TASK-017 U7) is rendered by a DOM POSTPROCESSING pass
+ * (`renderKatexMath` in `welcome-docs-katex.ts`, called from
+ * `WelcomeWidget.mountDocs`), NOT by a markdown-it rule — `$…$` / `$$…$$` are
+ * delimiters woven through prose, so the shared `splitMathSegments` detector
+ * walks the rendered text nodes instead of re-implementing the grammar (see that
+ * module's header). The DOM pass itself is untestable here (no jsdom/happy-dom —
+ * see §F.5), exactly like the mermaid postprocessing pass. What the RENDERER
+ * owns, and what these tests pin, is the CONTRACT the postprocessor depends on:
+ * math in prose survives into the mounted HTML as plain text for the pass to
+ * find, and math inside code stays verbatim (the pass skips CODE/PRE).
+ */
+describe('KaTeX math passthrough — the renderer contract the DOM pass relies on (TASK-017 U7)', () => {
+  test('an inline $…$ in prose survives into the output as plain text (no directive, not stripped)', () => {
+    const html = render('Знаменитое $E=mc^2$ уместилось в строку.');
+    expect(html).toContain('$E=mc^2$');
+    expect(html).not.toContain('data-afe-directive');
+    // A single paragraph, math intact inside it — the text node the pass walks.
+    expect(count(html, '<p>')).toBe(1);
+  });
+
+  test('a block $$…$$ on its own lines survives verbatim (delimiters and TeX body intact)', () => {
+    const html = render('$$\n\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}\n$$');
+    expect(html).toContain('$$');
+    expect(html).toContain('\\int_0^\\infty');
+    expect(html).toContain('\\frac{\\sqrt{\\pi}}{2}');
+    expect(html).not.toContain('data-afe-directive');
+    expect(html).not.toContain(MERMAID_MARKER_CLASS);
+  });
+
+  test('math inside an inline code span stays code — the pass skips CODE (verbatim syntax example)', () => {
+    const html = render('Набирают `$E=mc^2$` вот так.');
+    expect(html).toContain('<code>');
+    // The `$…$` lives inside the <code> element, so the DOM walker never renders it.
+    const code = html.slice(html.indexOf('<code>'), html.indexOf('</code>'));
+    expect(code).toContain('$E=mc^2$');
+  });
+
+  test('math inside a fenced code block stays a code block (the on-page syntax example)', () => {
+    const html = render('```\n$$\nx = y\n$$\n```');
+    expect(html).toContain('<code');
+    expect(html).not.toContain(MERMAID_MARKER_CLASS);
+    expect(html).not.toContain('data-afe-directive');
+    // The block delimiters are preserved verbatim inside the code block.
+    expect(html).toContain('$$');
+  });
+
+  test('prose with no `$` at all carries no math and nothing for the pass to import KaTeX over', () => {
+    const html = render('Обычный абзац без формул.');
+    expect(html).not.toContain('$');
+  });
+});
