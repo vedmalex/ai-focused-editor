@@ -60,18 +60,6 @@ export function semanticTagLinkRange(tag: SemanticTag): SemanticRange {
   };
 }
 
-/** A bare/unlabeled entity reference: `[[id]]` or `[[kind:id]]` (no `|label`). */
-export interface BareEntityTagMatch {
-  /** Tag kind (e.g. `char`) when written `[[kind:id]]`; undefined for `[[id]]`. */
-  kind?: string;
-  /** Referenced entity id. */
-  id: string;
-  /** Start offset of the whole `[[...]]` token. */
-  start: number;
-  /** End offset (exclusive) of the whole `[[...]]` token. */
-  end: number;
-}
-
 /** Offset range of a `[[...]]` token in the source text (0-based, end exclusive). */
 export interface WikiLinkOffsetRange {
   start: number;
@@ -196,36 +184,96 @@ function classifyWikiLinkToken(inner: string, raw: string, range: WikiLinkOffset
   return { class: 'note', notePath: path, alias, anchor, raw, range };
 }
 
+// `parseBareEntityTags` (the `{ kind?, id, start, end }`-shaped wrapper that
+// filtered `parseWikiLinks` down to unlabeled `class === 'entity'` matches)
+// has been REMOVED (TASK-015 U-B). It was never re-exported through
+// `common/index.ts` (the package's public barrel), so no external consumer
+// could depend on it; its only three internal consumers
+// (`SemanticEntityHoverContribution`, `BookDoctorContribution`,
+// `SemanticLinkContribution`) have all migrated to `parseWikiLinks` directly.
+// The migration also fixed a live regression the wrapper's narrowing silently
+// caused: a colon-less bare `[[id]]` token (this project's own
+// `[[sharan-108]]`-style corpus) classifies as `note` under the plan §1/§2
+// entity/note discriminator, so it stopped being surfaced to hover/doctor at
+// all — hover lost its entity card for such tokens, and the book doctor
+// under-counted references, falsely reporting a referenced entity card as an
+// orphan (`entityCardOrphanFindings`). Both consumers now apply an
+// entity-first check (mirroring `resolveWikiToken`'s bare-id chain, U4)
+// directly over `parseWikiLinks`'s `note`-class tokens instead of relying on
+// this wrapper's blanket exclusion. The `{ kind?, id, start, end }` shape
+// (`BareEntityTagMatch`) was removed alongside it, having no other use; see
+// `link-navigation.test.ts` for the removed wrapper's former coverage.
+
+/** One folded unlabeled `[[...]]` entity-tag occurrence (no `|alias`). */
+export interface UnlabeledWikiEntityMatch {
+  /** Tag kind (e.g. `char`), only for a `class === 'entity'` token; `undefined` for a bare `[[id]]`. */
+  kind?: string;
+  /** The referenced id — `entity`-class's `id`, or `note`-class's `notePath` (colon-less bare). */
+  id: string;
+}
+
 /**
- * @deprecated Prefer `parseWikiLinks` directly. This wrapper filters its results
- * down to unlabeled (`alias === undefined`) `class === 'entity'` matches to keep
- * the pre-TASK-013 `{ kind?, id, start, end }` shape for callers that have not
- * migrated yet (browser `SemanticLinkContribution`/hover/doctor consumers —
- * plan §4 U4-U6).
+ * Collect every UNLABELED `[[...]]` token `parseWikiLinks` classifies as
+ * `entity` OR `note` (colon-less bare — e.g. this project's own
+ * `[[sharan-108]]`-style corpus), as the `{ kind?, id }` shape
+ * `BookDoctorContribution.foldEntityTags` needs. `kind` stays `undefined` for
+ * a `note`-class match, exactly the pre-TASK-013 bare-entity shape
+ * `entityCardOrphanFindings`/`entityCardMissingFixes`/`entityUnknownKindFindings`
+ * (`common/book-doctor.ts`) already expect ("a bare `[[id]]` matches any
+ * kind"). Labeled (`|alias`) tokens are excluded (`parseSemanticMarkdown`'s
+ * job) and so are `invalid`-class tokens (no usable id).
  *
- * NOT a full-equivalence shim (plan §9, ISS-138): note-shaped bare tokens that
- * used to come back as a kind-less bare entity (e.g. `[[sharan-108]]`,
- * `[[frodo]]` — no `:` in the content) now classify as `note` under the
- * entity/note discriminator and are INTENTIONALLY EXCLUDED here. That is the
- * point of TASK-013 (distinguishing note references from entity references), not
- * a regression to patch around. Labeled (`|alias`) entity tags remain excluded
- * too, matching the original "bare" contract — those are `parseSemanticMarkdown`
- * tags. Remove this wrapper once all internal consumers migrate to
- * `parseWikiLinks`.
+ * TASK-015 U-B: this is the entity-side replacement for the removed
+ * `parseBareEntityTags`, WIDENED to also cover `note`-class colon-less bare
+ * tokens — the live regression the narrower wrapper silently introduced (see
+ * the removal note above `UnlabeledWikiEntityMatch`).
  */
-export function parseBareEntityTags(text: string): BareEntityTagMatch[] {
-  const matches: BareEntityTagMatch[] = [];
+export function collectUnlabeledWikiEntityMatches(text: string): UnlabeledWikiEntityMatch[] {
+  const matches: UnlabeledWikiEntityMatch[] = [];
   for (const link of parseWikiLinks(text)) {
-    if (link.class !== 'entity' || link.alias !== undefined || link.id === undefined) {
+    if (link.alias !== undefined || link.class === 'invalid') {
       continue;
     }
-    const entry: BareEntityTagMatch = { id: link.id, start: link.range.start, end: link.range.end };
-    if (link.kind) {
-      entry.kind = link.kind;
+    if (link.class === 'entity' && link.id !== undefined) {
+      matches.push({ kind: link.kind, id: link.id });
+    } else if (link.class === 'note' && link.notePath !== undefined) {
+      matches.push({ id: link.notePath });
     }
-    matches.push(entry);
   }
   return matches;
+}
+
+/**
+ * Resolve one classified `parseWikiLinks` token to an entity-hover candidate
+ * `{ kind?, id }`, or `undefined` when the token should get NO entity hover.
+ * An `entity`-class (colon-shaped) token always qualifies. A `note`-class
+ * (colon-less bare, e.g. `[[sharan-108]]`) token qualifies ONLY when
+ * `hasEntity(notePath)` reports a real entity by bare id — the entity-first
+ * chain {@link resolveWikiToken} (in `semantic-link-contribution.ts`, U4)
+ * already applies for click-navigation; this mirrors it for hover. A genuine
+ * Obsidian-style note title (e.g. `[[My Chapter Notes]]`, no matching entity)
+ * correctly returns `undefined`. Labeled (`|alias`) and `invalid`-class tokens
+ * always return `undefined` too.
+ *
+ * Pure and synchronous: `hasEntity` is an injected predicate so the caller
+ * decides when (and whether) to pay for an entity-list lookup — e.g.
+ * `SemanticEntityHoverContribution.findTagAt` only calls this once a token's
+ * range already contains the hover offset, never on every hover.
+ */
+export function wikiEntityHoverCandidate(
+  link: WikiLinkMatch,
+  hasEntity: (id: string) => boolean
+): UnlabeledWikiEntityMatch | undefined {
+  if (link.alias !== undefined) {
+    return undefined;
+  }
+  if (link.class === 'entity' && link.id !== undefined) {
+    return { kind: link.kind, id: link.id };
+  }
+  if (link.class === 'note' && link.notePath !== undefined && hasEntity(link.notePath)) {
+    return { id: link.notePath };
+  }
+  return undefined;
 }
 
 /** Result of resolving an Obsidian-style `[[note]]` reference to a workspace file. */

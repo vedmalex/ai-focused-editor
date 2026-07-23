@@ -159,3 +159,97 @@ describe('rewriteImageTargets', () => {
     expect(out).toBe('a ![x](ONE.PNG) b ![y](TWO/THREE.PNG "t") c');
   });
 });
+
+// ISS-150 (TASK-015 U-B): reproduce/refute the hypothesis that the SVG-sentinel
+// preview mechanism (`SVG_SENTINEL_PREFIX` in `semantic-markdown-preview-widget.ts`)
+// shares ISS-149's sanitizer-strip defect class. The live preview renderer is
+// NOT bare `markdown-it` — `@theia/monaco` globally rebinds Theia's
+// `MarkdownRenderer` to VS Code's `MonacoMarkdownRenderer` (marked + VS Code's
+// own `domSanitize`), exactly the renderer ISS-149 was fixed against (see that
+// fix's regression suite: `preview-note-links.test.ts`'s "live Monaco/VS Code
+// renderer contract" block). `validateLink` below is copied VERBATIM from the
+// installed `@theia/monaco-editor-core` sanitizer
+// (`esm/vs/base/browser/domSanitize.js`) — it is pure URL/scheme logic with no
+// DOM dependency, so this is a byte-exact reproduction of the real decision,
+// not an approximation. `REAL_ALLOWED_MEDIA_PROTOCOLS` is copied from
+// `getDomSanitizerConfig` in `esm/vs/base/browser/markdownRenderer.js`
+// (`allowedMediaProtocols.override`).
+describe('SVG sentinel vs the live VS Code sanitizer contract (ISS-150)', () => {
+  const fakeRelativeUrlProtocol = 'vscode-relative-path';
+
+  function validateLink(value: string, allowedProtocols: { override: string[]; allowRelativePaths: boolean }): boolean {
+    try {
+      const url = new URL(value, fakeRelativeUrlProtocol + '://');
+      if (allowedProtocols.override.includes(url.protocol.replace(/:$/, ''))) {
+        return true;
+      }
+      if (
+        allowedProtocols.allowRelativePaths &&
+        url.protocol === fakeRelativeUrlProtocol + ':' &&
+        !value.trim().toLowerCase().startsWith(fakeRelativeUrlProtocol)
+      ) {
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  const REAL_ALLOWED_MEDIA_PROTOCOLS = [
+    'http',
+    'https',
+    'data',
+    'file',
+    'vscode-file-resource',
+    'vscode-remote',
+    'vscode-remote-resource'
+  ];
+
+  // The widget NEVER sets a `baseUri` on the rendered `MarkdownString` (no
+  // `markdownOptions.baseUri` — the type doesn't even expose one; see
+  // `renderPreviewSegment`), so `allowRelativeMediaPaths` (`= !!baseUri` in
+  // `getDomSanitizerConfig`) is always `false` for this widget's real renders.
+  const WIDGET_ALLOW_RELATIVE_MEDIA_PATHS = false;
+
+  test('regression: the ORIGINAL bare-token sentinel (`afe-preview-image-0`) FAILS the live sanitizer\'s src check — its src attribute would be stripped before patchPreviewImages ever runs (ISS-150 reproduced)', () => {
+    expect(
+      validateLink('afe-preview-image-0', {
+        override: REAL_ALLOWED_MEDIA_PROTOCOLS,
+        allowRelativePaths: WIDGET_ALLOW_RELATIVE_MEDIA_PATHS
+      })
+    ).toBe(false);
+  });
+
+  test('a genuine relative image path (no sentinel at all) would ALSO be stripped under the same config — confirms this is a scheme-membership gate, not sentinel-specific', () => {
+    expect(
+      validateLink('images/pic.png', {
+        override: REAL_ALLOWED_MEDIA_PROTOCOLS,
+        allowRelativePaths: WIDGET_ALLOW_RELATIVE_MEDIA_PATHS
+      })
+    ).toBe(false);
+  });
+
+  test('the FIX (`data:,afe-preview-image-0` — the actual SVG_SENTINEL_PREFIX shape) PASSES the live sanitizer unconditionally, regardless of baseUri/allowRelativeMediaPaths', () => {
+    const sentinel = 'data:,afe-preview-image-0';
+    expect(
+      validateLink(sentinel, { override: REAL_ALLOWED_MEDIA_PROTOCOLS, allowRelativePaths: false })
+    ).toBe(true);
+    expect(
+      validateLink(sentinel, { override: REAL_ALLOWED_MEDIA_PROTOCOLS, allowRelativePaths: true })
+    ).toBe(true);
+  });
+
+  test('why raster images never needed a sentinel: a real data: URI (any subtype, including svg+xml) already passes the live sanitizer unconditionally', () => {
+    for (const dataUri of [
+      'data:image/png;base64,AAAA',
+      'data:image/svg+xml;base64,AAAA' // the widget's own comment attributes this rejection to
+      // `markdown-it`'s GOOD_DATA_RE — a DIFFERENT renderer path never used by
+      // this widget's live render (see SVG_SENTINEL_PREFIX's doc comment).
+    ]) {
+      expect(
+        validateLink(dataUri, { override: REAL_ALLOWED_MEDIA_PROTOCOLS, allowRelativePaths: false })
+      ).toBe(true);
+    }
+  });
+});

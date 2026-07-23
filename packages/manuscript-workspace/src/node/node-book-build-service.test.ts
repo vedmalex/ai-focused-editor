@@ -770,3 +770,176 @@ describe('math rendering (EPUB export)', () => {
     expect(xhtml).not.toContain('$E=mc^2$');
   });
 });
+
+// TASK-015 UR-006: TASK-013 legalized several new `[[...]]` forms as valid book
+// content (note references with spaces/Cyrillic, path notes, anchors, aliases,
+// a Cyrillic `kind`, plus bare/unresolved references) that previously would
+// have been flagged by the validator. This suite is the export-path contract
+// for that content: the build must never throw on any of these forms (plus two
+// deliberately malformed tokens for resilience), and each form's actual
+// rendered output is pinned by assertion so a future change to export
+// rendering is a conscious, reviewed decision rather than a silent drift.
+const NEW_LINK_FORMS_CHAPTER = [
+  '# Chapter One',
+  '',
+  'Note with spaces: [[Моя заметка]].',
+  '',
+  'Path note: [[folder/Имя]].',
+  '',
+  'Anchored note: [[страница#Заголовок]].',
+  '',
+  'Aliased note: [[Имя|Подпись]].',
+  '',
+  'Cyrillic kind, aliased: [[персонаж:ivan|Иван]].',
+  '',
+  'Cyrillic kind, bare: [[персонаж:ivan]].',
+  '',
+  'ASCII kind, aliased: [[char:krishna|Krishna]].',
+  '',
+  'ASCII kind, bare: [[char:krishna]].',
+  '',
+  'Unresolved note: [[Несуществующая заметка]].',
+  '',
+  'Malformed, unclosed bracket: [[unclosed',
+  '',
+  'Malformed, whitespace in a kind-shaped id: [[kind:id with space]]',
+  ''
+].join('\n');
+
+describe('new [[...]] link forms (TASK-013) survive export (TASK-015 UR-006)', () => {
+  test('buildMarkdown does not throw and reproduces every form as raw source text', async () => {
+    const { result, output } = await buildMarkdown('new-link-forms-md', {
+      'metadata.yaml': 'title: New Link Forms\nlanguage: ru\n',
+      'manifest.yaml': ['version: 1', 'content:', '  - path: content/chapter-01.md', '    title: Chapter One', ''].join('\n'),
+      'content/chapter-01.md': NEW_LINK_FORMS_CHAPTER
+    });
+
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+    // Markdown export is a source-preserving reproduction: every `[[...]]` token,
+    // valid or malformed, is byte-identical to the source (no crash either way).
+    expect(output).toContain('[[Моя заметка]]');
+    expect(output).toContain('[[folder/Имя]]');
+    expect(output).toContain('[[страница#Заголовок]]');
+    expect(output).toContain('[[Имя|Подпись]]');
+    expect(output).toContain('[[персонаж:ivan|Иван]]');
+    expect(output).toContain('[[персонаж:ivan]]');
+    expect(output).toContain('[[char:krishna|Krishna]]');
+    expect(output).toContain('[[char:krishna]]');
+    expect(output).toContain('[[Несуществующая заметка]]');
+    expect(output).toContain('[[unclosed');
+    expect(output).toContain('[[kind:id with space]]');
+  });
+
+  test('buildHtml does not throw; resolves labeled entity tags (incl. Cyrillic kind), leaves note-class/bare/unresolved/malformed tokens as literal text', async () => {
+    const rootPath = await createWorkspace('new-link-forms-html', {
+      'metadata.yaml': 'title: New Link Forms\nlanguage: ru\n',
+      'manifest.yaml': ['version: 1', 'content:', '  - path: content/chapter-01.md', '    title: Chapter One', ''].join('\n'),
+      'content/chapter-01.md': NEW_LINK_FORMS_CHAPTER
+    });
+
+    const result = await service.buildHtml({ rootUri: rootPath });
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+    const html = await fs.readFile(result.outputPath, 'utf8');
+
+    // Labeled entity tags resolve to their label, regardless of ASCII/Cyrillic
+    // `kind` (TASK-015 fix: the export-local stripper now matches the same
+    // Unicode `kind` grammar TASK-013 legalized).
+    expect(html).toContain('Иван.');
+    expect(html).not.toContain('[[персонаж:ivan|');
+    expect(html).toContain('Krishna.');
+    expect(html).not.toContain('[[char:krishna|');
+
+    // Note-class tokens (with/without spaces, path, anchor, alias), bare
+    // (unlabeled) entity tags, an unresolved note, and both malformed tokens are
+    // current, DELIBERATELY UNCHANGED behavior: no dedicated note-link
+    // resolution exists on the export path, so they render as literal `[[...]]`
+    // text rather than a rendered link or a rendered label. Not broken markup,
+    // not a crash — just "dumb" passthrough. See TASK-015 implementation report
+    // for the follow-up-task recommendation on giving these a real rendering.
+    expect(html).toContain('[[Моя заметка]]');
+    expect(html).toContain('[[folder/Имя]]');
+    expect(html).toContain('[[страница#Заголовок]]');
+    expect(html).toContain('[[Имя|Подпись]]');
+    expect(html).toContain('[[персонаж:ivan]]');
+    expect(html).toContain('[[char:krishna]]');
+    expect(html).toContain('[[Несуществующая заметка]]');
+    expect(html).toContain('[[unclosed');
+    expect(html).toContain('[[kind:id with space]]');
+  });
+
+  test('buildEpub does not throw; same resolve/passthrough contract as HTML, no raw front matter leaking into the chapter xhtml', async () => {
+    const rootPath = await createWorkspace('new-link-forms-epub', {
+      'metadata.yaml': ['title: New Link Forms', 'language: ru', 'author: Tester', ''].join('\n'),
+      'manifest.yaml': ['version: 1', 'content:', '  - path: content/chapter-01.md', '    title: Chapter One', ''].join('\n'),
+      // Front matter here doubles as the front-matter-leak regression case
+      // (TASK-015 fix): the chapter body starts with a `---`...`---` fence
+      // followed immediately (no blank line) by a closing fence, which is
+      // exactly the shape that used to be misparsed as a setext heading.
+      'content/chapter-01.md': ['---', 'slug: chapter-one', 'title: Заметки', '---', NEW_LINK_FORMS_CHAPTER].join('\n')
+    });
+
+    const result = await service.buildEpub({ rootUri: rootPath });
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+
+    const xhtml = unzipEntry(result.outputPath, 'OEBPS/chapter-1.html');
+    expect(xhtml).toContain('Иван.');
+    expect(xhtml).not.toContain('[[персонаж:ivan|');
+    expect(xhtml).toContain('Krishna.');
+    expect(xhtml).not.toContain('[[char:krishna|');
+    expect(xhtml).toContain('[[Моя заметка]]');
+    expect(xhtml).toContain('[[folder/Имя]]');
+    expect(xhtml).toContain('[[страница#Заголовок]]');
+    expect(xhtml).toContain('[[Имя|Подпись]]');
+    expect(xhtml).toContain('[[персонаж:ivan]]');
+    expect(xhtml).toContain('[[char:krishna]]');
+    expect(xhtml).toContain('[[Несуществующая заметка]]');
+    expect(xhtml).toContain('[[unclosed');
+    expect(xhtml).toContain('[[kind:id with space]]');
+
+    // Front matter is stripped, not leaked: neither its raw fence markers nor
+    // its keys reach the rendered chapter xhtml.
+    expect(xhtml).not.toContain('slug: chapter-one');
+    expect(xhtml).not.toContain('title: Заметки');
+    // Real chapter heading renders exactly once (EpubGenerator's own <h1> title
+    // node) -- confirms the front-matter fence is no longer misparsed into an
+    // extra heading/thematic-break pair ahead of it.
+    expect((xhtml.match(/<h1[ >]/g) ?? []).length).toBe(1);
+  });
+
+  test('buildHtml strips a chapter front-matter fence instead of leaking it as a garbled heading/rule', async () => {
+    const rootPath = await createWorkspace('front-matter-leak-html', {
+      'metadata.yaml': 'title: FM Leak Check\nlanguage: ru\n',
+      'manifest.yaml': ['version: 1', 'content:', '  - path: content/chapter-01.md', '    title: Chapter One', ''].join('\n'),
+      'content/chapter-01.md': [
+        '---',
+        'slug: chapter-one',
+        'title: Заметки',
+        '---',
+        '# Chapter One',
+        '',
+        'Real body text.',
+        ''
+      ].join('\n')
+    });
+
+    const result = await service.buildHtml({ rootUri: rootPath });
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+    const html = await fs.readFile(result.outputPath, 'utf8');
+
+    expect(html).not.toContain('slug: chapter-one');
+    expect(html).not.toContain('title: Заметки');
+    expect(html).not.toContain('<hr>');
+    expect(html).toContain('<h1>Chapter One</h1>');
+    expect(html).toContain('Real body text.');
+  });
+
+  test('buildMarkdown leaves a chapter front-matter fence untouched (source-preserving .md export is out of this fix\'s scope)', async () => {
+    const { result, output } = await buildMarkdown('front-matter-md-untouched', {
+      'manifest.yaml': ['version: 1', 'content:', '  - path: content/chapter-01.md', '    title: Chapter One', ''].join('\n'),
+      'content/chapter-01.md': ['---', 'slug: chapter-one', '---', '# Chapter One', '', 'Body.', ''].join('\n')
+    });
+
+    expect(result.diagnostics.some(d => d.severity === 'error')).toBe(false);
+    expect(output).toContain('slug: chapter-one');
+  });
+});

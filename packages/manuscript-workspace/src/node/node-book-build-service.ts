@@ -23,6 +23,15 @@ import {
 import type { EpubNavPoint, TelegraphNode } from '@ai-focused-editor/book-export';
 import MarkdownIt from 'markdown-it';
 import { parse } from 'yaml';
+// Pure, Theia-free front-matter parser reused as-is from the browser FM panel
+// (TASK-015 UR-006): strips a chapter's leading `---`...`---` fence before
+// HTML/EPUB rendering so raw YAML never leaks into rendered output (a bare
+// `---`...`---` block followed by non-blank lines is otherwise misparsed by
+// both markdown-it and the EPUB Markdown converter as a setext heading /
+// thematic break, surfacing the front-matter keys as literal prose). Imported
+// directly (not via the `../common` barrel, which does not re-export it) so
+// this stays a read-only reuse with zero edits to `common/chapter-front-matter.ts`.
+import { parseChapterFrontMatter } from '../common/chapter-front-matter';
 import type {
   BookBuildChapter,
   BookBuildFormat,
@@ -389,8 +398,9 @@ export class NodeBookBuildService implements BookBuildService {
         });
       } else {
         const rawText = texts.get(node.path) ?? '';
+        const chapterBody = parseChapterFrontMatter(rawText).body;
         const anchorPrefix = footnoteSlugger(node.title);
-        const prepared = this.prepareEpubChapterContent(this.renderSemanticLabels(rawText), anchorPrefix);
+        const prepared = this.prepareEpubChapterContent(this.renderSemanticLabels(chapterBody), anchorPrefix);
         const chapterId = generator.addChapterFromContent({
           title: node.title,
           content: prepared.content,
@@ -792,9 +802,10 @@ export class NodeBookBuildService implements BookBuildService {
         );
       } else {
         const text = texts.get(node.path) ?? '';
-        const markdown = this.startsWithHeading(text)
-          ? text.trimEnd()
-          : `${'#'.repeat(level)} ${node.title}\n\n${text.trimEnd()}`;
+        const body = parseChapterFrontMatter(text).body;
+        const markdown = this.startsWithHeading(body)
+          ? body.trimEnd()
+          : `${'#'.repeat(level)} ${node.title}\n\n${body.trimEnd()}`;
         parts.push(
           `<section id="${slug}">`,
           `<p class="source">Source: ${this.escapeHtml(node.path)}</p>`,
@@ -1201,8 +1212,19 @@ export class NodeBookBuildService implements BookBuildService {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
 
+  /**
+   * Strip labeled semantic entity tags `[[kind:id|label]]` down to `label` before
+   * HTML/EPUB rendering. `kind`'s first-character class is `\p{L}` (any script,
+   * upper or lower) rather than the canonical validator's Unicode-lowercase-only
+   * `\p{Ll}` (TASK-015 UR-006 fix): this is a strict WIDENING of the pre-TASK-013
+   * ASCII `[a-zA-Z]` this regex already accepted (case-insensitive `i` flag), so it
+   * cannot regress any previously-stripped tag, while now also covering TASK-013's
+   * Cyrillic/other-script `kind` grammar (e.g. `[[персонаж:ivan|Иван]]`) that this
+   * export-local stripper had not been updated to recognize — such a tag used to
+   * pass through as raw `[[...]]` text in book.html/book.epub.
+   */
   protected renderSemanticLabels(markdown: string): string {
-    return markdown.replace(/\[\[[a-z][\w-]*:[^\]|\s]+?\|([^\]]+?)\]\]/gi, '$1');
+    return markdown.replace(/\[\[\p{L}[\p{L}\p{N}_-]*:[^\]|\s]+?\|([^\]]+?)\]\]/gu, '$1');
   }
 
   /** True when any chapter's Markdown carries an inline/block formula. */
