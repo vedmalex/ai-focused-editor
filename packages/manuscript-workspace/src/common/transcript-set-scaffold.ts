@@ -69,6 +69,24 @@ export function rawMdRelPath(slug: string): string {
 }
 
 /**
+ * True when a path points at the per-set flattened full-text file: its
+ * basename is `raw.md` AND a `transcription/` folder appears somewhere on the
+ * path (mirror of `isTranscriptsetPath` in `transcript-set-model.ts`). Pure
+ * path derivation — accepts a POSIX path or a `file://` URI path string.
+ */
+export function isRawMdPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/').toLowerCase();
+  const segments = normalized.split('/').filter(segment => segment.length > 0);
+  if (segments.length === 0) {
+    return false;
+  }
+  if (segments[segments.length - 1] !== RAW_MD_FILE_NAME) {
+    return false;
+  }
+  return segments.slice(0, -1).includes(TRANSCRIPTION_AREA);
+}
+
+/**
  * Case-insensitive "does this filename end with one of these extensions" —
  * duplicated locally (like `proofreading-scaffold.ts`) so this module stays a
  * self-contained contract.

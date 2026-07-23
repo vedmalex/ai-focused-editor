@@ -23,6 +23,10 @@ import {
   TranscriptCheckOpenHandler
 } from './transcript-check-open-handler';
 import { TranscriptIngestContribution } from './transcript-ingest-contribution';
+import { LegacyTranscriptDecorationProvider } from './legacy-transcript-decoration-provider';
+import { TranscriptNavigatorContribution } from './transcript-navigator-contribution';
+import { RawMdWidget } from './raw-md-widget';
+import { RawMdCommandContribution, RawMdOpenHandler } from './raw-md-open-handler';
 
 /**
  * Standalone frontend module for the Transcript Check editor (audio transcript
@@ -66,4 +70,29 @@ export default new ContainerModule(bind => {
   bind(TranscriptIngestContribution).toSelf().inSingletonScope();
   bind(CommandContribution).toService(TranscriptIngestContribution);
   bind(MenuContribution).toService(TranscriptIngestContribution);
+
+  // Read-only raw.md structural viewer (TASK-016 U4b).
+  bind(RawMdWidget).toSelf().inTransientScope();
+  bind(WidgetFactory).toDynamicValue(ctx => ({
+    id: RawMdWidget.FACTORY_ID,
+    createWidget: (options: NavigatableWidgetOptions) => {
+      const widget = ctx.container.get(RawMdWidget);
+      widget.configure(new URI(options.uri));
+      return widget;
+    }
+  })).inSingletonScope();
+  bind(RawMdOpenHandler).toSelf().inSingletonScope();
+  bind(OpenHandler).toService(RawMdOpenHandler);
+  bind(RawMdCommandContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(RawMdCommandContribution);
+  bind(MenuContribution).toService(RawMdCommandContribution);
+
+  // Standard file Explorer folder context-menu entry into the wizard above (TASK-016 U3a).
+  bind(TranscriptNavigatorContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(TranscriptNavigatorContribution);
+  bind(MenuContribution).toService(TranscriptNavigatorContribution);
+
+  // Passive legacy-transcript folder badge in the standard Explorer (TASK-016 U2b).
+  bind(LegacyTranscriptDecorationProvider).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(LegacyTranscriptDecorationProvider);
 });
