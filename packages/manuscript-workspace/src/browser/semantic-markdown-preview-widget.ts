@@ -77,14 +77,48 @@ import { NoteIndexService } from './note-index-service';
 const MAX_SINGLE_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_BYTES = 40 * 1024 * 1024;
 
-// Sentinel src used for SVG only: markdown-it's validateLink drops
-// `data:image/svg+xml` entirely (its GOOD_DATA_RE allows only gif/png/jpeg/webp),
-// so an SVG data URI cannot ride the string route. Instead the rewrite emits a
-// bare `afe-preview-image-N` token (which markdown-it + DOMPurify preserve as an
-// <img src>), and `patchPreviewImages` swaps in the real data URI on the live DOM
-// node after render — bypassing both filters. Raster formats need none of this:
-// their data URIs pass validateLink and survive DOMPurify (img ∈ DATA_URI_TAGS).
-const SVG_SENTINEL_PREFIX = 'afe-preview-image-';
+// Sentinel src used for SVG only (ISS-150, TASK-015 U-B): the LIVE preview
+// renderer is NOT bare markdown-it — `@theia/monaco` globally rebinds Theia's
+// `MarkdownRenderer` to VS Code's `MonacoMarkdownRenderer` (marked + VS Code's
+// own `domSanitize` sanitizer), exactly the renderer ISS-149 (note-links) had
+// to be fixed against. `domSanitize`'s `afterSanitizeAttributes` hook checks
+// EVERY `src`/`href` via `validateLink(value, allowedProtocols)`
+// (monaco-editor-core `base/browser/domSanitize.js`): a value is kept only if
+// its scheme is in the allow-list (`http`/`https`/`data`/`file`/…) OR
+// `allowRelativePaths` is true for that attribute. Unlike `href`, which gets a
+// hard-coded `#`-prefix exemption (`!attrValue.startsWith('#')` — the exact
+// mechanism ISS-149's `#afe-note-link-N` fix rides on), `src` has NO such
+// exemption — it ALWAYS goes through `validateLink`. This widget never sets a
+// `baseUri` on the rendered `MarkdownString` (see `renderPreviewSegment`), so
+// `allowRelativeMediaPaths` (`= !!markdown.baseUri`, `markdownRenderer.js`
+// `getDomSanitizerConfig`) is always `false` here — a BARE relative token like
+// the original `afe-preview-image-N` fails `validateLink` unconditionally and
+// gets its `src` attribute STRIPPED by the sanitizer before
+// `patchPreviewImages` ever runs, exactly the ISS-149 defect class ISS-150
+// hypothesized (reproduced in `preview-images.test.ts`, "ISS-150" describe
+// block). Raster images were never affected: they inline a REAL
+// `data:image/<mime>;base64,…` URI directly (no sentinel), and `data:` IS
+// unconditionally in `validateLink`'s allow-list regardless of
+// `allowRelativePaths` — which is also why `data:image/svg+xml` itself would
+// have passed the LIVE sanitizer (the `markdown-it` GOOD_DATA_RE restriction
+// this comment used to cite governs a DIFFERENT renderer path — the
+// `markdown-it`-based `MarkdownRendererImpl` fallback — never the one this
+// widget actually renders through).
+//
+// Fix: give the SVG sentinel a `data:` PREFIX (`data:,afe-preview-image-N`) —
+// a syntactically valid, scheme-only data URI. This lands it in the very
+// allow-list exemption raster images already ride, so `validateLink` accepts
+// it regardless of `baseUri`/`allowRelativePaths`. It also survives
+// `rewriteRenderedLinks`' `massageHref` untouched: that function special-cases
+// `href.startsWith(Schemas.data + ':')` to return the value byte-identical, so
+// the string `patchPreviewImages` looks up via `svgSentinels.get(src)` is
+// GUARANTEED to still be the exact token this widget generated — no
+// browser-URI rewriting in between (the risk a `baseUri`-only fix would still
+// carry for a non-`data:` token). Mermaid diagrams never touch any of this:
+// {@link segmentPreviewMarkdown} renders `mermaid` fences through the
+// separate `MermaidViewer` component, entirely outside the sanitized markdown
+// pipeline.
+const SVG_SENTINEL_PREFIX = 'data:,afe-preview-image-';
 
 /** Encode raw bytes as base64 without blowing the call stack on large buffers. */
 function bytesToBase64(bytes: Uint8Array): string {
@@ -619,10 +653,12 @@ export class SemanticMarkdownPreviewWidget extends ReactWidget implements Extrac
 
   /**
    * After the MarkdownRenderer produces the preview DOM, swap each SVG sentinel
-   * `<img src="afe-preview-image-N">` to its real `data:image/svg+xml` URI by
-   * setting `img.src` on the live node — bypassing markdown-it's format whitelist
-   * and DOMPurify (both already ran on the string). Raster images already carry a
-   * `data:` src and are ignored. Bound once so the memoized Markdown component's
+   * `<img src="data:,afe-preview-image-N">` (see {@link SVG_SENTINEL_PREFIX} —
+   * ISS-150) to its real `data:image/svg+xml` URI by setting `img.src` on the
+   * live node — bypassing the live VS Code sanitizer entirely (it already ran
+   * once on the string; this is a plain DOM mutation afterward). Raster images
+   * already carry a real `data:` src and are ignored (never in
+   * `svgSentinels`). Bound once so the memoized Markdown component's
    * `onRender` prop stays referentially stable across updates.
    */
   protected readonly patchPreviewImages = (element?: HTMLElement): void => {

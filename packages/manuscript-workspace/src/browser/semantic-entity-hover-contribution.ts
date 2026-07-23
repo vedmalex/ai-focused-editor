@@ -13,7 +13,7 @@ import {
   type EntityTypeDescriptor,
   type NarrativeEntity
 } from '../common';
-import { parseBareEntityTags, tagKindToEntityKind } from '../common/link-navigation';
+import { parseWikiLinks, tagKindToEntityKind, wikiEntityHoverCandidate } from '../common/link-navigation';
 import { SemanticLinkCommands } from './semantic-link-contribution';
 import { EntityTypeRegistryService } from './entity-type-registry-service';
 
@@ -88,7 +88,7 @@ export class SemanticEntityHoverContribution implements FrontendApplicationContr
       }
       const text = model.getValue();
       const offset = model.getOffsetAt(position);
-      const match = this.findTagAt(model, text, offset);
+      const match = await this.findTagAt(model, text, offset);
       if (!match) {
         return undefined;
       }
@@ -125,12 +125,34 @@ export class SemanticEntityHoverContribution implements FrontendApplicationContr
     }
   }
 
-  /** Collect labeled and bare tags, returning the one whose full range spans `offset`. */
-  protected findTagAt(
+  /**
+   * Collect labeled and unlabeled tags, returning the one whose full range
+   * spans `offset`.
+   *
+   * TASK-015 U-B (ISS-151-class live regression fix): the unlabeled loop used
+   * to run through the now-deprecated `parseBareEntityTags`, which — since
+   * TASK-013 split `[[...]]` classification into `entity`/`note`/`invalid` —
+   * silently NARROWED to `class === 'entity'` tokens only (colon-shaped, e.g.
+   * `[[char:krishna]]`). A colon-less bare `[[id]]` (this project's own
+   * `[[sharan-108]]`-style corpus) now classifies as `note`, so hovering it
+   * stopped showing the entity card at all — even though clicking it (the
+   * SEPARATE `SemanticLinkContribution`/`resolveWikiToken` chain, U4) still
+   * resolves it to the entity FIRST via a bare-id lookup. This restores that
+   * SAME entity-first chain for hover: a `note`-class token is treated as an
+   * entity reference (kind `undefined`, matching the pre-TASK-013 bare-tag
+   * shape) only when its id matches a REAL entity by bare id; a genuine
+   * Obsidian-style note title (e.g. `[[My Chapter Notes]]`, no matching
+   * entity) correctly gets no entity hover, unchanged from today. The entity
+   * lookup only runs once a `note`-class token's range already contains
+   * `offset` (never on every hover over plain prose), and `getEntities()`'s
+   * own TTL cache makes the immediately-following `provideHover` call's own
+   * fetch effectively free.
+   */
+  protected async findTagAt(
     model: monaco.editor.ITextModel,
     text: string,
     offset: number
-  ): HoverTagMatch | undefined {
+  ): Promise<HoverTagMatch | undefined> {
     for (const tag of parseSemanticMarkdown(text).tags) {
       const start = model.getOffsetAt({ lineNumber: tag.range.start.line + 1, column: tag.range.start.character + 1 });
       const end = model.getOffsetAt({ lineNumber: tag.range.end.line + 1, column: tag.range.end.character + 1 });
@@ -138,9 +160,25 @@ export class SemanticEntityHoverContribution implements FrontendApplicationContr
         return { kind: tag.kind, id: tag.id, label: tag.label, startOffset: start, endOffset: end };
       }
     }
-    for (const bare of parseBareEntityTags(text)) {
-      if (offset >= bare.start && offset <= bare.end) {
-        return { kind: bare.kind, id: bare.id, label: bare.id, startOffset: bare.start, endOffset: bare.end };
+    for (const link of parseWikiLinks(text)) {
+      const { start, end } = link.range;
+      if (offset < start || offset > end) {
+        continue;
+      }
+      if (link.class === 'note') {
+        // Entity-first (mirrors resolveWikiToken/U4): only pay for the entity
+        // lookup once a note-class token's range already contains the hover
+        // offset, never on every hover over plain prose.
+        const entities = await this.getEntities();
+        const candidate = wikiEntityHoverCandidate(link, id => entities.some(entity => entity.id === id));
+        if (candidate) {
+          return { kind: candidate.kind, id: candidate.id, label: candidate.id, startOffset: start, endOffset: end };
+        }
+        continue; // a genuine note-link (no matching entity) — no entity hover, unchanged.
+      }
+      const candidate = wikiEntityHoverCandidate(link, () => false);
+      if (candidate) {
+        return { kind: candidate.kind, id: candidate.id, label: candidate.id, startOffset: start, endOffset: end };
       }
     }
     return undefined;

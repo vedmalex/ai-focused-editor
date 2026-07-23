@@ -1,18 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 import { parseSemanticMarkdown } from '@ai-focused-editor/semantic-markdown';
 import {
+  collectUnlabeledWikiEntityMatches,
   findHeadingLine,
   isSkippableLinkTarget,
   noteCreateContent,
   noteCreatePath,
-  parseBareEntityTags,
   parseWikiLinks,
   resolveNoteLink,
   resolveRelativeLink,
   semanticTagLinkRange,
   slugifyBase,
   splitLinkAnchor,
-  tagKindToEntityKind
+  tagKindToEntityKind,
+  wikiEntityHoverCandidate
 } from './link-navigation';
 
 describe('tagKindToEntityKind', () => {
@@ -56,33 +57,81 @@ describe('semanticTagLinkRange', () => {
   });
 });
 
-describe('parseBareEntityTags (deprecated wrapper)', () => {
-  // Plan §9/ISS-138: a colon-less bare token like `[[frodo]]` now classifies as
-  // `note` under the parseWikiLinks entity/note discriminator (no `:` in the
-  // content), so it is intentionally EXCLUDED from this deprecated wrapper —
-  // that is the goal of TASK-013 (distinguishing notes from entities), not a
-  // regression. Pre-TASK-013 this asserted `[{ id: 'frodo', start: 5, end: 14 }]`.
-  test('no longer returns a colon-less bare token (now classified as note, ISS-138)', () => {
-    const matches = parseBareEntityTags('meet [[frodo]] now');
-    expect(matches).toEqual([]);
+// `parseBareEntityTags` (the deprecated `{ kind?, id, start, end }` wrapper
+// over `parseWikiLinks`, filtered to unlabeled `class === 'entity'` matches)
+// was REMOVED in TASK-015 U-B — its three internal consumers now call
+// `parseWikiLinks` directly with their own entity-first inclusion logic (see
+// `semantic-entity-hover-contribution.ts`/`book-doctor-contribution.ts`). Its
+// classification coverage (colon-less bare -> `note`, unlabeled `[[kind:id]]`
+// -> `entity`, labeled tags excluded) lives on below, in the `parseWikiLinks`
+// describe block, which was always the actual source of truth this wrapper
+// only re-shaped.
+
+describe('collectUnlabeledWikiEntityMatches (TASK-015 U-B, book-doctor entity-count regression)', () => {
+  test('folds a colon-less bare token with kind undefined — the pre-TASK-013 shape the wrapper used to drop', () => {
+    const matches = collectUnlabeledWikiEntityMatches('meet [[sharan-108]] now');
+    expect(matches).toEqual([{ kind: undefined, id: 'sharan-108' }]);
   });
 
-  test('parses an unlabeled [[kind:id]] reference', () => {
-    const matches = parseBareEntityTags('[[char:frodo]]');
-    expect(matches).toEqual([{ kind: 'char', id: 'frodo', start: 0, end: 14 }]);
+  test('folds an unlabeled [[kind:id]] reference with its kind', () => {
+    const matches = collectUnlabeledWikiEntityMatches('[[char:frodo]]');
+    expect(matches).toEqual([{ kind: 'char', id: 'frodo' }]);
   });
 
-  test('ignores labeled [[kind:id|label]] tags', () => {
-    expect(parseBareEntityTags('[[char:frodo|Frodo]]')).toEqual([]);
+  test('excludes a labeled [[kind:id|label]] tag (parseSemanticMarkdown\'s job)', () => {
+    expect(collectUnlabeledWikiEntityMatches('[[char:frodo|Frodo]]')).toEqual([]);
   });
 
-  // Plan §9/ISS-138: `[[frodo]]` (no colon) is now `note`-classified and
-  // excluded; only the `[[location:shire]]` bare entity remains. Pre-TASK-013
-  // this asserted both `{kind: undefined, id: 'frodo'}` and the location entry.
-  test('handles a mix, excluding the now-note-classified colon-less token', () => {
-    const text = '[[frodo]] and [[term:ring|the ring]] and [[location:shire]]';
-    const matches = parseBareEntityTags(text);
-    expect(matches.map(m => ({ kind: m.kind, id: m.id }))).toEqual([{ kind: 'location', id: 'shire' }]);
+  test('excludes a labeled bare note link, e.g. [[My Note|Alias]]', () => {
+    expect(collectUnlabeledWikiEntityMatches('[[My Note|Alias]]')).toEqual([]);
+  });
+
+  test('excludes the regression-guard Invalid case (kind-shaped prefix + whitespace in the id)', () => {
+    expect(collectUnlabeledWikiEntityMatches('[[char:krishna Krishna]]')).toEqual([]);
+  });
+
+  test('a mix folds BOTH the colon-less bare token AND the kind:id token — the exact regression scenario', () => {
+    const text = '[[sharan-108]] and [[term:ring|the ring]] and [[location:shire]]';
+    const matches = collectUnlabeledWikiEntityMatches(text);
+    expect(matches).toEqual([{ kind: undefined, id: 'sharan-108' }, { kind: 'location', id: 'shire' }]);
+  });
+
+  test('folds a multi-word Obsidian note title harmlessly (kind undefined, never matches a real entity card by chance)', () => {
+    const matches = collectUnlabeledWikiEntityMatches('See [[My Chapter Notes]] for context.');
+    expect(matches).toEqual([{ kind: undefined, id: 'My Chapter Notes' }]);
+  });
+});
+
+describe('wikiEntityHoverCandidate (TASK-015 U-B, hover entity-first regression)', () => {
+  function firstLink(text: string) {
+    const [link] = parseWikiLinks(text);
+    return link;
+  }
+
+  test('an entity-class token always qualifies, regardless of hasEntity', () => {
+    const link = firstLink('[[char:frodo]]');
+    expect(wikiEntityHoverCandidate(link, () => false)).toEqual({ kind: 'char', id: 'frodo' });
+  });
+
+  test('a colon-less bare token qualifies ONLY when hasEntity matches it by bare id (ISS-151-class regression)', () => {
+    const link = firstLink('[[sharan-108]]');
+    expect(link.class).toBe('note');
+    expect(wikiEntityHoverCandidate(link, id => id === 'sharan-108')).toEqual({ id: 'sharan-108' });
+  });
+
+  test('a colon-less bare token with NO matching entity is a genuine note link — no hover candidate', () => {
+    const link = firstLink('[[My Chapter Notes]]');
+    expect(wikiEntityHoverCandidate(link, () => false)).toBeUndefined();
+  });
+
+  test('a labeled token never qualifies, even when hasEntity would match (parseSemanticMarkdown\'s job)', () => {
+    const link = firstLink('[[char:frodo|Frodo]]');
+    expect(wikiEntityHoverCandidate(link, () => true)).toBeUndefined();
+  });
+
+  test('an invalid token never qualifies', () => {
+    const link = firstLink('[[char:krishna Krishna]]');
+    expect(wikiEntityHoverCandidate(link, () => true)).toBeUndefined();
   });
 });
 

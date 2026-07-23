@@ -61,7 +61,7 @@ import {
   type DiscoveredManuscriptFile
 } from '../common/manifest-reconstruction';
 import { parseSemanticMarkdown } from '@ai-focused-editor/semantic-markdown';
-import { parseBareEntityTags } from '../common/link-navigation';
+import { collectUnlabeledWikiEntityMatches } from '../common/link-navigation';
 import {
   BASE_ENTITY_TYPES,
   mergeEntityTypes,
@@ -563,11 +563,33 @@ export class BookDoctorContribution
 
   /**
    * Fold one file's entity tags into the accumulator keyed by `(kind, id)`.
-   * Labeled `[[kind:id|label]]` tags (parseSemanticMarkdown) and bare/unlabeled
-   * `[[id]]` / `[[kind:id]]` tags (parseBareEntityTags) are complementary — the
-   * two parsers never match the same token — so their counts sum without
-   * double-counting. `firstPath` is set on first sight (files arrive in sorted
-   * order); labels are harvested only from the labeled tags.
+   * Labeled `[[kind:id|label]]` tags (parseSemanticMarkdown) and unlabeled
+   * `[[id]]` / `[[kind:id]]` tokens (parseWikiLinks, filtered below) are
+   * complementary — `parseSemanticMarkdown`'s pattern always requires the
+   * `|label` segment, so the two sources never match the same token — their
+   * counts sum without double-counting. `firstPath` is set on first sight
+   * (files arrive in sorted order); labels are harvested only from the
+   * labeled tags.
+   *
+   * TASK-015 U-B (live regression fix): the unlabeled loop used to run
+   * through the now-deprecated `parseBareEntityTags`, which — since TASK-013
+   * split `[[...]]` classification into `entity`/`note`/`invalid` — silently
+   * NARROWED to `class === 'entity'` tokens only (colon-shaped, e.g.
+   * `[[char:krishna]]`). A colon-less bare `[[id]]` (this project's own
+   * `[[sharan-108]]`-style corpus) now classifies as `note`, so it stopped
+   * being folded in at all: `entityCardOrphanFindings` would then see the
+   * matching `entities/<dir>/<id>.yaml` card as UNREFERENCED and falsely report it
+   * as an orphan, even though the manuscript references it constantly via the
+   * bare form. Folding every unlabeled `parseWikiLinks` token regardless of
+   * `entity`/`note` class (kind `undefined` for the `note` case) restores the
+   * pre-TASK-013 behaviour byte-for-byte: `entityCardOrphanFindings` already
+   * treats a kind-`undefined` occurrence as matching a card by id alone ("a
+   * bare `[[id]]` matches any kind"), and `entityCardMissingFixes`/
+   * `entityUnknownKindFindings` already skip kind-`undefined` occurrences —
+   * both were designed around exactly this shape, so no downstream check needs
+   * to change. A genuine multi-word Obsidian note title (e.g. `[[My Chapter
+   * Notes]]`) folds in harmlessly too: it only ever matches a card whose id is
+   * that literal string, which no entity card is.
    */
   protected foldEntityTags(path: string, text: string, accumulator: Map<string, MutableOccurrence>): void {
     const record = (kind: string | undefined, id: string, label?: string): void => {
@@ -586,8 +608,8 @@ export class BookDoctorContribution
     for (const tag of parseSemanticMarkdown(text).tags) {
       record(tag.kind, tag.id, tag.label);
     }
-    for (const bare of parseBareEntityTags(text)) {
-      record(bare.kind, bare.id);
+    for (const match of collectUnlabeledWikiEntityMatches(text)) {
+      record(match.kind, match.id);
     }
   }
 
