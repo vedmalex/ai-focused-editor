@@ -27,7 +27,6 @@ covers:
   - ai-focused-editor.excerpt-context
   - ai-focused-editor.diagram-context
   - ai-focused-editor.set-context
-  - ai-focused-editor.diagram-author
   - aiConnect.manuscriptOverview
 ---
 

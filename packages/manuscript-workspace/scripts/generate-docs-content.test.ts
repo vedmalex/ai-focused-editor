@@ -25,6 +25,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { computeSourceFingerprint } from '../src/node/docs/source-scan';
+import { hashSourceRef } from '../src/node/docs/source-refs';
 
 /**
  * Fixture trees and generator output live in the OS temp directory, never in the
@@ -58,7 +59,16 @@ interface InventorySpec {
   dynamicPrefixes?: string[];
   codeReferencedIds?: string[];
   skipped?: { why: string; file: string; line: number; text: string; staticPrefix?: string }[];
+  /** Entity universe (§3 WP-U3-5). */
+  promptFragments?: { id: string; name?: string; description?: string; file?: string; line?: number }[];
+  agents?: { id: string; label?: string; description?: string; file?: string; modeId?: string }[];
+  skills?: { id: string; name?: string; description?: string; file?: string }[];
 }
+
+type SourceRefSpec =
+  | { path: string }
+  | { path: string; symbol: string }
+  | { path: string; mode: string };
 
 interface PageSpec {
   id: string;
@@ -67,6 +77,7 @@ interface PageSpec {
   order?: number;
   section?: string;
   covers?: (string | { pattern: string; reason: string })[];
+  sourceRefs?: (SourceRefSpec | unknown)[];
   body?: string;
   /** Raw file text, bypassing the frontmatter builder (malformed-input tests). */
   raw?: string;
@@ -77,6 +88,10 @@ interface RepoSpec {
   exceptions?: unknown[];
   requests?: unknown[];
   pages?: PageSpec[];
+  /** Committed blessed baseline; when omitted no file is written (absent = empty). */
+  blessed?: { version?: number; pages?: Record<string, Record<string, { hash: string; blessedAt?: string }>> };
+  /** Extra source files, written BEFORE the fingerprint so the inventory stays fresh. */
+  sources?: { path: string; content: string }[];
 }
 
 interface Run {
@@ -101,6 +116,9 @@ function frontmatter(page: PageSpec): string {
   if (page.covers !== undefined) {
     lines.push(`covers: ${JSON.stringify(page.covers)}`);
   }
+  if (page.sourceRefs !== undefined) {
+    lines.push(`sourceRefs: ${JSON.stringify(page.sourceRefs)}`);
+  }
   lines.push('---', '');
   return `${lines.join('\n')}${page.body ?? 'Текст страницы.'}\n`;
 }
@@ -121,13 +139,25 @@ async function makeRepo(name: string, spec: RepoSpec = {}): Promise<string> {
     JSON.stringify({ name: 'fixture-repo', workspaces: ['packages/*'] }, null, 2),
     'utf8'
   );
+  // The obligatory entity source (§3 WP-U3-0, R2): written BEFORE the fingerprint
+  // below so the generator re-computes the same value over the same tree.
+  await write(
+    repoRoot,
+    'packages/manuscript-workspace/src/node/ai/base-modes.yaml',
+    'version: 1\nmodes: []\n'
+  );
+  // Extra source files FIRST, so the fingerprint the inventory records below
+  // already accounts for them (a file added afterwards would stale the inventory).
+  for (const source of spec.sources ?? []) {
+    await write(repoRoot, source.path, source.content);
+  }
 
   const inventorySpec = spec.inventory ?? {};
   const commandEntries =
     inventorySpec.commandEntries ??
     (inventorySpec.commands ?? []).map(id => ({ id, file: `${PACKAGE_DIR}/src/browser/x.ts`, line: 1 }));
   const inventory = {
-    version: 1,
+    version: 2,
     sourceFingerprint: `sha256:${await computeSourceFingerprint(repoRoot)}`,
     packages: ['manuscript-workspace', 'ai-connect-theia', 'document-preview-theia'],
     // Pinned, not inherited: `OWN_PREFIXES` is derived from these two inputs.
@@ -146,9 +176,40 @@ async function makeRepo(name: string, spec: RepoSpec = {}): Promise<string> {
     })),
     skipped: inventorySpec.skipped ?? [],
     dynamicPrefixes: inventorySpec.dynamicPrefixes ?? [],
-    codeReferencedIds: inventorySpec.codeReferencedIds ?? []
+    codeReferencedIds: inventorySpec.codeReferencedIds ?? [],
+    promptFragments: (inventorySpec.promptFragments ?? []).map(fragment => ({
+      kind: 'promptFragment',
+      id: fragment.id,
+      ...(fragment.name !== undefined ? { name: fragment.name } : {}),
+      ...(fragment.description !== undefined ? { description: fragment.description } : {}),
+      file: fragment.file ?? `${PACKAGE_DIR}/src/browser/frag.ts`,
+      line: fragment.line ?? 1
+    })),
+    agents: (inventorySpec.agents ?? []).map(agent => ({
+      kind: 'agent',
+      id: agent.id,
+      label: agent.label ?? agent.id,
+      description: agent.description ?? '',
+      file: agent.file ?? `${PACKAGE_DIR}/src/node/ai/base-modes.yaml`,
+      modeId: agent.modeId ?? agent.id
+    })),
+    skills: (inventorySpec.skills ?? []).map(skill => ({
+      kind: 'skill',
+      id: skill.id,
+      name: skill.name ?? skill.id,
+      description: skill.description ?? '',
+      file: skill.file ?? '.claude/skills/x/SKILL.md'
+    })),
+    entityDynamicPrefixes: []
   };
   await write(repoRoot, INVENTORY_PATH, `${JSON.stringify(inventory, null, 2)}\n`);
+  if (spec.blessed !== undefined) {
+    await write(
+      repoRoot,
+      'docs/docs-source-refs.blessed.json',
+      `${JSON.stringify({ version: spec.blessed.version ?? 1, pages: spec.blessed.pages ?? {} }, null, 2)}\n`
+    );
+  }
   await write(
     repoRoot,
     'docs/coverage-exceptions.jsonc',
@@ -1453,11 +1514,11 @@ describe('inventory freshness (§1.5) and CLI modes (§1.3)', () => {
   test('neg: an unsupported inventory version', async () => {
     const repoRoot = await makeRepo('inventory-version', { inventory: { commands: [] } });
     const inventory = JSON.parse(await fs.readFile(join(repoRoot, INVENTORY_PATH), 'utf8'));
-    inventory.version = 2;
+    inventory.version = 3;
     await write(repoRoot, INVENTORY_PATH, `${JSON.stringify(inventory, null, 2)}\n`);
     const result = await strict(repoRoot);
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain('inventory version 2 is not supported');
+    expect(result.stderr).toContain('inventory version 3 is not supported');
   });
 
   test('neg: NO `--coverage` on an uncovered id fails — the default is strict (§1.3)', async () => {
@@ -1564,6 +1625,7 @@ describe('emission and the report (§B.2, §B.6)', () => {
       'Allowlist',
       'Deferred coverage',
       'Uncovered ids',
+      'Uncovered entities',
       'Skipped declarations (not extractable)'
     ]);
     expect(report).toContain('| packages/manuscript-workspace/src/browser/dyn.ts | 206 | template-literal-id |');
@@ -1645,6 +1707,208 @@ describe('emission and the report (§B.2, §B.6)', () => {
   });
 });
 
+// --------------------------------------------------------------------------
+// TASK-018 S4/S5 — entity universe, drift gate, scaffold enforcement
+// --------------------------------------------------------------------------
+
+const driftFatal = (repoRoot: string): Promise<Run> => run(repoRoot, '--coverage=warn', '--drift=fatal');
+
+/** The doc-target source file the drift fixtures pin a `{path}` ref to. */
+const TARGET_PATH = `${PACKAGE_DIR}/src/browser/doc-target.ts`;
+
+describe('entity coverage gate (§3 WP-U3-5, §6 F-D2.1-1)', () => {
+  test('neg in strict / pos in warn: an uncovered prompt fragment', async () => {
+    const repoRoot = await makeRepo('entity-uncovered', {
+      inventory: { promptFragments: [{ id: 'ai-focused-editor.my-fragment' }] },
+      pages: [{ id: 'home' }]
+    });
+    const strictRun = await strict(repoRoot);
+    expect(strictRun.exitCode).not.toBe(0);
+    expect(strictRun.stderr).toContain('1 uncovered entity(ies)');
+    expect(strictRun.stderr).toContain('ai-focused-editor.my-fragment');
+
+    const warnRun = await warn(repoRoot);
+    expect(warnRun.exitCode).toBe(0);
+    expect(metric(warnRun.report, 'Uncovered entities')).toBe('1');
+    expect(warnRun.report).toContain('- ai-focused-editor.my-fragment');
+  });
+
+  test('pos: an entity covered by an exact covers claim passes strict', async () => {
+    const repoRoot = await makeRepo('entity-covered', {
+      inventory: {
+        promptFragments: [{ id: 'ai-focused-editor.my-fragment' }],
+        agents: [{ id: 'ai-focused-editor.mode.gv-x', modeId: 'gv-x' }],
+        skills: [{ id: 'skill:my-skill' }]
+      },
+      pages: [
+        {
+          id: 'home',
+          covers: ['ai-focused-editor.my-fragment', 'ai-focused-editor.mode.gv-x', 'skill:my-skill'],
+          body: 'Описание.\n\n## Зачем и когда\n\nПолезно, когда нужно X.'
+        }
+      ]
+    });
+    const result = await strict(repoRoot);
+    expect(result.stderr).toBe('');
+    expect(result.exitCode).toBe(0);
+    expect(metric(result.report, 'Entities covered by exact id')).toBe('3');
+    expect(metric(result.report, 'Uncovered entities')).toBe('0');
+  });
+
+  test('pos: an entity excused by an exempt/deferred allowlist entry is not uncovered', async () => {
+    const repoRoot = await makeRepo('entity-excused', {
+      inventory: {
+        promptFragments: [{ id: 'ai-focused-editor.internal-fragment' }],
+        skills: [{ id: 'skill:owed' }]
+      },
+      exceptions: [
+        {
+          pattern: 'ai-focused-editor.internal-fragment',
+          kind: 'exempt',
+          reason: 'внутренний фрагмент, не пользовательская поверхность',
+          added: '2026-07-23'
+        },
+        {
+          pattern: 'skill:owed',
+          kind: 'deferred',
+          deferredTo: 'TASK-999',
+          reason: 'скилл будет описан на отдельной странице',
+          added: '2026-07-23'
+        }
+      ],
+      pages: [{ id: 'home' }]
+    });
+    const result = await strict(repoRoot);
+    expect(result.stderr).toBe('');
+    expect(result.exitCode).toBe(0);
+    expect(metric(result.report, 'Entities allowlisted: exempt')).toBe('1');
+    expect(metric(result.report, 'Entities allowlisted: deferred')).toBe('1');
+    expect(metric(result.report, 'Uncovered entities')).toBe('0');
+  });
+
+  test('ENTITY INVARIANT: an id in BOTH the command and the entity universe is a hard config error (ISS-186, double-count)', async () => {
+    // The double-count guard (§6 F-D2.1-1). If a fragment id ever re-entered
+    // commands[], one page's covers claim would satisfy two universes at once.
+    const repoRoot = await makeRepo('entity-doublecount', {
+      inventory: {
+        commands: ['ai-focused-editor.dup'],
+        promptFragments: [{ id: 'ai-focused-editor.dup' }]
+      },
+      pages: [{ id: 'home', covers: ['ai-focused-editor.dup'] }]
+    });
+    const result = await strict(repoRoot);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('counted in BOTH');
+  });
+});
+
+describe('source-ref drift gate (§3 WP-U4-3, §2.4)', () => {
+  const driftRepo = async (
+    name: string,
+    opts: { blessedHash?: 'correct' | 'wrong' | 'absent'; refPath?: string }
+  ): Promise<string> => {
+    const refPath = opts.refPath ?? TARGET_PATH;
+    const repoRoot = await makeRepo(name, {
+      sources: [{ path: TARGET_PATH, content: 'export const DOC_TARGET = 1;\n' }],
+      pages: [{ id: 'home', sourceRefs: [{ path: refPath }] }]
+    });
+    if (opts.blessedHash !== 'absent') {
+      const current = await hashSourceRef(repoRoot, { path: refPath });
+      const hash = opts.blessedHash === 'wrong' ? 'sha256:deadbeef' : current;
+      await write(
+        repoRoot,
+        'docs/docs-source-refs.blessed.json',
+        `${JSON.stringify(
+          { version: 1, pages: { home: { [refPath]: { hash, blessedAt: '2026-07-23' } } } },
+          null,
+          2
+        )}\n`
+      );
+    }
+    return repoRoot;
+  };
+
+  test('fresh: a matching blessed hash passes even under --drift=fatal', async () => {
+    const repoRoot = await driftRepo('drift-fresh', { blessedHash: 'correct' });
+    const result = await driftFatal(repoRoot);
+    expect(result.stderr).toBe('');
+    expect(result.exitCode).toBe(0);
+    expect(metric(result.report, 'Fresh source refs')).toBe('1');
+    expect(metric(result.report, 'Drifted source refs')).toBe('0');
+  });
+
+  test('drift: a mismatched hash is fatal under --drift=fatal, a NOTE (exit 0) by default', async () => {
+    const repoRoot = await driftRepo('drift-mismatch', { blessedHash: 'wrong' });
+
+    const fatalRun = await driftFatal(repoRoot);
+    expect(fatalRun.exitCode).not.toBe(0);
+    expect(fatalRun.stderr).toContain('has drifted from its blessed baseline');
+
+    const warnRun = await warn(repoRoot); // default --drift=warn
+    expect(warnRun.exitCode).toBe(0);
+    expect(warnRun.stdout).toContain('NOTE source ref');
+    expect(metric(warnRun.report, 'Drifted source refs')).toBe('1');
+  });
+
+  test('unblessed: a declared ref with no baseline is fatal in BOTH modes', async () => {
+    const repoRoot = await driftRepo('drift-unblessed', { blessedHash: 'absent' });
+    expect((await warn(repoRoot)).stderr).toContain('unblessed source ref');
+    expect((await warn(repoRoot)).exitCode).not.toBe(0);
+    expect((await strict(repoRoot)).stderr).toContain('unblessed source ref');
+  });
+
+  test('stale: a ref whose target file is gone is fatal in BOTH modes', async () => {
+    const repoRoot = await driftRepo('drift-stale', {
+      blessedHash: 'absent',
+      refPath: `${PACKAGE_DIR}/src/browser/vanished.ts`
+    });
+    expect((await warn(repoRoot)).stderr).toContain('stale source ref');
+    expect((await warn(repoRoot)).exitCode).not.toBe(0);
+    expect((await strict(repoRoot)).stderr).toContain('stale source ref');
+  });
+
+  test('a malformed sourceRefs entry is refused like a bad covers entry', async () => {
+    const repoRoot = await makeRepo('sourcerefs-malformed', {
+      pages: [{ id: 'home', sourceRefs: [{ path: 'a.ts', symbol: 'S', mode: 'm' }] }]
+    });
+    await expectFailsInBothModes(repoRoot, 'cannot carry both "symbol" and "mode"');
+  });
+});
+
+describe('scaffold placeholder enforcement (§3 WP-U3-6)', () => {
+  const entityRepo = (name: string, body: string): Promise<string> =>
+    makeRepo(name, {
+      inventory: { promptFragments: [{ id: 'ai-focused-editor.scaffolded' }] },
+      pages: [{ id: 'ai/scaffolded', covers: ['ai-focused-editor.scaffolded'], body }]
+    });
+
+  test('neg in strict: a page still carrying SCAFFOLD-TODO fails', async () => {
+    const repoRoot = await entityRepo('scaffold-todo', 'Что это.\n\n## Зачем и когда\n\n<!-- SCAFFOLD-TODO -->');
+    const result = await strict(repoRoot);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('SCAFFOLD-TODO placeholder');
+  });
+
+  test('neg in strict: a page whose «Зачем и когда» section is empty fails', async () => {
+    const repoRoot = await entityRepo('scaffold-empty', 'Что это.\n\n## Зачем и когда\n');
+    const result = await strict(repoRoot);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('no non-empty «Зачем и когда» section');
+  });
+
+  test('pos: a filled page passes strict — the enforce is not "always fail"', async () => {
+    const repoRoot = await entityRepo('scaffold-filled', 'Что это.\n\n## Зачем и когда\n\nПрименяйте, когда нужно X.');
+    const result = await strict(repoRoot);
+    expect(result.stderr).toBe('');
+    expect(result.exitCode).toBe(0);
+  });
+
+  test('pos in warn: an unfilled scaffold does not block authoring (strict-only teeth)', async () => {
+    const repoRoot = await entityRepo('scaffold-warn', 'Что это.\n\n## Зачем и когда\n\n<!-- SCAFFOLD-TODO -->');
+    expect((await warn(repoRoot)).exitCode).toBe(0);
+  });
+});
+
 describe('control numbers on the REAL tree (§1.7, F-D8-5)', () => {
   const scratch = (name: string): string[] => [
     `--module=${join(TEST_ROOT, `${name}.generated.ts`)}`,
@@ -1662,15 +1926,23 @@ describe('control numbers on the REAL tree (§1.7, F-D8-5)', () => {
     expect(metric(result.report, 'Uncovered')).toBe('0');
   });
 
-  test('`build` (strict) is GREEN on the real tree — the release chain is unblocked', async () => {
-    // This assertion USED to be `exitCode === 1` "and ONLY on uncovered ids",
-    // the transitional red of §1.7 rule 2. The transition is over: every own id
-    // is described, exempted, or deferred to a named task, so the product build
-    // ships. Flipping it back to red would mean the guide lost coverage.
+  test('`build` (strict) is GREEN on the real tree — the entity universe is covered and blessed', async () => {
+    // POST-P3 GREEN (TASK-018 S4/S5). This assertion USED to require a
+    // transitional RED, back when the NEW entity universe (prompt fragments,
+    // agents, skills) had no content pages yet. The transition is over: P3 (the
+    // author-checkpoint) wrote the four entity pages — ai/diagram-author,
+    // ai/gv-opponent, ai/gv-essay, contributing/docs-workflow — and blessed
+    // their source refs into docs/docs-source-refs.blessed.json, so strict now
+    // ships clean. Both universes are green: `Uncovered` === 0 (commands /
+    // preferences) AND `Uncovered entities` === 0. A future regression (a new
+    // entity landing without a page, or an unblessed ref) is still visible as a
+    // diff on this exact assertion, not a silent reinterpretation.
     const result = await run(REPO_ROOT, '--coverage=strict', ...scratch('real-strict'));
     expect(result.stderr).toBe('');
     expect(result.exitCode).toBe(0);
+    // The command/preference universe stays green, and entities are now covered.
     expect(metric(result.report, 'Uncovered')).toBe('0');
+    expect(metric(result.report, 'Uncovered entities')).toBe('0');
   });
 
   test('the TASK-010 deferred debt is paid off: zero deferred, and the section stays empty-but-present', async () => {

@@ -22,15 +22,20 @@
 
 import { readFileSync } from 'fs';
 import { promises as fs } from 'fs';
-import { dirname, isAbsolute, join, resolve } from 'path';
+import { basename, dirname, isAbsolute, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import ts from 'typescript';
+import { parse as parseYaml } from 'yaml';
 import {
+  BASE_MODES_RELATIVE_PATH,
   INVENTORY_SOURCE_ROOTS,
   computeSourceFingerprint,
   listInventorySources,
+  listSkillFiles,
   toInventoryRelativePath
 } from '../src/node/docs/source-scan.ts';
+import { splitFrontmatter } from '../src/node/docs/frontmatter.ts';
+import { MODE_AGENT_ID_PREFIX, PROJECT_AI_MODE_FRAGMENT_PREFIX } from '../src/common/ai/agent-ids.ts';
 
 /**
  * Command namespaces that belong to this product (§C.2).
@@ -72,6 +77,14 @@ const COMMAND_DECLARATION_CALLEES = new Set([
  * against itself and kills the group-D build command.
  */
 const COMMAND_LOOKUP_CALLEES = new Set(['executeCommand', 'getCommand', 'isEnabled']);
+
+/**
+ * Callees whose object-literal argument declares a built-in prompt fragment
+ * (§3 WP-U3-2). Matched by MEMBER NAME with any receiver, like
+ * {@link COMMAND_DECLARATION_CALLEES}, so `this.promptService.addBuiltInPromptFragment`
+ * and a bare `addBuiltInPromptFragment` are the same declaration site.
+ */
+const FRAGMENT_DECLARATION_CALLEES = new Set(['addBuiltInPromptFragment']);
 
 /** Output artifact, relative to the repository root (§B.4, gitignored). */
 const INVENTORY_OUTPUT_RELATIVE_PATH = 'packages/manuscript-workspace/docs-inventory.generated.json';
@@ -461,7 +474,45 @@ function isIdPropertyName(name) {
   return (ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === 'id';
 }
 
+/**
+ * Is this `id:` property the `id` of an object literal handed to a prompt-fragment
+ * declaration call (`addBuiltInPromptFragment({ id, … })`)?
+ *
+ * The double-count fix (TASK-018 S4). `diagram-author-prompt-fragment-contribution.ts`
+ * writes `addBuiltInPromptFragment({ id: DIAGRAM_AUTHOR_FRAGMENT_ID, … isCommand: true,
+ * commandName: 'afe-diagram-author' })`. The id `ai-focused-editor.diagram-author` is
+ * the PROMPT-FRAGMENT id (used as `{{prompt:ai-focused-editor.diagram-author}}`), NOT a
+ * Theia command id — the runtime slash command it exposes is the DIFFERENT string
+ * `afe-diagram-author`, and no `registerCommand` ever declares
+ * `ai-focused-editor.diagram-author`. `classifyCommandAncestry` already refuses to call
+ * it a command (it returns `unclassified`, because `addBuiltInPromptFragment` is not a
+ * {@link COMMAND_DECLARATION_CALLEES}). It reached `commands[]` only because
+ * {@link collectCommand} harvests EVERY own-namespace `id:` string literal regardless of
+ * ancestry. Left in place it would live in BOTH `commands[]` and `promptFragments[]`,
+ * making one page's `covers` claim satisfy two coverage universes at once. So a fragment
+ * declaration's own `id:` literal is excluded here — the id lives ONLY in
+ * `promptFragments[]` (single-universe accounting, §6 F-D2.1-1).
+ */
+function isFragmentDeclarationArgumentId(node) {
+  const objectLiteral = node.parent;
+  if (!objectLiteral || !ts.isObjectLiteralExpression(objectLiteral)) {
+    return false;
+  }
+  const parent = objectLiteral.parent;
+  return (
+    !!parent &&
+    ts.isCallExpression(parent) &&
+    parent.arguments.some(argument => argument === objectLiteral) &&
+    FRAGMENT_DECLARATION_CALLEES.has(calleeName(parent) ?? '')
+  );
+}
+
 function collectCommand(node, file, store, out) {
+  // A prompt-fragment declaration's `id:` is not a command — it belongs to
+  // `promptFragments[]` alone (double-count fix, §6 F-D2.1-1).
+  if (isFragmentDeclarationArgumentId(node)) {
+    return;
+  }
   const value = resolveExpressionToString(node.initializer, file, store);
 
   if (value !== undefined) {
@@ -601,6 +652,137 @@ function collectCodeReference(node, file, store, out) {
   out.codeReferencedIds.add(value);
 }
 
+/** A property's initializer as a string literal (one hop), or `undefined`. */
+function literalPropertyString(objectLiteral, propertyName, file, store) {
+  const property = objectLiteral.properties.find(
+    member =>
+      ts.isPropertyAssignment(member) &&
+      (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name)) &&
+      member.name.text === propertyName
+  );
+  if (!property || !ts.isPropertyAssignment(property)) {
+    return undefined;
+  }
+  return resolveExpressionToString(property.initializer, file, store);
+}
+
+/**
+ * A built-in prompt-fragment declaration (§3 WP-U3-2).
+ *
+ * The STATIC site — `addBuiltInPromptFragment({ id: FRAGMENT_ID, name, ... })` —
+ * yields a `promptFragments[]` entry (diagram-author). `name`/`description` are
+ * OMITTED when they are `nls.localize(...)` calls rather than string literals
+ * (the diagram-author case): a scaffold falls back to the id, by design.
+ *
+ * The DYNAMIC site — `addBuiltInPromptFragment(this.toPromptFragment(mode))`,
+ * whose argument is a CALL EXPRESSION, not an object literal — cannot be read
+ * statically (the id is built three hops away in a module-private helper). It is
+ * made VISIBLE as a `skipped` entry and contributes the known per-project prefix
+ * to `dynamicPrefixes[]`, so the committed `ai-focused-editor.project-mode.*`
+ * dynamic exception has a live staleness subject (tech_spec §6 F-D2.1-2/3, Q1).
+ * The prefix is TAKEN FROM the shared `PROJECT_AI_MODE_FRAGMENT_PREFIX` const,
+ * not auto-derived from the call chain.
+ */
+function collectPromptFragment(node, file, store, out) {
+  if (!FRAGMENT_DECLARATION_CALLEES.has(calleeName(node) ?? '')) {
+    return;
+  }
+  const argument = node.arguments[0];
+  if (!argument) {
+    return;
+  }
+
+  if (ts.isObjectLiteralExpression(argument)) {
+    const idProperty = argument.properties.find(
+      property => ts.isPropertyAssignment(property) && isIdPropertyName(property.name)
+    );
+    if (!idProperty || !ts.isPropertyAssignment(idProperty)) {
+      return;
+    }
+    const id = resolveExpressionToString(idProperty.initializer, file, store);
+    if (id === undefined || !isOwnNamespace(id)) {
+      return;
+    }
+    const entry = {
+      kind: 'promptFragment',
+      id,
+      file: file.relativePath,
+      line: lineOf(idProperty, file.sourceFile)
+    };
+    const name = literalPropertyString(argument, 'name', file, store);
+    if (name !== undefined) {
+      entry.name = name;
+    }
+    const description = literalPropertyString(argument, 'description', file, store);
+    if (description !== undefined) {
+      entry.description = description;
+    }
+    out.promptFragments.push(entry);
+    return;
+  }
+
+  // Dynamic site — visibility + the hand-authored project-mode prefix.
+  out.skipped.push({
+    why: 'call-expression-id',
+    file: file.relativePath,
+    line: lineOf(node, file.sourceFile),
+    text: skippedText(node, file.sourceFile),
+    staticPrefix: PROJECT_AI_MODE_FRAGMENT_PREFIX
+  });
+  out.dynamicPrefixes.add(PROJECT_AI_MODE_FRAGMENT_PREFIX);
+}
+
+/**
+ * Agent-eligible AI modes from `base-modes.yaml` (§3 WP-U3-3).
+ *
+ * `agent: true` is the filter (`gv-opponent`, `gv-essay` today). The chat
+ * `@agent` id is `MODE_AGENT_ID_PREFIX + mode.id`, from the SAME shared const
+ * the browser runtime registers with (R1), so the two can never drift.
+ */
+async function collectAgents(repoRoot, out) {
+  const absolutePath = join(repoRoot, BASE_MODES_RELATIVE_PATH);
+  const relativePath = toInventoryRelativePath(repoRoot, absolutePath);
+  // Obligatory: a missing base-modes.yaml already fails the fingerprint walk.
+  const parsed = parseYaml(await fs.readFile(absolutePath, 'utf8'));
+  const modes = Array.isArray(parsed?.modes) ? parsed.modes : [];
+  for (const mode of modes) {
+    if (mode?.agent !== true || typeof mode.id !== 'string') {
+      continue;
+    }
+    out.agents.push({
+      kind: 'agent',
+      id: `${MODE_AGENT_ID_PREFIX}${mode.id}`,
+      label: typeof mode.label === 'string' ? mode.label : mode.id,
+      description: typeof mode.description === 'string' ? mode.description : '',
+      file: relativePath,
+      modeId: mode.id
+    });
+  }
+}
+
+/**
+ * Bundled agent-skills from `.claude/skills/**\/SKILL.md` (§3 WP-U3-4).
+ *
+ * `name`/`description` come from the manifest frontmatter; the synthetic id is
+ * `skill:<dir>` (e.g. `skill:docs-workflow`). The skills tree is optional, so an
+ * empty root simply yields no entries.
+ */
+async function collectSkills(repoRoot, out) {
+  for (const absolutePath of await listSkillFiles(repoRoot)) {
+    const relativePath = toInventoryRelativePath(repoRoot, absolutePath);
+    const split = splitFrontmatter(await fs.readFile(absolutePath, 'utf8'));
+    const front = (split ? parseYaml(split.yamlText) : undefined) ?? {};
+    const dir = basename(dirname(absolutePath));
+    out.skills.push({
+      kind: 'skill',
+      id: `skill:${dir}`,
+      name: typeof front.name === 'string' ? front.name : dir,
+      description: typeof front.description === 'string' ? front.description : '',
+      file: relativePath
+    });
+  }
+}
+
 function isPreferenceSchemaDeclaration(node) {
   return (
     ts.isVariableDeclaration(node) &&
@@ -619,6 +801,7 @@ function collectFromFile(file, store, out) {
       collectPreferences(node, file, store, out);
     } else if (ts.isCallExpression(node)) {
       collectCodeReference(node, file, store, out);
+      collectPromptFragment(node, file, store, out);
     }
     ts.forEachChild(node, visit);
   };
@@ -661,11 +844,16 @@ export async function extractInventory(repoRoot) {
     preferences: [],
     skipped: [],
     dynamicPrefixes: new Set(),
-    codeReferencedIds: new Set()
+    codeReferencedIds: new Set(),
+    promptFragments: [],
+    agents: [],
+    skills: []
   };
   for (const file of files) {
     collectFromFile(file, store, out);
   }
+  await collectAgents(repoRoot, out);
+  await collectSkills(repoRoot, out);
 
   out.commands.sort(
     (left, right) => byText(left.id, right.id) || byText(left.file, right.file) || left.line - right.line
@@ -674,9 +862,14 @@ export async function extractInventory(repoRoot) {
     (left, right) => byText(left.key, right.key) || byText(left.file, right.file) || left.line - right.line
   );
   out.skipped.sort((left, right) => byText(left.file, right.file) || left.line - right.line);
+  out.promptFragments.sort(
+    (left, right) => byText(left.id, right.id) || byText(left.file, right.file) || left.line - right.line
+  );
+  out.agents.sort((left, right) => byText(left.id, right.id));
+  out.skills.sort((left, right) => byText(left.id, right.id));
 
   return {
-    version: 1,
+    version: 2,
     sourceFingerprint: `sha256:${await computeSourceFingerprint(repoRoot)}`,
     packages: inventoryPackages(),
     namespaces: [...INVENTORY_NAMESPACES],
@@ -684,7 +877,13 @@ export async function extractInventory(repoRoot) {
     preferences: out.preferences,
     skipped: out.skipped,
     dynamicPrefixes: [...out.dynamicPrefixes].sort(byText),
-    codeReferencedIds: [...out.codeReferencedIds].sort(byText)
+    codeReferencedIds: [...out.codeReferencedIds].sort(byText),
+    promptFragments: out.promptFragments,
+    agents: out.agents,
+    skills: out.skills,
+    // Kept in the schema for a future auto-resolved dynamic-entity subject; the
+    // project-mode prefix currently lives in `dynamicPrefixes[]` (§6 F-D2.1-3).
+    entityDynamicPrefixes: []
   };
 }
 

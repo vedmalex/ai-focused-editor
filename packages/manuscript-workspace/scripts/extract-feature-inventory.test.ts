@@ -28,6 +28,9 @@ const PACKAGE_SOURCE_DIRS = [
 /** Where a fixture's own sources go, so a test never depends on the real tree. */
 const FIXTURE_SOURCE_DIR = 'packages/manuscript-workspace/src/browser';
 
+/** The obligatory entity source every fixture writes (§3 WP-U3-0, R2). */
+const BASE_MODES_RELATIVE_PATH = 'packages/manuscript-workspace/src/node/ai/base-modes.yaml';
+
 interface Inventory {
   version: number;
   sourceFingerprint: string;
@@ -38,6 +41,10 @@ interface Inventory {
   skipped: { why: string; file: string; line: number; text: string; staticPrefix?: string }[];
   dynamicPrefixes: string[];
   codeReferencedIds: string[];
+  promptFragments: { kind: string; id: string; name?: string; description?: string; file: string; line: number }[];
+  agents: { kind: string; id: string; label: string; description: string; file: string; modeId: string }[];
+  skills: { kind: string; id: string; name: string; description: string; file: string }[];
+  entityDynamicPrefixes: string[];
 }
 
 interface Run {
@@ -73,6 +80,9 @@ async function makeRepo(name: string): Promise<string> {
     JSON.stringify({ name: 'fixture-repo', workspaces: ['packages/*'] }, null, 2),
     'utf8'
   );
+  // The obligatory entity source (§3 WP-U3-0, R2): without it the fingerprint
+  // rejects. Agent/skill tests overwrite it (or add SKILL.md files) as needed.
+  await write(repoRoot, BASE_MODES_RELATIVE_PATH, 'version: 1\nmodes: []\n');
   return repoRoot;
 }
 
@@ -634,6 +644,206 @@ export class Contribution {
   });
 });
 
+describe('entity readers — prompt fragments, agents, skills (§3 WP-U3-2/3/4)', () => {
+  test('a static prompt fragment lands in promptFragments[] with its resolvable id', async () => {
+    const repoRoot = await makeRepo('fragment-static');
+    await write(
+      repoRoot,
+      `${FIXTURE_SOURCE_DIR}/frag.ts`,
+      `const FRAGMENT_ID = 'ai-focused-editor.my-fragment';
+export class C {
+  s: any;
+  onStart(): void {
+    this.s.addBuiltInPromptFragment({
+      id: FRAGMENT_ID,
+      name: 'My Fragment',
+      description: 'Does a thing',
+      template: 'hi'
+    });
+  }
+}
+`
+    );
+
+    const inventory = await extract(repoRoot);
+    expect(inventory.promptFragments).toEqual([
+      {
+        kind: 'promptFragment',
+        id: 'ai-focused-editor.my-fragment',
+        name: 'My Fragment',
+        description: 'Does a thing',
+        file: 'packages/manuscript-workspace/src/browser/frag.ts',
+        line: 6
+      }
+    ]);
+  });
+
+  test('DOUBLE-COUNT FIX: a fragment id (even with isCommand:true) lives ONLY in promptFragments[], not commands[]', async () => {
+    // The diagram-author shape (§6 F-D2.1-1): `addBuiltInPromptFragment({ id, …,
+    // isCommand: true, commandName: 'afe-…' })`. `id` is the PROMPT-FRAGMENT id, not
+    // a Theia command id (the slash command is the separate `commandName`), and no
+    // `registerCommand` declares it. It must not leak into commands[], or one page's
+    // covers claim would satisfy two coverage universes at once.
+    const repoRoot = await makeRepo('fragment-not-command');
+    await write(
+      repoRoot,
+      `${FIXTURE_SOURCE_DIR}/frag.ts`,
+      `const FRAGMENT_ID = 'ai-focused-editor.dual';
+export class C {
+  s: any;
+  onStart(): void {
+    this.s.addBuiltInPromptFragment({
+      id: FRAGMENT_ID,
+      name: 'Dual',
+      template: 'hi',
+      isCommand: true,
+      commandName: 'afe-dual'
+    });
+  }
+}
+`
+    );
+
+    const inventory = await extract(repoRoot);
+    expect(inventory.promptFragments.map(fragment => fragment.id)).toContain('ai-focused-editor.dual');
+    expect(inventory.commands.map(command => command.id)).not.toContain('ai-focused-editor.dual');
+  });
+
+  test('name/description that are nls.localize() calls are OMITTED, not failed (§5 п.3)', async () => {
+    const repoRoot = await makeRepo('fragment-localized');
+    await write(
+      repoRoot,
+      `${FIXTURE_SOURCE_DIR}/frag.ts`,
+      `export class C {
+  s: any;
+  onStart(): void {
+    this.s.addBuiltInPromptFragment({
+      id: 'ai-focused-editor.localized',
+      name: nls.localize('k', 'X'),
+      description: nls.localize('k2', 'Y'),
+      template: 't'
+    });
+  }
+}
+`
+    );
+
+    const inventory = await extract(repoRoot);
+    expect(inventory.promptFragments).toEqual([
+      {
+        kind: 'promptFragment',
+        id: 'ai-focused-editor.localized',
+        file: 'packages/manuscript-workspace/src/browser/frag.ts',
+        line: 5
+      }
+    ]);
+  });
+
+  test('a dynamic prompt fragment (call-expression arg) is skipped and contributes the project-mode prefix (Q1)', async () => {
+    const repoRoot = await makeRepo('fragment-dynamic');
+    await write(
+      repoRoot,
+      `${FIXTURE_SOURCE_DIR}/dyn-frag.ts`,
+      `export class C {
+  s: any;
+  sync(modes: any[]): void {
+    for (const mode of modes) {
+      this.s.addBuiltInPromptFragment(this.toFragment(mode));
+    }
+  }
+  toFragment(mode: any): any { return { id: mode.id }; }
+}
+`
+    );
+
+    const inventory = await extract(repoRoot);
+    expect(inventory.promptFragments).toEqual([]);
+    expect(inventory.dynamicPrefixes).toContain('ai-focused-editor.project-mode.');
+    expect(inventory.skipped.map(entry => [entry.why, entry.staticPrefix])).toContainEqual([
+      'call-expression-id',
+      'ai-focused-editor.project-mode.'
+    ]);
+  });
+
+  test('base-modes.yaml: agent:true modes become agents[], agent:false and absent are ignored', async () => {
+    const repoRoot = await makeRepo('agents');
+    await write(
+      repoRoot,
+      BASE_MODES_RELATIVE_PATH,
+      `version: 1
+modes:
+  - id: gv-opp
+    label: Opponent
+    description: Challenges
+    agent: true
+    systemPrompt: sp1
+  - id: gv-plain
+    label: Plain
+    agent: false
+    systemPrompt: sp2
+  - id: gv-none
+    label: None
+    systemPrompt: sp3
+`
+    );
+
+    const inventory = await extract(repoRoot);
+    expect(inventory.agents).toEqual([
+      {
+        kind: 'agent',
+        id: 'ai-focused-editor.mode.gv-opp',
+        label: 'Opponent',
+        description: 'Challenges',
+        file: 'packages/manuscript-workspace/src/node/ai/base-modes.yaml',
+        modeId: 'gv-opp'
+      }
+    ]);
+  });
+
+  test('SKILL.md manifests become skills[] keyed by directory', async () => {
+    const repoRoot = await makeRepo('skills');
+    await write(
+      repoRoot,
+      '.claude/skills/my-skill/SKILL.md',
+      `---
+name: my-skill
+description: A test skill
+---
+Body.
+`
+    );
+
+    const inventory = await extract(repoRoot);
+    expect(inventory.skills).toEqual([
+      {
+        kind: 'skill',
+        id: 'skill:my-skill',
+        name: 'my-skill',
+        description: 'A test skill',
+        file: '.claude/skills/my-skill/SKILL.md'
+      }
+    ]);
+  });
+
+  test('the artifact is version 2 with the entity arrays present', async () => {
+    const repoRoot = await makeRepo('entity-shape');
+    await write(
+      repoRoot,
+      `${FIXTURE_SOURCE_DIR}/a.ts`,
+      `import { Command } from '@theia/core';
+export const A: Command = { id: 'ai-focused-editor.a', label: 'A' };
+`
+    );
+
+    const inventory = await extract(repoRoot);
+    expect(inventory.version).toBe(2);
+    expect(inventory.promptFragments).toEqual([]);
+    expect(inventory.agents).toEqual([]);
+    expect(inventory.skills).toEqual([]);
+    expect(inventory.entityDynamicPrefixes).toEqual([]);
+  });
+});
+
 describe('traversal boundary and artifact shape', () => {
   test('a `.test.ts` beside a fixture contributes nothing (§C.1)', async () => {
     const repoRoot = await makeRepo('excluded-tests');
@@ -667,7 +877,7 @@ export const A: Command = { id: 'ai-focused-editor.a', label: 'A' };
     );
 
     const inventory = await extract(repoRoot);
-    expect(inventory.version).toBe(1);
+    expect(inventory.version).toBe(2);
     expect(inventory.packages).toEqual([
       'manuscript-workspace',
       'ai-connect-theia',
@@ -799,22 +1009,35 @@ describe('control numbers on the REAL tree (§F.2/§F.9)', () => {
     expect(inventory.commands.some(command => command.id.startsWith('ai-connect.'))).toBe(true);
   });
 
-  test('exactly one skipped declaration: ai-mode-dynamic-contribution.ts:206 (§C.6)', async () => {
+  test('two skipped declarations: the dynamic command and the dynamic prompt-fragment site (§C.6, WP-U3-2)', async () => {
     const inventory = await realInventory();
+    // Sorted by file then line: `ai-mode-dynamic` precedes `ai-mode-prompt-fragment`.
+    // The command line tracks the current source position (the A2 refactor that
+    // dropped a local const moved `id: commandId` from 206 to 207).
     expect(inventory.skipped).toEqual([
       {
         why: 'template-literal-id',
         file: 'packages/manuscript-workspace/src/browser/ai-mode-dynamic-contribution.ts',
-        line: 206,
+        line: 207,
         text: 'id: commandId',
         staticPrefix: 'ai-focused-editor.mode.run.'
+      },
+      {
+        why: 'call-expression-id',
+        file: 'packages/manuscript-workspace/src/browser/ai-mode-prompt-fragment-contribution.ts',
+        line: 78,
+        text: 'this.promptService.addBuiltInPromptFragment(this.toPromptFragment(mode))',
+        staticPrefix: 'ai-focused-editor.project-mode.'
       }
     ]);
   });
 
-  test('dynamicPrefixes === ["ai-focused-editor.mode.run."] — the subject for kind:"dynamic" (F-D7-1)', async () => {
+  test('dynamicPrefixes covers both dynamic families — the subject for kind:"dynamic" (F-D7-1, WP-U3-2)', async () => {
     const inventory = await realInventory();
-    expect(inventory.dynamicPrefixes).toEqual(['ai-focused-editor.mode.run.']);
+    expect(inventory.dynamicPrefixes).toEqual([
+      'ai-focused-editor.mode.run.',
+      'ai-focused-editor.project-mode.'
+    ]);
   });
 
   test('codeReferencedIds covers the two Theia settings commands — the subject for usedBy:"code" (§C.8)', async () => {
@@ -834,6 +1057,18 @@ describe('control numbers on the REAL tree (§F.2/§F.9)', () => {
     expect(inventory.preferences.map(preference => preference.key)).toContain(
       'aiFocusedEditor.validation.live'
     );
+  });
+
+  test('the three entity families are exposed (WP-U3-2/3/4)', async () => {
+    const inventory = await realInventory();
+    expect(inventory.promptFragments.map(fragment => fragment.id)).toContain(
+      'ai-focused-editor.diagram-author'
+    );
+    expect(inventory.agents.map(agent => agent.id).sort()).toEqual([
+      'ai-focused-editor.mode.gv-essay',
+      'ai-focused-editor.mode.gv-opponent'
+    ]);
+    expect(inventory.skills.map(skill => skill.id)).toContain('skill:docs-workflow');
   });
 
   test('no id from outside our namespaces slipped in (П1)', async () => {
