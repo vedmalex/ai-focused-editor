@@ -35,6 +35,8 @@ import {
   resolveAiModeApply,
   wordAtOffset
 } from '../common';
+import { computeAgentDisplayName, computeAgentSignature } from '../common/ai/agent-signature';
+import { MODE_AGENT_ID_PREFIX } from '../common/ai/agent-ids';
 import { AiProfilePreferenceService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import { AiRequestLogService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
 import { AiHistoryService } from '@ai-focused-editor/ai-connect-theia/lib/browser';
@@ -42,7 +44,6 @@ import { AiConnectTheiaLanguageModel } from '@ai-focused-editor/ai-connect-theia
 
 const AI_MODES_CATEGORY = nls.localize('ai-focused-editor/ai-modes/modes-category', 'AI Modes');
 const MODE_RUN_COMMAND_PREFIX = 'ai-focused-editor.mode.run.';
-const MODE_AGENT_ID_PREFIX = 'ai-focused-editor.mode.';
 const AI_MODES_SUBMENU: MenuPath = [...EDITOR_CONTEXT_MENU, 'ai-focused-editor-modes'];
 const AI_MODES_SUBMENU_LABEL = nls.localize('ai-focused-editor/ai-modes/submenu-label', 'AI Modes');
 const REFRESH_DEBOUNCE_MS = 300;
@@ -316,11 +317,11 @@ export class AiModeDynamicContribution implements FrontendApplicationContributio
    * missing. This is display text only — mentions resolve by {@link agentId}.
    */
   protected agentDisplayName(mode: AiMode): string {
-    return mode.label?.trim() || mode.id;
+    return computeAgentDisplayName(mode);
   }
 
   protected agentSignature(mode: AiMode): string {
-    return JSON.stringify([this.agentDisplayName(mode), mode.description ?? '', mode.systemPrompt]);
+    return computeAgentSignature(mode);
   }
 
   // --- Execution ------------------------------------------------------------

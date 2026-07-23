@@ -41,6 +41,8 @@ import { scanDirectives } from '../src/common/docs/directive-core.ts';
 import { DOCS_LANGS, sortDocsManifestEntries } from '../src/common/docs/docs-lang.ts';
 import { DEFAULT_DOCS_LANG } from '../src/common/docs/docs-contract.ts';
 import { computeSourceFingerprint } from '../src/node/docs/source-scan.ts';
+import { splitFrontmatter } from '../src/node/docs/frontmatter.ts';
+import { hashSourceRef, refKey, parseSourceRefs, SourceRefError } from '../src/node/docs/source-refs.ts';
 
 // --------------------------------------------------------------------------
 // Paths and constants (§1.0 — `packages/`, `apps/`, `docs/` are repo-relative)
@@ -53,6 +55,21 @@ const MODULE_RELATIVE_PATH = `${PACKAGE_RELATIVE_PATH}/src/browser/docs/docs-con
 const ALLOWLIST_RELATIVE_PATH = 'docs/coverage-exceptions.jsonc';
 const QUEUE_RELATIVE_PATH = 'docs/coverage-exceptions.requests.jsonc';
 const REPORT_RELATIVE_PATH = 'docs/coverage-report.md';
+/**
+ * The COMMITTED blessed baseline of source-ref hashes (§3 WP-U4-3). Shape:
+ * `{ version:1, pages:{ <pageId>:{ <refKey>:{ hash, blessedAt } } } }`. Written
+ * ONLY by `scripts/bless-docs.mjs`; this script never writes it, it only
+ * compares against it — the committed diff of this file is the livingness trail.
+ */
+const BLESSED_RELATIVE_PATH = 'docs/docs-source-refs.blessed.json';
+
+/**
+ * The scaffold placeholder marker (§3 WP-U3-6). A page that still carries it —
+ * or that covers an entity but leaves its «Зачем и когда» section empty — has
+ * not been filled in by an author and must not ship in strict.
+ */
+const SCAFFOLD_TODO_MARKER = 'SCAFFOLD-TODO';
+const WHY_AND_WHEN_HEADING = 'Зачем и когда';
 
 /**
  * Glob absorption ceiling N (§2a п.3, default 8, configurable per F-D4-12).
@@ -125,7 +142,7 @@ const EXCEPTION_FIELDS = new Set(['pattern', 'kind', 'reason', 'usedBy', 'deferr
  */
 const DEFERRED_TO_PATTERN = /^TASK-\d+$/;
 const REQUEST_FIELDS = new Set([...EXCEPTION_FIELDS, 'requestedBy']);
-const FRONTMATTER_FIELDS = new Set(['title', 'order', 'section', 'covers']);
+const FRONTMATTER_FIELDS = new Set(['title', 'order', 'section', 'covers', 'sourceRefs']);
 
 /** Configuration/environment failure — exit 2, distinct from a rule violation. */
 class ConfigError extends Error {}
@@ -239,9 +256,9 @@ async function loadInventory(repoRoot) {
   } catch (error) {
     throw new ConfigError(`docs-gen: inventory is not valid JSON (${error.message}) — re-run docs:inventory`);
   }
-  if (inventory?.version !== 1) {
+  if (inventory?.version !== 2) {
     throw new ConfigError(
-      `docs-gen: inventory version ${JSON.stringify(inventory?.version)} is not supported (expected 1) — re-run docs:inventory`
+      `docs-gen: inventory version ${JSON.stringify(inventory?.version)} is not supported (expected 2) — re-run docs:inventory`
     );
   }
   const actual = await computeSourceFingerprint(repoRoot);
@@ -286,6 +303,36 @@ function buildInventoryModel(inventory) {
       'docs-gen: an id is both a command and a preference key — the inventory universe is not a disjoint union'
     );
   }
+
+  // The SEPARATE entity universe (§3 WP-U3-5, §6 F-D2.1-1): prompt fragments,
+  // agents and skills. Kept apart from `units` (commands + preferences) on
+  // purpose — each universe carries its OWN accounting invariant and its own
+  // report rows, so "a described command" and "a described entity" can never be
+  // conflated. Coverage claims validate against the UNION, but a claim covers an
+  // id in exactly one universe because the two are disjoint (guarded below).
+  const promptFragmentIds = unique((inventory.promptFragments ?? []).map(fragment => fragment.id)).sort(byText);
+  const agentIds = unique((inventory.agents ?? []).map(agent => agent.id)).sort(byText);
+  const skillIds = unique((inventory.skills ?? []).map(skill => skill.id)).sort(byText);
+  const entityUnits = [...promptFragmentIds, ...agentIds, ...skillIds];
+  const entityUnitSet = new Set(entityUnits);
+  if (entityUnitSet.size !== entityUnits.length) {
+    throw new ConfigError(
+      'docs-gen: an id is declared by more than one entity family — the entity universe is not a disjoint union'
+    );
+  }
+  // The double-count guard (§6 F-D2.1-1). Since the extractor stopped harvesting
+  // fragment-declaration `id:` literals into `commands[]`, the two universes are
+  // disjoint; if a regression ever put an id in both, one page's `covers` claim
+  // would satisfy both universes at once — exactly the defect this task removed.
+  const overlap = entityUnits.filter(id => unitSet.has(id));
+  if (overlap.length > 0) {
+    throw new ConfigError(
+      `docs-gen: id(s) counted in BOTH the command/preference and the entity universe: ${overlap.join(', ')}` +
+        ' — a single covers claim must not satisfy two coverage universes'
+    );
+  }
+  const coverableSet = new Set([...unitSet, ...entityUnitSet]);
+
   return {
     commandIds,
     commandIdSet: new Set(commandIds),
@@ -293,12 +340,31 @@ function buildInventoryModel(inventory) {
     preferenceKeySet: new Set(preferenceKeys),
     units,
     unitSet,
+    promptFragmentIds,
+    agentIds,
+    skillIds,
+    entityUnits,
+    entityUnitSet,
+    coverableSet,
     dynamicPrefixes: inventory.dynamicPrefixes ?? [],
     codeReferencedIds: inventory.codeReferencedIds ?? [],
     packages: inventory.packages ?? [],
     namespaces: inventory.namespaces ?? [],
     skipped: inventory.skipped ?? []
   };
+}
+
+/**
+ * The own-namespace prefix of an entity id, for {@link ownPrefixes}. A skill id
+ * (`skill:docs-workflow`) is namespaced by everything up to its colon; a mode or
+ * fragment id (`ai-focused-editor.mode.gv-essay`) by its first dot segment.
+ */
+function entityNamespace(id) {
+  const colon = id.indexOf(':');
+  if (colon >= 0) {
+    return id.slice(0, colon + 1);
+  }
+  return firstSegmentPrefix(id);
 }
 
 /**
@@ -313,7 +379,12 @@ function buildInventoryModel(inventory) {
 function ownPrefixes(model) {
   return unique([
     ...model.namespaces,
-    ...model.preferenceKeys.map(firstSegmentPrefix)
+    ...model.preferenceKeys.map(firstSegmentPrefix),
+    // Entity namespaces (§3 WP-U3-5): the `skill:` family is genuinely new
+    // (`ai-focused-editor.` already covers agents and fragments), and without it
+    // a `{pattern:"skill:*", kind:"external"}` entry could silence one of our own
+    // documented skills — the exact abuse the OWN_PREFIXES check exists to catch.
+    ...(model.entityUnits ?? []).map(entityNamespace)
   ]).sort(byText);
 }
 
@@ -501,26 +572,6 @@ async function listMarkdownFiles(directory) {
   return files.sort(byText);
 }
 
-/** Split `---\n…\n---\n` off the head of a page, keeping the body byte-exact. */
-function splitFrontmatter(text) {
-  if (!text.startsWith('---\n') && !text.startsWith('---\r\n')) {
-    return undefined;
-  }
-  const firstBreak = text.indexOf('\n');
-  const rest = text.slice(firstBreak + 1);
-  const terminator = rest.search(/^---[ \t]*(\r?\n|$)/m);
-  if (terminator < 0) {
-    return undefined;
-  }
-  const yamlText = rest.slice(0, terminator);
-  const afterTerminator = rest.slice(terminator);
-  const terminatorEnd = afterTerminator.indexOf('\n');
-  const body = terminatorEnd < 0 ? '' : afterTerminator.slice(terminatorEnd + 1);
-  const consumed = text.length - body.length;
-  const lineOffset = text.slice(0, consumed).split('\n').length - 1;
-  return { yamlText, body, lineOffset };
-}
-
 /**
  * Validate `covers` (§B.3, discipline of §2a/F-D2-1) and return the claims.
  *
@@ -544,7 +595,9 @@ function validateCovers(covers, page, model, ceiling, problems) {
         problems.add(`bare glob "${claim}" in covers at ${page.file} — use { pattern, reason }`);
         continue;
       }
-      if (!model.unitSet.has(claim)) {
+      // Against the UNION of both universes (§3 WP-U3-5): an exact claim may name
+      // a command, a preference key OR an entity (prompt fragment / agent / skill).
+      if (!model.coverableSet.has(claim)) {
         problems.add(`covers id "${claim}" is not in the inventory at ${page.file}`);
         continue;
       }
@@ -576,7 +629,7 @@ function validateCovers(covers, page, model, ceiling, problems) {
       continue;
     }
     if (starIndex < 0) {
-      if (!model.unitSet.has(pattern)) {
+      if (!model.coverableSet.has(pattern)) {
         problems.add(`covers id "${pattern}" is not in the inventory at ${page.file}`);
         continue;
       }
@@ -663,6 +716,14 @@ async function loadPages(repoRoot, model, ceiling, problems) {
         }
       }
       page.covers = validateCovers(front.covers, page, model, ceiling, problems);
+
+      // §3 WP-U4-2: the declared source refs, validated by the shared parser so a
+      // malformed ref is as loud as a malformed `covers` entry.
+      const parsedRefs = parseSourceRefs(front.sourceRefs);
+      for (const error of parsedRefs.errors) {
+        problems.add(`${error} in ${file}`);
+      }
+      page.sourceRefs = parsedRefs.refs;
 
       const scan = scanDirectives(split.body);
       for (const diagnostic of scan.diagnostics) {
@@ -841,8 +902,10 @@ function checkStaleExceptions(allowlist, model, contentValues, defaultSetIsEmpty
       // forever. This is the one property `deferred` deliberately INHERITS from
       // `exempt`; everything the report does with it differs (see the summary
       // row and the `## Deferred coverage` section).
+      // The inventory now spans BOTH universes: an `exempt`/`deferred` entry may
+      // legitimately excuse a command, a preference key OR an entity (§3 WP-U3-5).
       subject = 'the inventory';
-      matches = model.units.filter(unit => patternMatches(entry.pattern, unit));
+      matches = [...model.units, ...model.entityUnits].filter(unit => patternMatches(entry.pattern, unit));
     } else if (entry.kind === 'dynamic') {
       subject = 'dynamicPrefixes[]';
       matches = matchesDynamicSubject(entry.pattern, model.dynamicPrefixes)
@@ -1033,6 +1096,197 @@ function computeCoverage(pages, model, allowlist) {
 }
 
 // --------------------------------------------------------------------------
+// Entity coverage (§3 WP-U3-5, §6 F-D2.1-1)
+// --------------------------------------------------------------------------
+
+/**
+ * Which of the FIVE permitted buckets each entity falls in (§6 F-D2.1-1). An
+ * entity — a prompt fragment, an agent or a skill — is covered ONLY by an exact
+ * `covers` claim, or excused by an `exempt`/`dynamic`/`deferred` allowlist entry;
+ * it can NEVER be a `glob`, `directive` or `external` bucket. Those three are
+ * meaningless here: a glob is for command families, a `:action`/`:settings`
+ * occurrence names a command/preference not an entity, and `external` is for
+ * foreign ids (an entity id is always own-namespace).
+ *
+ * The result carries its own accounting invariant subject (`entityUnits`), so
+ * the sum of these five buckets must equal the entity universe or the build
+ * dies with a mismatch — the parallel of the command invariant (§B.6, ISS-186).
+ */
+function computeEntityCoverage(pages, model, allowlist) {
+  const defaultPages = pages.filter(page => page.lang === DEFAULT_DOCS_LANG);
+
+  const exact = new Map();
+  for (const page of defaultPages) {
+    for (const claim of page.covers) {
+      // A glob claim never covers an entity (§6 F-D2.1-1) — only an exact id does.
+      const id = typeof claim === 'string' ? claim : claim.pattern.includes('*') ? undefined : claim.pattern;
+      if (id !== undefined && model.entityUnitSet.has(id) && !exact.has(id)) {
+        exact.set(id, page.id);
+      }
+    }
+  }
+
+  const buckets = { exact: [], exempt: [], dynamic: [], deferred: [], uncovered: [] };
+  for (const unit of model.entityUnits) {
+    if (exact.has(unit)) {
+      buckets.exact.push(unit);
+      continue;
+    }
+    const entry = allowlist.find(
+      candidate =>
+        (candidate.kind === 'exempt' || candidate.kind === 'dynamic' || candidate.kind === 'deferred') &&
+        patternMatches(candidate.pattern, unit)
+    );
+    if (entry) {
+      buckets[entry.kind].push(unit);
+      continue;
+    }
+    buckets.uncovered.push(unit);
+  }
+
+  return { buckets, exact };
+}
+
+// --------------------------------------------------------------------------
+// Source-ref drift (§3 WP-U4-3, §2.4)
+// --------------------------------------------------------------------------
+
+/**
+ * The committed blessed baseline, or an EMPTY baseline when the file is absent
+ * (§3 WP-U4-3). An absent baseline is a legitimate pre-bless state — every
+ * declared ref is then `unblessed`, which is fatal, so nothing is silently
+ * accepted. A present file with the wrong version is a config error.
+ */
+async function loadBlessedBaseline(repoRoot) {
+  const absolutePath = join(repoRoot, BLESSED_RELATIVE_PATH);
+  let text;
+  try {
+    text = await fs.readFile(absolutePath, 'utf8');
+  } catch {
+    return { version: 1, pages: {} };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new ConfigError(`docs-gen: ${BLESSED_RELATIVE_PATH} is not valid JSON (${error.message})`);
+  }
+  if (parsed?.version !== 1) {
+    throw new ConfigError(
+      `docs-gen: ${BLESSED_RELATIVE_PATH} version ${JSON.stringify(parsed?.version)} is not supported (expected 1)`
+    );
+  }
+  return { version: 1, pages: parsed.pages ?? {} };
+}
+
+/**
+ * Compare each page's declared `sourceRefs` against the blessed baseline
+ * (§2.4). Returns freshness stats for the report AND the drift findings, but
+ * NEVER throws for a plain drift — the caller decides fatality by `--drift`. A
+ * ref whose target vanished from the sources (`hashSourceRef` rejects) is a
+ * `stale` finding, ALWAYS fatal; an `unblessed` ref is ALWAYS fatal too. A pure
+ * hash mismatch is a `drift` finding, fatal only under `--drift=fatal`.
+ */
+async function detectDrift(repoRoot, pages, blessed) {
+  const defaultPages = pages.filter(page => page.lang === DEFAULT_DOCS_LANG);
+  const stats = { blessed: 0, fresh: 0, drifted: 0, unblessed: 0, oldestBlessedAt: undefined };
+  const drift = []; // { page, key } — mismatch, fatal only under --drift=fatal
+  const fatal = []; // messages that are fatal in BOTH modes (unblessed / stale)
+
+  for (const page of defaultPages) {
+    const pageBlessed = blessed.pages?.[page.id] ?? {};
+    for (const ref of page.sourceRefs ?? []) {
+      const key = refKey(ref);
+      let current;
+      try {
+        current = await hashSourceRef(repoRoot, ref);
+      } catch (error) {
+        if (error instanceof SourceRefError) {
+          fatal.push(`stale source ref "${key}" on page "${page.id}" — ${error.message}`);
+          continue;
+        }
+        throw error;
+      }
+      const blessedEntry = pageBlessed[key];
+      if (!blessedEntry) {
+        stats.unblessed++;
+        fatal.push(
+          `unblessed source ref "${key}" on page "${page.id}" — run "bun run docs:bless" to record its baseline`
+        );
+        continue;
+      }
+      stats.blessed++;
+      if (typeof blessedEntry.blessedAt === 'string') {
+        if (stats.oldestBlessedAt === undefined || blessedEntry.blessedAt < stats.oldestBlessedAt) {
+          stats.oldestBlessedAt = blessedEntry.blessedAt;
+        }
+      }
+      if (blessedEntry.hash === current) {
+        stats.fresh++;
+      } else {
+        stats.drifted++;
+        drift.push({ page: page.id, key });
+      }
+    }
+  }
+
+  return { stats, drift, fatal };
+}
+
+/**
+ * Scaffold-placeholder enforcement (§3 WP-U3-6). A page that COVERS an entity is
+ * a documentation page for that entity, so it must have been filled in: it may
+ * not still carry the {@link SCAFFOLD_TODO_MARKER}, and its «Зачем и когда»
+ * section (the one part the scaffold leaves for a human) must be present and
+ * non-empty. Strict-only, like completeness — `warn` lets an author write the
+ * page over several passes.
+ */
+function checkScaffoldPlaceholders(pages, model, problems) {
+  const defaultPages = pages.filter(page => page.lang === DEFAULT_DOCS_LANG);
+  for (const page of defaultPages) {
+    const coversEntity = page.covers.some(
+      claim => typeof claim === 'string' && model.entityUnitSet.has(claim)
+    );
+    if (!coversEntity) {
+      continue;
+    }
+    if (page.markdown.includes(SCAFFOLD_TODO_MARKER)) {
+      problems.add(
+        `page "${page.id}" documents an entity but still carries the ${SCAFFOLD_TODO_MARKER} placeholder` +
+          ` at ${page.file} — fill in the «${WHY_AND_WHEN_HEADING}» section`
+      );
+      continue;
+    }
+    if (!hasNonEmptySection(page.markdown, WHY_AND_WHEN_HEADING)) {
+      problems.add(
+        `page "${page.id}" documents an entity but has no non-empty «${WHY_AND_WHEN_HEADING}» section` +
+          ` at ${page.file} — an entity page must say why and when to use it`
+      );
+    }
+  }
+}
+
+/** Does `markdown` hold a `## <heading>` with at least one non-blank line before the next heading? */
+function hasNonEmptySection(markdown, heading) {
+  const lines = markdown.split('\n');
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const headingPattern = new RegExp(`^#{1,6}\\s+${escaped}\\s*$`);
+  let index = lines.findIndex(line => headingPattern.test(line));
+  if (index < 0) {
+    return false;
+  }
+  for (index += 1; index < lines.length; index++) {
+    if (/^#{1,6}\s/.test(lines[index])) {
+      break;
+    }
+    if (lines[index].trim().length > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// --------------------------------------------------------------------------
 // Emission (§B.2)
 // --------------------------------------------------------------------------
 
@@ -1048,6 +1302,9 @@ function pageLiteral(page) {
   }
   value.markdown = page.markdown;
   value.covers = page.covers;
+  if (page.sourceRefs !== undefined && page.sourceRefs.length > 0) {
+    value.sourceRefs = page.sourceRefs;
+  }
   return value;
 }
 
@@ -1128,8 +1385,9 @@ function table(header, alignment, rows) {
  * meaning "coverage changed" — which is the only reason F-D3-1 asked for a
  * committed artifact instead of a build log line.
  */
-function renderReport(model, coverage, allowlist, allowlistMatches, queue, ceiling, passedViaQueue, docsContentSizeBytes) {
+function renderReport(model, coverage, entityCoverage, driftStats, allowlist, allowlistMatches, queue, ceiling, passedViaQueue, docsContentSizeBytes) {
   const { buckets } = coverage;
+  const entityBuckets = entityCoverage.buckets;
   const universe = model.units.length;
   const exemptShare = universe === 0 ? 0 : (buckets.exempt.length / universe) * 100;
   const deferredShare = universe === 0 ? 0 : (buckets.deferred.length / universe) * 100;
@@ -1174,6 +1432,23 @@ function renderReport(model, coverage, allowlist, allowlistMatches, queue, ceili
       ['Deferred to a task', buckets.deferred.length],
       ['Deferred share of inventory', `${deferredShare.toFixed(1)}%`],
       ['Uncovered', buckets.uncovered.length],
+      // The SEPARATE entity universe (§3 WP-U3-5): its own rows so a described
+      // command and a described entity are never summed into one number.
+      ['Inventory prompt fragments', model.promptFragmentIds.length],
+      ['Inventory agents', model.agentIds.length],
+      ['Inventory skills', model.skillIds.length],
+      ['Entities covered by exact id', entityBuckets.exact.length],
+      ['Entities allowlisted: exempt', entityBuckets.exempt.length],
+      ['Entities allowlisted: dynamic', entityBuckets.dynamic.length],
+      ['Entities allowlisted: deferred', entityBuckets.deferred.length],
+      ['Uncovered entities', entityBuckets.uncovered.length],
+      // Source freshness (§3 WP-U4-4): how much of the described surface is
+      // pinned to a blessed baseline, and how much has drifted from it.
+      ['Blessed source refs', driftStats.blessed],
+      ['Fresh source refs', driftStats.fresh],
+      ['Drifted source refs', driftStats.drifted],
+      ['Unblessed source refs', driftStats.unblessed],
+      ['Oldest blessedAt', driftStats.oldestBlessedAt ?? '(none)'],
       ['Glob absorption ceiling (N)', ceiling],
       ['Pending exception requests', queue.length],
       ['Passed via pending external request', passedViaQueue],
@@ -1213,6 +1488,11 @@ function renderReport(model, coverage, allowlist, allowlistMatches, queue, ceili
       ? '_(none)_'
       : [...buckets.uncovered].sort(byText).map(unit => `- ${unit}`).join('\n');
 
+  const uncoveredEntities =
+    entityBuckets.uncovered.length === 0
+      ? '_(none)_'
+      : [...entityBuckets.uncovered].sort(byText).map(unit => `- ${unit}`).join('\n');
+
   const skippedRows = [...model.skipped]
     .map(entry => [entry.file, String(entry.line), entry.why])
     .sort((left, right) => byText(left[0], right[0]) || Number(left[1]) - Number(right[1]));
@@ -1243,6 +1523,10 @@ ${table(['Id', 'Deferred to', 'Pattern', 'Reason'], ['---', '---', '---', '---']
 ## Uncovered ids
 
 ${uncovered}
+
+## Uncovered entities
+
+${uncoveredEntities}
 
 ## Skipped declarations (not extractable)
 
@@ -1316,7 +1600,28 @@ async function resolveRepositoryRoot(argv, scriptDirectory) {
   return candidate;
 }
 
-const KNOWN_ARGUMENTS = new Set(['coverage', 'repo-root', 'glob-ceiling', 'module', 'report']);
+/**
+ * `--drift` (§3 WP-U4-3, Q2/UR-004) — how a source-ref hash MISMATCH is treated.
+ *
+ * `warn` (the default, used by `build`/`docs:dev`) reports drift as a NOTE and
+ * builds on; `fatal` (used by the dedicated `docs:drift` script wired into root
+ * `verify`) fails the build. This split is deliberate: `build` must not go red
+ * because a documented function was edited, but the release gate must. Note that
+ * `unblessed` and `stale` refs are fatal in BOTH modes regardless of this flag —
+ * they are not "drift", they are a missing or broken baseline.
+ */
+function parseDrift(argv) {
+  const value = argumentValue(argv, 'drift');
+  if (value === undefined) {
+    return 'warn';
+  }
+  if (value !== 'warn' && value !== 'fatal') {
+    throw new ConfigError(`docs-gen: invalid --drift value '${value}' (expected "warn" or "fatal")`);
+  }
+  return value;
+}
+
+const KNOWN_ARGUMENTS = new Set(['coverage', 'repo-root', 'glob-ceiling', 'module', 'report', 'drift']);
 
 function checkArguments(argv) {
   for (const argument of argv) {
@@ -1344,6 +1649,7 @@ async function main(argv) {
   checkArguments(argv);
   const mode = parseMode(argv);
   const ceiling = parseCeiling(argv);
+  const driftMode = parseDrift(argv);
   const repoRoot = await resolveRepositoryRoot(argv, dirname(fileURLToPath(import.meta.url)));
 
   const inventory = await loadInventory(repoRoot);
@@ -1394,12 +1700,42 @@ async function main(argv) {
     );
   }
 
+  // The ENTITY universe and its OWN accounting invariant (§3 WP-U3-5, ISS-186).
+  const entityCoverage = computeEntityCoverage(pages, model, allowlist);
+  const entityAccounted =
+    entityCoverage.buckets.exact.length +
+    entityCoverage.buckets.exempt.length +
+    entityCoverage.buckets.dynamic.length +
+    entityCoverage.buckets.deferred.length +
+    entityCoverage.buckets.uncovered.length;
+  if (entityAccounted !== model.entityUnits.length) {
+    throw new ConfigError(
+      `docs-gen: entity accounting mismatch (sum=${entityAccounted}, entities=${model.entityUnits.length})`
+    );
+  }
+
+  // Source-ref drift (§3 WP-U4-3): compute BEFORE emission so the report carries
+  // the freshness section; the fatality of the findings is applied after.
+  const blessed = await loadBlessedBaseline(repoRoot);
+  const driftResult = await detectDrift(repoRoot, pages, blessed);
+
   const moduleContent = renderModule(pages);
   const docsContentSizeBytes = Buffer.byteLength(moduleContent, 'utf8');
   await writeFile(outputPath(argv, 'module', repoRoot, MODULE_RELATIVE_PATH), moduleContent);
   await writeFile(
     outputPath(argv, 'report', repoRoot, REPORT_RELATIVE_PATH),
-    renderReport(model, coverage, allowlist, allowlistMatches, queue, ceiling, passedViaQueue, docsContentSizeBytes)
+    renderReport(
+      model,
+      coverage,
+      entityCoverage,
+      driftResult.stats,
+      allowlist,
+      allowlistMatches,
+      queue,
+      ceiling,
+      passedViaQueue,
+      docsContentSizeBytes
+    )
   );
 
   // Mode-dependent teeth, LAST: both artifacts are written either way, so a
@@ -1412,8 +1748,42 @@ async function main(argv) {
           ` or mark them dynamic (see ${REPORT_RELATIVE_PATH})`
       );
     }
+    // Entity completeness (§3 WP-U3-5): an undescribed prompt fragment, agent or
+    // skill fails strict exactly as an undescribed command does.
+    if (entityCoverage.buckets.uncovered.length > 0) {
+      problems.add(
+        `${entityCoverage.buckets.uncovered.length} uncovered entity(ies) — document them or add a coverage` +
+          ` exception (see ${REPORT_RELATIVE_PATH}): ${[...entityCoverage.buckets.uncovered].sort(byText).join(', ')}`
+      );
+    }
+    // Scaffold placeholders (§3 WP-U3-6): a page documenting an entity must be
+    // filled in — no SCAFFOLD-TODO, a non-empty «Зачем и когда».
+    checkScaffoldPlaceholders(pages, model, problems);
     problems.checkpoint();
   }
+
+  // Drift teeth (§3 WP-U4-3), applied in BOTH modes. `unblessed` and `stale`
+  // findings are ALWAYS fatal (a missing or broken baseline, not drift); a pure
+  // hash mismatch is fatal only under `--drift=fatal`, a NOTE otherwise. Kept in
+  // its own Problems bucket so it fails even in `warn`, unlike completeness.
+  const driftProblems = new Problems();
+  for (const message of driftResult.fatal) {
+    driftProblems.add(message);
+  }
+  for (const item of driftResult.drift) {
+    if (driftMode === 'fatal') {
+      driftProblems.add(
+        `source ref "${item.key}" on page "${item.page}" has drifted from its blessed baseline` +
+          ` — re-read the source and run "bun run docs:bless" if the page is still correct`
+      );
+    } else {
+      process.stdout.write(
+        `docs-gen: NOTE source ref "${item.key}" on page "${item.page}" has drifted from its blessed baseline` +
+          ` (run "bun run docs:bless" after confirming the page)\n`
+      );
+    }
+  }
+  driftProblems.checkpoint();
 
   // ADVISORY, never fatal (ISS-096). A prefix `query=` covers nothing, and the
   // keys it points at surface in `Uncovered ids` — truthful, but from there the
@@ -1437,6 +1807,9 @@ async function main(argv) {
   const notes = [];
   if (mode === 'warn' && coverage.buckets.uncovered.length > 0) {
     notes.push(`${coverage.buckets.uncovered.length} uncovered id(s)`);
+  }
+  if (mode === 'warn' && entityCoverage.buckets.uncovered.length > 0) {
+    notes.push(`${entityCoverage.buckets.uncovered.length} uncovered entity(ies)`);
   }
   if (mode === 'warn' && queue.length > 0) {
     notes.push(`${queue.length} pending exception request(s)`);

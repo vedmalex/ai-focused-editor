@@ -22,6 +22,7 @@
  */
 
 import { createHash } from 'crypto';
+import type { BinaryLike } from 'crypto';
 import { promises as fs } from 'fs';
 import { join, sep } from 'path';
 
@@ -110,6 +111,32 @@ const EXCLUDED_FILE_PATTERNS: readonly RegExp[] = INVENTORY_SOURCE_EXCLUDES.filt
 
 const ROOT_PATTERNS: readonly RegExp[] = INVENTORY_SOURCE_ROOTS.map(globToRegExp);
 
+/**
+ * ENTITY source extras (TASK-018 tech_spec §3 WP-U3-0, R2).
+ *
+ * The `.ts` traversal above powers `commands[]`/`preferences[]`, but the three
+ * new entity inventories are declared OUTSIDE it: `agents[]` come from the
+ * bundled `base-modes.yaml`, and `skills[]` come from `.claude/skills/**\/SKILL.md`.
+ * If those files stayed out of the fingerprint, editing `base-modes.yaml` would
+ * NOT invalidate the inventory, and `agents[]` would silently go stale while the
+ * freshness gate reported "up to date" — the exact false-negative WP-A removed
+ * for the `.ts` set. So {@link computeSourceFingerprint} hashes
+ * `listInventorySources ∪ listEntitySources`.
+ */
+export const BASE_MODES_RELATIVE_PATH =
+  'packages/manuscript-workspace/src/node/ai/base-modes.yaml';
+
+/** Repository-relative root of the bundled agent-skills tree (`SKILL.md` per skill). */
+export const SKILLS_ROOT_RELATIVE_PATH = '.claude/skills';
+
+/** The per-skill manifest file name walked under {@link SKILLS_ROOT_RELATIVE_PATH}. */
+export const SKILL_FILE_NAME = 'SKILL.md';
+
+/** `sha256` hex of `data`, the one hashing primitive both fingerprint paths reuse. */
+function sha256Hex(data: BinaryLike): string {
+  return createHash('sha256').update(data).digest('hex');
+}
+
 /** Longest leading run of literal segments of a glob — the directory to walk. */
 function globBaseDirectory(pattern: string): string {
   const segments = pattern.split('/');
@@ -181,8 +208,66 @@ export async function listInventorySources(repoRoot: string): Promise<string[]> 
 }
 
 /**
- * `sha256` over `<relpath>\0<sha256(contents)>\n` per file, in the order of
- * {@link listInventorySources} (§1.5 step 3).
+ * Every `SKILL.md` under {@link SKILLS_ROOT_RELATIVE_PATH}, as ABSOLUTE paths
+ * sorted by their repository-relative path (§3 WP-U3-0).
+ *
+ * A MISSING skills root yields an empty list rather than throwing: the skills
+ * inventory is optional (a repo may ship none), unlike `base-modes.yaml`.
+ */
+export async function listSkillFiles(repoRoot: string): Promise<string[]> {
+  const root = join(repoRoot, SKILLS_ROOT_RELATIVE_PATH);
+  const found: string[] = [];
+  async function walk(absoluteDirectory: string): Promise<void> {
+    let entries;
+    try {
+      entries = await fs.readdir(absoluteDirectory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const absolutePath = join(absoluteDirectory, entry.name);
+      if (entry.isDirectory()) {
+        await walk(absolutePath);
+      } else if (entry.isFile() && entry.name === SKILL_FILE_NAME) {
+        found.push(absolutePath);
+      }
+    }
+  }
+  await walk(root);
+  found.sort((left, right) =>
+    byPath(toInventoryRelativePath(repoRoot, left), toInventoryRelativePath(repoRoot, right))
+  );
+  return found;
+}
+
+/**
+ * The entity source extras (§3 WP-U3-0, R2): `base-modes.yaml` plus every
+ * `SKILL.md`, as ABSOLUTE paths.
+ *
+ * `base-modes.yaml` is OBLIGATORY and rejects when absent — exactly as a missing
+ * `.ts` root does — because it is the sole source of `agents[]`, and a silently
+ * dropped file would make every agent id look "covered" by disappearing. The
+ * skills tree is optional (see {@link listSkillFiles}).
+ */
+export async function listEntitySources(repoRoot: string): Promise<string[]> {
+  const baseModes = join(repoRoot, BASE_MODES_RELATIVE_PATH);
+  const stat = await fs.stat(baseModes).catch(() => undefined);
+  if (!stat?.isFile()) {
+    throw new Error(
+      `entity source is missing: ${BASE_MODES_RELATIVE_PATH} ` +
+        '(base AI modes are required for the agents inventory)'
+    );
+  }
+  return [baseModes, ...(await listSkillFiles(repoRoot))];
+}
+
+/**
+ * `sha256` over `<relpath>\0<sha256(contents)>\n` per file (§1.5 step 3), over
+ * `listInventorySources ∪ listEntitySources` sorted by repository-relative path.
+ *
+ * The union (R2) is why the extras have to be sorted in with the `.ts` files
+ * rather than appended: the digest must be identical whichever consumer computes
+ * it, and a stable byte order is the only way two independent walks agree.
  *
  * CONTENT, not mtime: `git checkout`/`git stash` move mtimes without touching
  * content (false failures, which people quickly learn to work around) and a
@@ -190,12 +275,31 @@ export async function listInventorySources(repoRoot: string): Promise<string[]> 
  * hashed, not decoded text, so an encoding change is a change.
  */
 export async function computeSourceFingerprint(repoRoot: string): Promise<string> {
-  const files = await listInventorySources(repoRoot);
+  const files = [...(await listInventorySources(repoRoot)), ...(await listEntitySources(repoRoot))];
+  files.sort((left, right) =>
+    byPath(toInventoryRelativePath(repoRoot, left), toInventoryRelativePath(repoRoot, right))
+  );
   const digest = createHash('sha256');
   for (const absolutePath of files) {
     const contents = await fs.readFile(absolutePath);
-    const fileHash = createHash('sha256').update(contents).digest('hex');
-    digest.update(`${toInventoryRelativePath(repoRoot, absolutePath)}\0${fileHash}\n`);
+    digest.update(`${toInventoryRelativePath(repoRoot, absolutePath)}\0${sha256Hex(contents)}\n`);
   }
   return digest.digest('hex');
+}
+
+/**
+ * Per-file `sha256` hex of every inventory source, keyed by repository-relative
+ * path (§3 WP-U4-1). The file-level granularity subject for `{path}` source
+ * refs; reuses the same {@link sha256Hex} primitive as the fingerprint so a
+ * `{path}` drift check and the freshness fingerprint can never disagree on what
+ * "the bytes of this file" means.
+ */
+export async function computeSourceHashes(repoRoot: string): Promise<Map<string, string>> {
+  const files = await listInventorySources(repoRoot);
+  const map = new Map<string, string>();
+  for (const absolutePath of files) {
+    const contents = await fs.readFile(absolutePath);
+    map.set(toInventoryRelativePath(repoRoot, absolutePath), sha256Hex(contents));
+  }
+  return map;
 }

@@ -31,6 +31,13 @@
     },
 
     {
+      "pattern": "ai-focused-editor.project-mode.*",
+      "kind": "dynamic",
+      "reason": "prompt-фрагменты книжных AI-режимов регистрируются в рантайме по контенту пользователя: addBuiltInPromptFragment(this.toPromptFragment(mode)) с id = PROJECT_AI_MODE_FRAGMENT_PREFIX + mode.id (ai-mode-prompt-fragment-contribution.ts:78, getFragmentId:145). Аргумент — вызов метода, а не объектный литерал, поэтому конкретные id недоступны статически (авто-резолюция префикса — ~3 хопа, вне 1-hop резолвера); семейство документируется прозой в ai/writing-tools. Экстрактор эмитирует skipped-запись для видимости и кладёт префикс в dynamicPrefixes[] как субъект актуальности (TASK-018 tech_spec §6 F-D2.1-2/3, Q1)",
+      "added": "2026-07-23"
+    },
+
+    {
       "pattern": "preferences:open",
       "kind": "external",
       "usedBy": "code",

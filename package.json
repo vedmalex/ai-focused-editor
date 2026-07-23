@@ -24,7 +24,7 @@
     "test:electron": "node scripts/electron-smoke.mjs",
     "test:ui": "node scripts/browser-smoke.mjs",
     "test:ui:flows": "bash scripts/ui-flows/run-flow-checks.sh",
-    "verify": "bun run test && bun run build && bun run build:electron",
+    "verify": "bun run test && bun run --cwd packages/manuscript-workspace docs:drift && bun run build && bun run build:electron",
     "verify:full": "bun run verify && bun run test:electron && bun run test:ui",
     "watch": "bun run --cwd packages/manuscript-workspace watch"
   },

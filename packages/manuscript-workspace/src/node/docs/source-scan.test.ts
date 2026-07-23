@@ -30,13 +30,21 @@ async function write(repoRoot: string, relativePath: string, contents: string): 
   await fs.writeFile(absolutePath, contents, 'utf8');
 }
 
-/** A fixture repo holding all three declared roots (two of them empty). */
+/** Repository-relative path of the obligatory entity source (§3 WP-U3-0, R2). */
+const BASE_MODES_PATH = 'packages/manuscript-workspace/src/node/ai/base-modes.yaml';
+
+/**
+ * A fixture repo holding all three declared roots (two of them empty) plus the
+ * obligatory `base-modes.yaml` entity source, without which
+ * {@link computeSourceFingerprint} rejects (R2).
+ */
 async function makeRepo(name: string): Promise<string> {
   const repoRoot = join(TEST_ROOT, name);
   await fs.rm(repoRoot, { recursive: true, force: true });
   for (const dir of PACKAGE_SOURCE_DIRS) {
     await fs.mkdir(join(repoRoot, dir), { recursive: true });
   }
+  await write(repoRoot, BASE_MODES_PATH, 'version: 1\nmodes: []\n');
   return repoRoot;
 }
 
@@ -235,6 +243,43 @@ describe('computeSourceFingerprint', () => {
       await write(repoRoot, 'packages/ai-connect-theia/src/b.ts', 'const b = 2;');
     }
     expect(await computeSourceFingerprint(first)).toBe(await computeSourceFingerprint(second));
+  });
+});
+
+describe('entity source extras in the fingerprint (§3 WP-U3-0, R2)', () => {
+  test('neg: editing base-modes.yaml moves the fingerprint — agents[] cannot go stale silently', async () => {
+    const repoRoot = await makeRepo('extras-base-modes');
+    await write(repoRoot, 'packages/manuscript-workspace/src/a.ts', 'const a = 1;');
+    const before = await computeSourceFingerprint(repoRoot);
+
+    await write(repoRoot, BASE_MODES_PATH, 'version: 1\nmodes:\n  - id: gv-x\n    label: X\n    agent: true\n    systemPrompt: hi\n');
+    expect(await computeSourceFingerprint(repoRoot)).not.toBe(before);
+  });
+
+  test('neg: adding a SKILL.md moves the fingerprint — skills[] cannot go stale silently', async () => {
+    const repoRoot = await makeRepo('extras-skill-add');
+    await write(repoRoot, 'packages/manuscript-workspace/src/a.ts', 'const a = 1;');
+    const before = await computeSourceFingerprint(repoRoot);
+
+    await write(repoRoot, '.claude/skills/demo/SKILL.md', '---\nname: demo\ndescription: d\n---\nbody\n');
+    const withSkill = await computeSourceFingerprint(repoRoot);
+    expect(withSkill).not.toBe(before);
+
+    await write(repoRoot, '.claude/skills/demo/SKILL.md', '---\nname: demo\ndescription: changed\n---\nbody\n');
+    expect(await computeSourceFingerprint(repoRoot)).not.toBe(withSkill);
+  });
+
+  test('an empty skills root is allowed — only base-modes.yaml is obligatory', async () => {
+    const repoRoot = await makeRepo('extras-no-skills');
+    await write(repoRoot, 'packages/manuscript-workspace/src/a.ts', 'const a = 1;');
+    expect(await computeSourceFingerprint(repoRoot)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test('neg: a missing base-modes.yaml rejects rather than dropping the agents source', async () => {
+    const repoRoot = await makeRepo('extras-missing-base-modes');
+    await write(repoRoot, 'packages/manuscript-workspace/src/a.ts', 'const a = 1;');
+    await fs.rm(join(repoRoot, BASE_MODES_PATH));
+    expect(computeSourceFingerprint(repoRoot)).rejects.toThrow(/base-modes\.yaml/);
   });
 });
 

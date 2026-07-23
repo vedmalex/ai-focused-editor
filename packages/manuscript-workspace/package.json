@@ -49,6 +49,7 @@
   "devDependencies": {
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.0.10",
+    "happy-dom": "^20.11.1",
     "reflect-metadata": "0.2.2",
     "typescript": "~5.8.3"
   },
@@ -58,6 +59,9 @@
     "docs:gen:warn": "bun scripts/generate-docs-content.mjs --coverage=warn",
     "docs:strict": "bun run docs:inventory && bun run docs:gen:strict",
     "docs:dev": "bun run docs:inventory && bun run docs:gen:warn",
+    "docs:drift": "bun run docs:inventory && bun scripts/generate-docs-content.mjs --coverage=strict --drift=fatal",
+    "docs:bless": "bun run docs:inventory && bun scripts/bless-docs.mjs",
+    "docs:scaffold": "bun run docs:inventory && bun scripts/scaffold-docs.mjs",
     "compile": "rm -rf lib && tsc && mkdir -p lib/browser/themes && cp src/browser/themes/*.json lib/browser/themes/ && mkdir -p lib/node/i18n/ru && cp src/node/i18n/ru/*.json lib/node/i18n/ru/ && mkdir -p lib/node/ai && cp src/node/ai/*.yaml lib/node/ai/",
     "build": "bun run docs:strict && bun run compile",
     "build:dev": "bun run docs:dev && bun run compile",

@@ -30,6 +30,23 @@ export type DocsCoverageClaim =
   | string
   | { readonly pattern: string; readonly reason: string };
 
+/**
+ * A page's declaration of WHICH product source it documents, at one of three
+ * granularities (TASK-018 tech_spec §3 WP-U4-2). Consumed only by the docs
+ * build (the drift gate hashes it against a committed baseline), never by the
+ * UI. Declared here — not imported from `src/node/docs/source-refs.ts` — because
+ * this contract lives in `src/common/**`, which the browser layer imports, and
+ * that module pulls in `fs`/`crypto`; the two are kept structurally identical.
+ *
+ *  - `{ path }`          — the whole file's bytes (coarsest).
+ *  - `{ path, symbol }`  — one named declaration's text.
+ *  - `{ path, mode }`    — an agent/mode's user-visible identity signature.
+ */
+export type DocsSourceRef =
+  | { readonly path: string }
+  | { readonly path: string; readonly symbol: string }
+  | { readonly path: string; readonly mode: string };
+
 /** One guide page in one language. */
 export interface DocsPage {
   /** Extension-less path id: 'home', 'book/export'. */
@@ -51,6 +68,12 @@ export interface DocsPage {
    * §C.7.
    */
   readonly covers: readonly DocsCoverageClaim[];
+  /**
+   * Frontmatter `sourceRefs`; consumed by the drift gate only, never by the UI.
+   * Declares which product sources the page documents, so the build can prove
+   * the page has not drifted away from the code it describes (§3 WP-U4-2/3).
+   */
+  readonly sourceRefs?: readonly DocsSourceRef[];
 }
 
 /** One navigation entry — a page reduced to what the nav needs to draw it. */

@@ -13,8 +13,8 @@ import {
   AiMode,
   AiModeRegistry
 } from '../common';
+import { PROJECT_AI_MODE_FRAGMENT_PREFIX } from '../common/ai/agent-ids';
 
-const PROJECT_AI_MODE_FRAGMENT_PREFIX = 'ai-focused-editor.project-mode.';
 const PROJECT_AI_MODE_COMMAND_PREFIX = 'afe-';
 
 @injectable()

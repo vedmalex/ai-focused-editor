@@ -24,7 +24,7 @@ import { splitMathSegments } from '@ai-focused-editor/semantic-markdown';
  */
 
 /** Minimal shape of the (lazily imported) `katex` module this pass touches. */
-interface KatexModule {
+export interface KatexModule {
   renderToString(tex: string, options?: { displayMode?: boolean; throwOnError?: boolean }): string;
 }
 
@@ -137,8 +137,13 @@ function renderMathInTextNode(textNode: Text, katex: KatexModule, doc: Document)
  * the syntax pages stays literal) and already-rendered `.katex` subtrees. Inserts
  * trusted KaTeX output directly on the live nodes — the same post-render DOM
  * patch pattern the chapter preview's `renderMathInElement` uses.
+ *
+ * Exported as the DOM-harness SEAM (TASK-018 WP-DOM-1/2): it is synchronous and
+ * takes an already-resolved {@link KatexModule}, so a test can drive it directly
+ * with a fake `katex` over a `happy-dom` document — without touching the lazy
+ * `import('katex')` {@link renderKatexMath} guards below.
  */
-function renderMathInElement(root: HTMLElement, katex: KatexModule): void {
+export function renderMathInto(root: HTMLElement, katex: KatexModule): void {
   const doc = root.ownerDocument;
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node: Node): number {
@@ -184,7 +189,7 @@ export function renderKatexMath(root: HTMLElement): void {
     return;
   }
   void loadKatex(root.ownerDocument).then(
-    katex => renderMathInElement(root, katex),
+    katex => renderMathInto(root, katex),
     () => { /* KaTeX bundle failed to load: leave formulas as raw text. */ }
   );
 }

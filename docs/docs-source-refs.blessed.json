@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "pages": {
+    "ai/diagram-author": {
+      "packages/manuscript-workspace/src/browser/diagram-author-prompt-fragment-contribution.ts": {
+        "hash": "sha256:470e1219da517ca09b0831a63d138d30fffece31fc855627af8ed10ce264630d",
+        "blessedAt": "2026-07-23"
+      }
+    },
+    "ai/gv-essay": {
+      "packages/manuscript-workspace/src/node/ai/base-modes.yaml@gv-essay": {
+        "hash": "sha256:15334d900f079c44c815e522a0ee87f5d02ce469803fcc4675e1c44b8f4efe3e",
+        "blessedAt": "2026-07-23"
+      }
+    },
+    "ai/gv-opponent": {
+      "packages/manuscript-workspace/src/node/ai/base-modes.yaml@gv-opponent": {
+        "hash": "sha256:3ced78e037b92b8c101d0dda36d293da43e0bf45bb9a210ece72732df8ae592d",
+        "blessedAt": "2026-07-23"
+      }
+    },
+    "contributing/docs-workflow": {
+      ".claude/skills/docs-workflow/SKILL.md": {
+        "hash": "sha256:180f882a60aad5b94a1458161499d55a064af73adc31c0552838992effa9c3b2",
+        "blessedAt": "2026-07-23"
+      }
+    }
+  }
+}
