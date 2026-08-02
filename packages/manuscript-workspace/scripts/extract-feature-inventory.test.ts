@@ -1009,9 +1009,10 @@ describe('control numbers on the REAL tree (§F.2/§F.9)', () => {
     expect(inventory.commands.some(command => command.id.startsWith('ai-connect.'))).toBe(true);
   });
 
-  test('two skipped declarations: the dynamic command and the dynamic prompt-fragment site (§C.6, WP-U3-2)', async () => {
+  test('three skipped declarations: the dynamic command, the dynamic prompt-fragment site, and the runtime typography schema (§C.6, WP-U3-2, ISS-239)', async () => {
     const inventory = await realInventory();
-    // Sorted by file then line: `ai-mode-dynamic` precedes `ai-mode-prompt-fragment`.
+    // Sorted by file then line: `ai-mode-dynamic` precedes `ai-mode-prompt-fragment`,
+    // and both precede `typography/typography-frontend-module` alphabetically.
     // The command line tracks the current source position (the A2 refactor that
     // dropped a local const moved `id: commandId` from 206 to 207).
     expect(inventory.skipped).toEqual([
@@ -1028,15 +1029,28 @@ describe('control numbers on the REAL tree (§F.2/§F.9)', () => {
         line: 78,
         text: 'this.promptService.addBuiltInPromptFragment(this.toPromptFragment(mode))',
         staticPrefix: 'ai-focused-editor.project-mode.'
+      },
+      {
+        why: 'call-expression-id',
+        file: 'packages/manuscript-workspace/src/browser/typography/typography-frontend-module.ts',
+        // Moved 80 → 98 when the 14 inline `bind(...)` calls became the exported
+        // `TYPOGRAPHY_RULES` registry the completeness test asserts against, then
+        // 98 → 68 when that registry moved OUT to
+        // `common/typography/typography-rules.ts` (F-CR-1), taking its 14 rule
+        // imports with it and leaving this module as DI wiring only.
+        line: 68,
+        text: 'properties: buildTypographySchema(provider.getContributions())',
+        staticPrefix: 'aiFocusedEditor.typography.'
       }
     ]);
   });
 
-  test('dynamicPrefixes covers both dynamic families — the subject for kind:"dynamic" (F-D7-1, WP-U3-2)', async () => {
+  test('dynamicPrefixes covers all three dynamic families — the subject for kind:"dynamic" (F-D7-1, WP-U3-2, ISS-239)', async () => {
     const inventory = await realInventory();
     expect(inventory.dynamicPrefixes).toEqual([
       'ai-focused-editor.mode.run.',
-      'ai-focused-editor.project-mode.'
+      'ai-focused-editor.project-mode.',
+      'aiFocusedEditor.typography.'
     ]);
   });
 
