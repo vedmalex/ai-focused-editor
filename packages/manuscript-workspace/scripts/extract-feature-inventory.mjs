@@ -86,6 +86,26 @@ const COMMAND_LOOKUP_CALLEES = new Set(['executeCommand', 'getCommand', 'isEnabl
  */
 const FRAGMENT_DECLARATION_CALLEES = new Set(['addBuiltInPromptFragment']);
 
+/**
+ * Runtime-built preference schemas (ISS-239). A `const s: PreferenceSchema = {
+ * ..., properties: <builder>(...) }` whose `properties` is a CALL — not a static
+ * object literal — has keys that only exist at DI time, so no key can be read
+ * statically. When the builder is one of these, the schema's key FAMILY is
+ * surfaced as a dynamic prefix (+ a visible `skipped` entry), exactly as
+ * {@link collectPromptFragment} does for a dynamic prompt-fragment site. The
+ * committed `<prefix>.*` `kind:"dynamic"` allowlist entry then has a live
+ * staleness subject and the docs coverage gate treats the family as documented
+ * prose (mirrors the `ai-focused-editor.mode.run.*` family).
+ *
+ * The prefix MIRRORS `TYPOGRAPHY_PREFERENCE_PREFIX` in
+ * `src/common/typography/typography-rule-contribution.ts` — that module pulls in
+ * Theia and cannot be imported into this bun-run extractor, so the literal is
+ * duplicated here (as `INVENTORY_NAMESPACES` already hardcodes its own).
+ */
+const RUNTIME_PREFERENCE_SCHEMA_BUILDERS = new Map([
+  ['buildTypographySchema', 'aiFocusedEditor.typography.']
+]);
+
 /** Output artifact, relative to the repository root (§B.4, gitignored). */
 const INVENTORY_OUTPUT_RELATIVE_PATH = 'packages/manuscript-workspace/docs-inventory.generated.json';
 
@@ -577,12 +597,34 @@ function collectPreferences(declaration, file, store, out) {
       (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
       property.name.text === 'properties'
   );
-  if (!propertiesProperty || !ts.isObjectLiteralExpression(propertiesProperty.initializer)) {
+  if (!propertiesProperty) {
+    return;
+  }
+  const propertiesInitializer = propertiesProperty.initializer;
+  if (!ts.isObjectLiteralExpression(propertiesInitializer)) {
+    // ISS-239: a runtime-built schema (`properties: buildTypographySchema(...)`).
+    // The concrete keys are unknowable statically; register the KNOWN builder's
+    // key family as a dynamic prefix + a visible skipped entry (parallel to
+    // collectPromptFragment's dynamic site). An UNKNOWN non-literal `properties`
+    // still bails silently as before — this only recognises whitelisted builders.
+    if (ts.isCallExpression(propertiesInitializer)) {
+      const prefix = RUNTIME_PREFERENCE_SCHEMA_BUILDERS.get(calleeName(propertiesInitializer) ?? '');
+      if (prefix !== undefined) {
+        out.skipped.push({
+          why: 'call-expression-id',
+          file: file.relativePath,
+          line: lineOf(propertiesProperty, file.sourceFile),
+          text: skippedText(propertiesProperty, file.sourceFile),
+          staticPrefix: prefix
+        });
+        out.dynamicPrefixes.add(prefix);
+      }
+    }
     return;
   }
   const schema = ts.isIdentifier(declaration.name) ? declaration.name.text : undefined;
 
-  for (const property of propertiesProperty.initializer.properties) {
+  for (const property of propertiesInitializer.properties) {
     const line = lineOf(property, file.sourceFile);
     if (!ts.isPropertyAssignment(property)) {
       // A spread would hide an unknown number of keys behind one node.

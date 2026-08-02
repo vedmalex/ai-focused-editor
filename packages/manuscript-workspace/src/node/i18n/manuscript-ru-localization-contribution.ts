@@ -37,6 +37,7 @@ import mcpRu from './ru/mcp.json';
 import authRu from './ru/auth.json';
 import mobileRu from './ru/mobile.json';
 import fileDialogRu from './ru/file-dialog.json';
+import typographyRu from './ru/typography.json';
 
 /**
  * Language descriptor for our Russian dictionary.
@@ -65,7 +66,7 @@ const AREA_BUNDLES: unknown[] = [
   aiConfigRu, aiModesRu, editorRu, doctorRu, welcomeRu,
   workspaceRu, knowledgeRu, gitRu, chatCapabilitiesRu, chatContextRu, officeRu,
   excalidrawRu, imageViewerRu, mediaViewerRu, proofreadingRu, transcriptCheckRu, transcriptionSettingsRu,
-  mobileRu, mcpRu, authRu, fileDialogRu
+  mobileRu, mcpRu, authRu, fileDialogRu, typographyRu
 ];
 
 @injectable()

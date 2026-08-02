@@ -40,7 +40,6 @@
       "toggle-source-tooltip": "Показать или скрыть панель оригинального текста",
       "adjacent-pages": "Соседние страницы",
       "adjacent-pages-tooltip": "Показать превью предыдущей и следующей страниц",
-      "adjacent-page": "страница {0}",
       "adjacent-loading": "Загрузка превью...",
       "context-prev-image": "Конец предыдущей страницы",
       "context-next-image": "Начало следующей страницы",
