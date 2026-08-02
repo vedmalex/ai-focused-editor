@@ -7,9 +7,9 @@
 |---|---|
 | Inventory packages | `manuscript-workspace`, `ai-connect-theia`, `document-preview-theia` |
 | Inventory namespaces | `ai-focused-editor.`, `ai-connect.` |
-| Inventory ids (commands) | 170 |
+| Inventory ids (commands) | 173 |
 | Inventory keys (preferences) | 22 |
-| Covered by exact id | 191 |
+| Covered by exact id | 194 |
 | Covered by directive occurrence | 0 |
 | Absorbed by glob | 0 |
 | Allowlisted: external | 0 |
@@ -35,7 +35,7 @@
 | Glob absorption ceiling (N) | 8 |
 | Pending exception requests | 0 |
 | Passed via pending external request | 0 |
-| Docs content size | 336.5 KB |
+| Docs content size | 348.5 KB |
 
 ## Covered by directive occurrence
 
@@ -54,6 +54,7 @@
 | ai-focused-editor.manuscript-tree.root | exempt | 1 | id КОРНЕВОГО УЗЛА дерева рукописи (MANUSCRIPT_TREE_ROOT_ID, manuscript-tree.ts:5), а не команда: узел создаётся в manuscript-tree-item-factory.ts:98 со `visible: false` и служит только держателем разделов. В инвентарь попал ветвью резолва константы (§C.2) — нажать его нельзя, вызвать нельзя, описывать нечего |
 | ai-focused-editor.mode.run.* | dynamic | 1 | команды режимов регистрируются в рантайме по контенту пользователя (ai-mode-dynamic-contribution.ts:201); документируются прозой в ai/writing-tools |
 | ai-focused-editor.project-mode.* | dynamic | 1 | prompt-фрагменты книжных AI-режимов регистрируются в рантайме по контенту пользователя: addBuiltInPromptFragment(this.toPromptFragment(mode)) с id = PROJECT_AI_MODE_FRAGMENT_PREFIX + mode.id (ai-mode-prompt-fragment-contribution.ts:78, getFragmentId:145). Аргумент — вызов метода, а не объектный литерал, поэтому конкретные id недоступны статически (авто-резолюция префикса — ~3 хопа, вне 1-hop резолвера); семейство документируется прозой в ai/writing-tools. Экстрактор эмитирует skipped-запись для видимости и кладёт префикс в dynamicPrefixes[] как субъект актуальности (TASK-018 tech_spec §6 F-D2.1-2/3, Q1) |
+| aiFocusedEditor.typography.* | dynamic | 1 | схема настроек авто-типографики строится в рантайме: properties: buildTypographySchema(provider.getContributions()) в typography-frontend-module.ts — значение properties это CallExpression, а не объектный литерал, поэтому конкретные ключи (мастер aiFocusedEditor.typography.enabled/.scope и per-rule aiFocusedEditor.typography.<id>.enabled) недоступны статически. Экстрактор эмитирует skipped-запись и кладёт префикс в dynamicPrefixes[] как субъект актуальности (RUNTIME_PREFERENCE_SCHEMA_BUILDERS, ISS-239); семейство документируется прозой в writing/typography.md |
 | preferences:open | external | 1 | команда Theia (@theia/core common-commands.js:246); вызывается из openSettingsQuery (§D.4), а не значением директивы |
 | workbench.action.openGlobalSettings | external | 1 | фолбэк Theia, когда preferences:open не зарегистрирован (mcp-controls-contribution.ts:353); тоже из кода |
 
@@ -76,3 +77,4 @@ _(none)_
 |---|---:|---|
 | packages/manuscript-workspace/src/browser/ai-mode-dynamic-contribution.ts | 207 | template-literal-id |
 | packages/manuscript-workspace/src/browser/ai-mode-prompt-fragment-contribution.ts | 78 | call-expression-id |
+| packages/manuscript-workspace/src/browser/typography/typography-frontend-module.ts | 68 | call-expression-id |

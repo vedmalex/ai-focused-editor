@@ -38,6 +38,13 @@
     },
 
     {
+      "pattern": "aiFocusedEditor.typography.*",
+      "kind": "dynamic",
+      "reason": "схема настроек авто-типографики строится в рантайме: properties: buildTypographySchema(provider.getContributions()) в typography-frontend-module.ts — значение properties это CallExpression, а не объектный литерал, поэтому конкретные ключи (мастер aiFocusedEditor.typography.enabled/.scope и per-rule aiFocusedEditor.typography.<id>.enabled) недоступны статически. Экстрактор эмитирует skipped-запись и кладёт префикс в dynamicPrefixes[] как субъект актуальности (RUNTIME_PREFERENCE_SCHEMA_BUILDERS, ISS-239); семейство документируется прозой в writing/typography.md",
+      "added": "2026-08-01"
+    },
+
+    {
       "pattern": "preferences:open",
       "kind": "external",
       "usedBy": "code",

@@ -128,6 +128,9 @@
       "frontend": "lib/browser/live-validation-frontend-module"
     },
     {
+      "frontend": "lib/browser/typography/typography-frontend-module"
+    },
+    {
       "frontend": "lib/browser/writer-icon-theme-frontend-module"
     },
     {
