@@ -25,7 +25,17 @@ bun run build
 bun run start
 ```
 
-The browser application starts through Theia's backend server. By default Theia serves the UI on `http://localhost:3000`.
+The browser application starts through Theia's backend server, on `http://localhost:3000` by default.
+Pick a different port with `--port` or `AFE_PORT`:
+
+```sh
+bun run start -- --port 4000
+AFE_PORT=4000 bun run start
+```
+
+If the requested port is already taken, the launcher steps up to the next free one (3000 → 3001 → …)
+instead of failing, and prints the address it actually bound — always read that line rather than
+assuming 3000.
 
 Additional useful commands:
 

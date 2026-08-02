@@ -41,9 +41,13 @@ tag - module: what this commit does
 ```bash
 bun install
 bun run build          # packages + browser app bundle
-bun run start          # browser app on http://localhost:3000
+bun run start          # browser app on http://localhost:3000 (or the next free port)
 bun run start:electron # desktop app
 ```
+
+`bun run start` accepts `--port` (or `AFE_PORT`), treats it as a preference rather than a
+requirement, and moves to the next free port when it is taken — so watch the
+`AI Focused Editor is running at …` line for the real address.
 
 The Obsidian companion plugin builds separately:
 
