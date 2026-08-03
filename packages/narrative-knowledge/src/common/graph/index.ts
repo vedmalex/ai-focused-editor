@@ -18,3 +18,10 @@ export * from './evidence';
 export * from './narrative-entity';
 export * from './narrative-mention';
 export * from './narrative-relation';
+
+// The storage port (TASK-022 WP-3). It lives INSIDE the folder for the same
+// reason the domain types do: the core reads and writes the index through it,
+// so a core lifted out without it would not run. It speaks in lifecycle
+// PRIMITIVES rather than `IndexState` precisely so that staying inside is
+// possible — see the module note there.
+export * from './narrative-index-store';

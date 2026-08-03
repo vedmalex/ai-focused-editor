@@ -186,6 +186,51 @@ try {
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
+
+  // TASK-022 WP-3 / R-2: does `node:sqlite` actually work in the Electron main
+  // process, and WHICH SQLite is under it?
+  //
+  // The whole storage decision rests on Electron 39.8.7 carrying Node 22.22.1,
+  // i.e. at or above the 22.5 where `node:sqlite` appeared, and on the engine
+  // being at least SQLite 3.37 for `STRICT` tables. Both are claims about a
+  // runtime the node test lane cannot reach — it runs on the local Node — so
+  // this is the only place either can be checked at all.
+  //
+  // IT PRINTS THE VERSIONS whatever happens. The plan and the tech_spec
+  // disagree about which SQLite Electron carries (3.51.2 vs a locally measured
+  // 3.50.4 on Node 24.9), and a probe that only asserted would leave that
+  // disagreement unresolved for whoever reads the output next.
+  try {
+    const engine = await app.evaluate(async () => {
+      const sqlite = await import('node:sqlite');
+      const db = new sqlite.DatabaseSync(':memory:');
+      db.exec('CREATE TABLE probe (n INTEGER) STRICT');
+      let strictWorks = false;
+      try {
+        db.exec("INSERT INTO probe (n) VALUES ('not-a-number')");
+      } catch {
+        strictWorks = true;
+      }
+      db.close();
+      return {
+        node: process.versions.node,
+        sqlite: process.versions.sqlite,
+        electron: process.versions.electron,
+        strictWorks
+      };
+    });
+    console.log(
+      `[narrative-index] electron main: electron=${engine.electron} node=${engine.node} ` +
+        `sqlite=${engine.sqlite}`
+    );
+    if (!engine.strictWorks) {
+      fail('node:sqlite in the electron main process does not enforce STRICT tables');
+    } else {
+      pass(`node:sqlite works in electron main (sqlite ${engine.sqlite}, STRICT enforced)`);
+    }
+  } catch (error) {
+    fail(`node:sqlite unusable in the electron main process: ${error instanceof Error ? error.message : String(error)}`);
+  }
 } finally {
   await app.close().catch(() => undefined);
 }

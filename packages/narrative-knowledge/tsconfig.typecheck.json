@@ -21,6 +21,12 @@
     // `import.meta` — neither of which the commonjs product build wants.
     "module": "es2022",
     "moduleResolution": "bundler",
+    // The node-only tests (TASK-022 WP-3) import each other by their real file
+    // names — `./harness.mts` — because that is what Node's type stripping
+    // requires: it follows ESM resolution, where a relative specifier keeps its
+    // extension. There is no emit here, so this is safe by the compiler's own
+    // rule for the flag.
+    "allowImportingTsExtensions": true,
     "types": [
       "node",
       "bun"

@@ -26,6 +26,12 @@ export * from './narrative-knowledge-protocol';
 export * from './narrative-schema';
 export * from './legacy-narrative-entity';
 
+// The in-memory store adapter and the runner-agnostic contract core (WP-3).
+// They live in `src/common` because `bun` must be able to run them: the whole
+// reason they exist is that `bun` cannot reach the SQLite adapter in `src/node`.
+export * from './in-memory-narrative-index-store';
+export * from './narrative-index-store-contract';
+
 // Deterministic parsers relocated in TASK-022 WP-0 (plan AD-1). They are the
 // inputs the index is extracted from, which is why they live on this side of
 // the package boundary — the dependency direction only ever runs INTO this
@@ -34,3 +40,8 @@ export * from './entity-mentions';
 export * from './entity-type-registry';
 export * from './chapter-front-matter';
 export * from './wiki-links';
+
+// The deterministic extraction built on top of those parsers (TASK-022 WP-2).
+// Pure by construction — text in, domain values out — which is what the layer
+// rule's prohibitions (a) and (c) enforce over this whole directory.
+export * from './extraction';

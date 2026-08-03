@@ -74,6 +74,7 @@ import {
   ManuscriptListChaptersTool,
   ManuscriptWriteNoteTool
 } from './manuscript-tools-contribution';
+import { AiWriteConfirmationService, DialogAiWriteConfirmationService } from './ai-write-confirmation';
 import { DiagramAuthorPromptFragmentContribution } from './diagram-author-prompt-fragment-contribution';
 import { MarkdownLanguageContribution } from './markdown-language-contribution';
 import { AiModePromptFragmentContribution } from './ai-mode-prompt-fragment-contribution';
@@ -215,6 +216,10 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
   bindToolProvider(ManuscriptFindEntitiesTool, bind);
   bindToolProvider(ManuscriptListChaptersTool, bind);
   bindToolProvider(ManuscriptGetChapterTool, bind);
+  // TASK-022 WP-8 (UR-008). Bound BEFORE the three writing tools that inject
+  // it: without this binding they resolve nothing and refuse every write,
+  // which is the intended failure direction but not a shipping state.
+  bind(AiWriteConfirmationService).to(DialogAiWriteConfirmationService).inSingletonScope();
   bindToolProvider(ManuscriptCreateEntityTool, bind);
   bindToolProvider(ManuscriptWriteNoteTool, bind);
   bindToolProvider(ManuscriptCreateDiagramTool, bind);

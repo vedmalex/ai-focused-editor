@@ -1,0 +1,446 @@
+/**
+ * The in-memory adapter of {@link NarrativeIndexStore} (TASK-022 WP-3).
+ *
+ * WHAT IT IS FOR, STATED BEFORE WHAT IT DOES. `bun` cannot resolve
+ * `node:sqlite`, so the repository's main test run can never touch the real
+ * store. This adapter exists so that the SHARED contract — the part of the
+ * store's behaviour that is a decision rather than an SQLite feature — is
+ * executed on every `bun test`, and so that the contract core has something to
+ * run against in the fast lane. It is a second implementation of a port,
+ * which is exactly the situation where two implementations drift apart; the
+ * contract core in `narrative-index-store-contract.ts` is the only thing
+ * standing against that, and it is run against BOTH.
+ *
+ * WHAT IT DOES NOT PROVE, AND THIS LIST IS THE HONEST PART:
+ *
+ *   - It does not prove the DDL. Every `CHECK`, every `STRICT` column, every
+ *     partial index and every `ON DELETE CASCADE` is absent here; the
+ *     invariants below are hand-written guards that MIRROR them. A guard that
+ *     agrees with a schema it cannot see is a guard that agrees until someone
+ *     edits the schema — which is why the schema teeth are node-only and assert
+ *     that SQLITE did the rejecting.
+ *   - It does not prove durability, WAL, the writer lock, corruption recovery,
+ *     or anything about a second process. Nothing here survives the process.
+ *   - It does not prove SQL semantics: collation, ordering, or the behaviour of
+ *     `COALESCE` in the identity index are approximated in TypeScript.
+ *
+ * So a green `bun test` says the CONTRACT holds. It says nothing about SQLite.
+ * That is the whole reason the node run exists and is wired into `verify`.
+ */
+
+import type {
+  DuplicateEntityRecord,
+  EntityQuery,
+  IndexedDocument,
+  IndexedDocumentInput,
+  MentionQuery,
+  NarrativeEntity,
+  NarrativeIndexStore,
+  NarrativeIndexStoreLifecycle,
+  NarrativeIndexWriter,
+  NarrativeMention,
+  NarrativeRelation,
+  NeighbourhoodQuery,
+  RelationQuery
+} from './graph';
+import { NarrativeIndexStoreError } from './graph';
+
+/** Options an in-memory store accepts. Deliberately tiny — every knob here is
+ *  a knob the SQLite adapter would have to grow too. */
+export interface InMemoryNarrativeIndexStoreOptions {
+  /** Start the instance read-only, to exercise the refusal path without a
+   *  second process. This is the ONLY way this adapter can reach that state. */
+  readOnly?: boolean;
+}
+
+interface RelationRow {
+  relationId: number;
+  relation: NarrativeRelation;
+}
+
+function clone<T>(value: T): T {
+  return structuredClone(value);
+}
+
+/**
+ * The structural invariants, in one place.
+ *
+ * They MIRROR the DDL's `CHECK` constraints one-for-one, and the mirroring is
+ * the point: the contract core asserts that a forbidden value is REJECTED, and
+ * both adapters must therefore reject it. What the two adapters do NOT share is
+ * WHO rejects — here it is this function, in SQLite it is the schema, and only
+ * the latter survives a repair script or a second implementation.
+ */
+function assertRelationInvariants(relation: NarrativeRelation): void {
+  if (relation.origin !== 'derived' && relation.ownerPath === undefined) {
+    throw new NarrativeIndexStoreError(
+      'constraint-violation',
+      `relation ${relation.sourceId}->${relation.targetId} has origin '${relation.origin}' but no owning document; ` +
+        'only derived relations may be ownerless (CHECK (origin = \'derived\' OR doc_id IS NOT NULL))'
+    );
+  }
+  if (relation.evidence.length === 0) {
+    throw new NarrativeIndexStoreError(
+      'constraint-violation',
+      `relation ${relation.sourceId}->${relation.targetId} carries no evidence`
+    );
+  }
+  for (const evidence of relation.evidence) {
+    const hasRange = evidence.range !== undefined;
+    if ((evidence.evidenceKind === 'range') !== hasRange) {
+      throw new NarrativeIndexStoreError(
+        'constraint-violation',
+        `relation evidence declares evidenceKind '${evidence.evidenceKind}' but ` +
+          `${hasRange ? 'carries' : 'carries no'} coordinates ` +
+          '(CHECK ((evidence_kind = \'range\') = (start_line IS NOT NULL)))'
+      );
+    }
+  }
+}
+
+function assertMentionInvariants(mention: NarrativeMention): void {
+  const hasRange = mention.evidence.range !== undefined;
+  if ((mention.evidence.evidenceKind === 'range') !== hasRange) {
+    throw new NarrativeIndexStoreError(
+      'constraint-violation',
+      `mention of ${mention.entityId} declares evidenceKind '${mention.evidence.evidenceKind}' but ` +
+        `${hasRange ? 'carries' : 'carries no'} coordinates ` +
+        '(CHECK ((evidence_kind = \'range\') = (start_line IS NOT NULL)))'
+    );
+  }
+  if (mention.labelRange !== undefined && mention.evidence.evidenceKind !== 'range') {
+    throw new NarrativeIndexStoreError(
+      'constraint-violation',
+      `mention of ${mention.entityId} carries a label range on a '${mention.evidence.evidenceKind}' evidence ` +
+        '(CHECK (label_start_line IS NULL OR evidence_kind = \'range\'))'
+    );
+  }
+}
+
+/**
+ * Identity of a relation: ordered ends, type, origin and owning document.
+ *
+ * This is the TypeScript reading of `relation_identity`, the unique index over
+ * `(source_id, target_id, rel_type, origin, COALESCE(doc_id, -1))`. The joiner
+ * is a NUL written AS AN ESCAPE and never as a literal control byte: a literal
+ * one makes `grep` skip the file silently and `git` treat it as binary, which
+ * has already happened three times in this task. The absent owner gets its own
+ * sentinel so an ownerless relation cannot collide with one whose owning
+ * document is literally named after the separator.
+ */
+const IDENTITY_SEPARATOR = '\u0000';
+const NO_OWNER = '\u0001no-owner';
+
+function relationIdentity(relation: NarrativeRelation): string {
+  return [
+    relation.sourceId,
+    relation.targetId,
+    relation.relType,
+    relation.origin,
+    relation.ownerPath ?? NO_OWNER
+  ].join(IDENTITY_SEPARATOR);
+}
+
+export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
+  private generation = 0;
+  private readOnly: boolean;
+  private closed = false;
+  private nextDocId = 1;
+  private nextRelationId = 1;
+
+  private documents = new Map<string, IndexedDocument>();
+  private entities = new Map<string, NarrativeEntity>();
+  private duplicates = new Map<string, Set<string>>();
+  private mentions: NarrativeMention[] = [];
+  private relations: RelationRow[] = [];
+
+  constructor(options: InMemoryNarrativeIndexStoreOptions = {}) {
+    this.readOnly = options.readOnly === true;
+  }
+
+  lifecycle(): NarrativeIndexStoreLifecycle {
+    return {
+      generation: this.generation,
+      readOnly: this.readOnly,
+      // Nothing in memory can be corrupt, and saying so is more honest than
+      // wiring a flag that could never be set.
+      corrupted: false,
+      foreignWriter: false
+    };
+  }
+
+  transaction<T>(body: (writer: NarrativeIndexWriter) => T): T {
+    this.assertOpen();
+    if (this.readOnly) {
+      throw new NarrativeIndexStoreError('read-only', 'this index store instance may not write');
+    }
+    // A snapshot rollback, so a throwing body leaves nothing half-applied. The
+    // SQLite adapter gets the same property from ROLLBACK; the contract core
+    // asserts it against both, which is the only reason it is worth the copy.
+    const snapshot = {
+      documents: new Map(this.documents),
+      entities: new Map(this.entities),
+      duplicates: new Map([...this.duplicates].map(([id, paths]) => [id, new Set(paths)])),
+      mentions: [...this.mentions],
+      relations: [...this.relations],
+      nextDocId: this.nextDocId,
+      nextRelationId: this.nextRelationId
+    };
+    const committedGeneration = this.generation + 1;
+    try {
+      const result = body(this.makeWriter(committedGeneration));
+      this.generation = committedGeneration;
+      return result;
+    } catch (error) {
+      this.documents = snapshot.documents;
+      this.entities = snapshot.entities;
+      this.duplicates = snapshot.duplicates;
+      this.mentions = snapshot.mentions;
+      this.relations = snapshot.relations;
+      this.nextDocId = snapshot.nextDocId;
+      this.nextRelationId = snapshot.nextRelationId;
+      throw error;
+    }
+  }
+
+  resetForRebuild(): void {
+    this.assertOpen();
+    if (this.readOnly) {
+      throw new NarrativeIndexStoreError('read-only', 'this index store instance may not write');
+    }
+    this.documents = new Map();
+    this.entities = new Map();
+    this.duplicates = new Map();
+    this.mentions = [];
+    this.relations = [];
+    this.nextDocId = 1;
+    this.nextRelationId = 1;
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+
+  // ---- reads ------------------------------------------------------------
+
+  getDocument(relPath: string): IndexedDocument | undefined {
+    const found = this.documents.get(relPath);
+    return found ? clone(found) : undefined;
+  }
+
+  listDocuments(): IndexedDocument[] {
+    return [...this.documents.values()].map(clone).sort((a, b) => a.relPath.localeCompare(b.relPath));
+  }
+
+  getEntity(entityId: string): NarrativeEntity | undefined {
+    const found = this.entities.get(entityId);
+    return found ? clone(found) : undefined;
+  }
+
+  findEntities(query: EntityQuery = {}): NarrativeEntity[] {
+    const prefix = query.namePrefix?.toLowerCase();
+    const matches = [...this.entities.values()].filter(entity => {
+      if (query.type !== undefined && entity.type !== query.type) {
+        return false;
+      }
+      if (query.origin !== undefined && entity.origin !== query.origin) {
+        return false;
+      }
+      if (prefix !== undefined && prefix.length > 0) {
+        const names = [entity.name, ...entity.aliases];
+        if (!names.some(name => name.toLowerCase().startsWith(prefix))) {
+          return false;
+        }
+      }
+      return true;
+    });
+    matches.sort((a, b) => a.id.localeCompare(b.id));
+    const limited = query.limit === undefined ? matches : matches.slice(0, query.limit);
+    return limited.map(clone);
+  }
+
+  getMentions(query: MentionQuery = {}): NarrativeMention[] {
+    return this.mentions
+      .filter(mention => {
+        if (query.entityId !== undefined && mention.entityId !== query.entityId) {
+          return false;
+        }
+        if (query.relPath !== undefined && mention.evidence.path !== query.relPath) {
+          return false;
+        }
+        if (query.brokenOnly === true && mention.resolved) {
+          return false;
+        }
+        return true;
+      })
+      .map(clone);
+  }
+
+  getRelations(query: RelationQuery = {}): NarrativeRelation[] {
+    return this.relations
+      .filter(row => matchesRelationQuery(row.relation, query))
+      .map(row => clone(row.relation));
+  }
+
+  neighbourhood(query: NeighbourhoodQuery): NarrativeRelation[] {
+    const seenEntities = new Set([query.entityId]);
+    let frontier = [query.entityId];
+    const collected: NarrativeRelation[] = [];
+    const collectedKeys = new Set<string>();
+    for (let hop = 0; hop < query.depth; hop++) {
+      const nextFrontier: string[] = [];
+      for (const entityId of frontier) {
+        for (const row of this.relations) {
+          const relation = row.relation;
+          if (relation.sourceId !== entityId && relation.targetId !== entityId) {
+            continue;
+          }
+          if (query.relTypes !== undefined && !query.relTypes.includes(relation.relType)) {
+            continue;
+          }
+          if (query.origins !== undefined && !query.origins.includes(relation.origin)) {
+            continue;
+          }
+          const key = `${row.relationId}`;
+          if (!collectedKeys.has(key)) {
+            collectedKeys.add(key);
+            collected.push(clone(relation));
+          }
+          for (const end of [relation.sourceId, relation.targetId]) {
+            if (!seenEntities.has(end)) {
+              seenEntities.add(end);
+              nextFrontier.push(end);
+            }
+          }
+        }
+      }
+      frontier = nextFrontier;
+      if (frontier.length === 0) {
+        break;
+      }
+    }
+    return query.limit === undefined ? collected : collected.slice(0, query.limit);
+  }
+
+  getDuplicateEntities(): DuplicateEntityRecord[] {
+    return [...this.duplicates.entries()]
+      .map(([entityId, relPaths]) => ({ entityId, relPaths: [...relPaths].sort() }))
+      .sort((a, b) => a.entityId.localeCompare(b.entityId));
+  }
+
+  // ---- writes -----------------------------------------------------------
+
+  private makeWriter(committedGeneration: number): NarrativeIndexWriter {
+    const requireDocument = (relPath: string, what: string): void => {
+      if (!this.documents.has(relPath)) {
+        throw new NarrativeIndexStoreError(
+          'constraint-violation',
+          `${what} refers to document '${relPath}', which is not indexed (FOREIGN KEY document(doc_id))`
+        );
+      }
+    };
+    return {
+      putDocument: (input: IndexedDocumentInput): number => {
+        const existing = this.documents.get(input.relPath);
+        const docId = existing?.docId ?? this.nextDocId++;
+        this.documents.set(input.relPath, {
+          ...clone(input),
+          manifestIncluded: input.manifestIncluded ?? true,
+          docId,
+          generation: committedGeneration
+        });
+        return docId;
+      },
+      deleteDocument: (relPath: string): void => {
+        if (!this.documents.delete(relPath)) {
+          return;
+        }
+        for (const [entityId, entity] of [...this.entities]) {
+          if (entity.sourcePath === relPath) {
+            this.entities.delete(entityId);
+          }
+        }
+        for (const [entityId, paths] of [...this.duplicates]) {
+          paths.delete(relPath);
+          if (paths.size === 0) {
+            this.duplicates.delete(entityId);
+          }
+        }
+        this.mentions = this.mentions.filter(mention => mention.evidence.path !== relPath);
+        this.relations = this.relations.filter(row => row.relation.ownerPath !== relPath);
+      },
+      putEntity: (entity: NarrativeEntity): void => {
+        requireDocument(entity.sourcePath, `entity '${entity.id}'`);
+        this.entities.set(entity.id, clone(entity));
+      },
+      putDuplicateEntity: (entityId: string, relPath: string): void => {
+        requireDocument(relPath, `duplicate of entity '${entityId}'`);
+        const paths = this.duplicates.get(entityId) ?? new Set<string>();
+        paths.add(relPath);
+        this.duplicates.set(entityId, paths);
+      },
+      putMention: (mention: NarrativeMention): void => {
+        assertMentionInvariants(mention);
+        requireDocument(mention.evidence.path, `mention of '${mention.entityId}'`);
+        this.mentions.push(clone(mention));
+      },
+      putRelation: (relation: NarrativeRelation): number => {
+        assertRelationInvariants(relation);
+        if (relation.ownerPath !== undefined) {
+          requireDocument(relation.ownerPath, `relation '${relation.sourceId}->${relation.targetId}'`);
+        }
+        const identity = relationIdentity(relation);
+        const existing = this.relations.find(row => relationIdentity(row.relation) === identity);
+        if (existing) {
+          existing.relation = clone(relation);
+          return existing.relationId;
+        }
+        const relationId = this.nextRelationId++;
+        this.relations.push({ relationId, relation: clone(relation) });
+        return relationId;
+      },
+      clearAll: (): void => {
+        this.entities = new Map();
+        this.duplicates = new Map();
+        this.mentions = [];
+        this.relations = [];
+      }
+    };
+  }
+
+  private assertOpen(): void {
+    if (this.closed) {
+      throw new NarrativeIndexStoreError('storage-unavailable', 'index store is closed');
+    }
+  }
+}
+
+function matchesRelationQuery(relation: NarrativeRelation, query: RelationQuery): boolean {
+  if (query.relType !== undefined && relation.relType !== query.relType) {
+    return false;
+  }
+  if (query.origin !== undefined && relation.origin !== query.origin) {
+    return false;
+  }
+  if (query.relPath !== undefined && relation.ownerPath !== query.relPath) {
+    return false;
+  }
+  if (query.brokenOnly === true && relation.sourceResolved && relation.targetResolved) {
+    return false;
+  }
+  if (query.entityId !== undefined) {
+    const direction = query.direction ?? 'either';
+    const matchesSource = relation.sourceId === query.entityId;
+    const matchesTarget = relation.targetId === query.entityId;
+    if (direction === 'outgoing' && !matchesSource) {
+      return false;
+    }
+    if (direction === 'incoming' && !matchesTarget) {
+      return false;
+    }
+    if (direction === 'either' && !matchesSource && !matchesTarget) {
+      return false;
+    }
+  }
+  return true;
+}
