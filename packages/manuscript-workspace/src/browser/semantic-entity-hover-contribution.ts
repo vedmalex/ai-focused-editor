@@ -13,7 +13,8 @@ import {
   type EntityTypeDescriptor,
   type NarrativeEntity
 } from '../common';
-import { parseWikiLinks, tagKindToEntityKind, wikiEntityHoverCandidate } from '../common/link-navigation';
+import { parseWikiLinks, wikiEntityHoverCandidate } from '@ai-focused-editor/narrative-knowledge';
+import { tagKindToEntityKind } from '../common/link-navigation';
 import { SemanticLinkCommands } from './semantic-link-contribution';
 import { EntityTypeRegistryService } from './entity-type-registry-service';
 

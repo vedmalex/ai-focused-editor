@@ -37,7 +37,7 @@ import {
   mergeEntityTypes,
   parseEntityTypesYaml,
   type EntityTypeProblem
-} from './entity-type-registry';
+} from '@ai-focused-editor/narrative-knowledge';
 
 /**
  * Effective type list (built-in + one author-declared `sloka` type) shared by the

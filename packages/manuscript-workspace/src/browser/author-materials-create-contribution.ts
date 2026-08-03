@@ -19,8 +19,8 @@ import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { Document, isSeq, parseDocument, YAMLSeq } from 'yaml';
 import type { AuthorMaterialsSectionKind } from '../common/author-materials';
-import { entityKindSections } from '../common/entity-type-registry';
-import type { EffectiveEntityType } from '../common/entity-type-registry';
+import { entityKindSections } from '@ai-focused-editor/narrative-knowledge';
+import type { EffectiveEntityType } from '@ai-focused-editor/narrative-knowledge';
 import { EntityTypeRegistryService } from './entity-type-registry-service';
 import {
   buildKnowledgeNoteBody,

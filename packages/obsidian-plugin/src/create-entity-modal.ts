@@ -8,7 +8,7 @@
 import { Modal, Notice, TFile, type App } from 'obsidian';
 import type { BookContext, LoadedBook } from './book-context';
 import { buildEntitySkeleton } from './core/book-model';
-import type { EffectiveEntityType } from '@ai-focused-editor/manuscript-workspace/src/common/entity-type-registry';
+import type { EffectiveEntityType } from '@ai-focused-editor/narrative-knowledge/src/common/entity-type-registry';
 import type { Translator } from './i18n';
 
 export class CreateEntityModal extends Modal {

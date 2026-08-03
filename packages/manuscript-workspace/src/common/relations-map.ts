@@ -11,7 +11,7 @@
  * -preserving merge here makes all of it unit-testable without a DOM.
  */
 
-import { ENTITY_KIND_IDS } from './entity-type-registry';
+import { ENTITY_KIND_IDS } from '@ai-focused-editor/narrative-knowledge';
 import { boundingBox, centerOf, type CanvasElement, type Point } from './excalidraw-canvas-ops';
 import type { NarrativeGraphSnapshot } from './narrative-graph-protocol';
 

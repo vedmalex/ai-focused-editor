@@ -17,7 +17,7 @@ import {
   BASE_ENTITY_TYPES,
   mergeEntityTypes,
   type EntityTypeDescriptor
-} from './entity-type-registry';
+} from '@ai-focused-editor/narrative-knowledge';
 
 const ROOT = 'file:///workspace';
 

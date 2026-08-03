@@ -61,14 +61,14 @@ import {
   type DiscoveredManuscriptFile
 } from '../common/manifest-reconstruction';
 import { parseSemanticMarkdown } from '@ai-focused-editor/semantic-markdown';
-import { collectUnlabeledWikiEntityMatches } from '../common/link-navigation';
+import { collectUnlabeledWikiEntityMatches } from '@ai-focused-editor/narrative-knowledge';
 import {
   BASE_ENTITY_TYPES,
   mergeEntityTypes,
   parseEntityTypesYaml,
   type EffectiveEntityType,
   type EntityTypeProblem
-} from '../common/entity-type-registry';
+} from '@ai-focused-editor/narrative-knowledge';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import { AFE_MANUSCRIPT_SECTION_CONTEXT_KEY } from './manuscript-tree';

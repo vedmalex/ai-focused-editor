@@ -68,7 +68,7 @@ import {
   type ChapterFrontMatterField,
   type ChapterFrontMatterResult,
   type ChapterFrontMatterValue
-} from '../common/chapter-front-matter';
+} from '@ai-focused-editor/narrative-knowledge';
 import type { EntityMention, EntityMentionSegment, NarrativeEntity } from '../common';
 import { NarrativeEntityService } from '../common';
 import { NoteIndexService } from './note-index-service';

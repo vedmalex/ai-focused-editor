@@ -10,7 +10,7 @@
 import type { App, TFile } from 'obsidian';
 import { parse } from 'yaml';
 import { extractBookMeta } from '@ai-focused-editor/manuscript-workspace/src/common/book-catalog';
-import type { EffectiveEntityType, EntityTypeProblem } from '@ai-focused-editor/manuscript-workspace/src/common/entity-type-registry';
+import type { EffectiveEntityType, EntityTypeProblem } from '@ai-focused-editor/narrative-knowledge/src/common/entity-type-registry';
 import {
   buildEntityIndex,
   detectBookRoots,

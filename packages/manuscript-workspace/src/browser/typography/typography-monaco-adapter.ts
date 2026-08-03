@@ -8,7 +8,7 @@
 
 import { injectable } from '@theia/core/shared/inversify';
 import * as monaco from '@theia/monaco-editor-core';
-import { parseChapterFrontMatter } from '../../common/chapter-front-matter';
+import { parseChapterFrontMatter } from '@ai-focused-editor/narrative-knowledge';
 import { computeCodeMask } from '../../common/typography/code-mask';
 import {
   LineSnapshot,

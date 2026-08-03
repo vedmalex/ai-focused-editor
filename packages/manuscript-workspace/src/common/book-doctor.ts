@@ -34,7 +34,7 @@ import {
   BASE_ENTITY_TYPES,
   type EntityTypeDescriptor,
   type EntityTypeProblem
-} from './entity-type-registry';
+} from '@ai-focused-editor/narrative-knowledge';
 import { buildEntityYaml } from './entity-creation';
 import { OBSIDIAN_PLUGIN_ID } from './obsidian-plugin-protocol';
 import { scanLegacyAiSettings } from './ai-settings-migration';

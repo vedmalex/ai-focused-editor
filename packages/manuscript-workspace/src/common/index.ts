@@ -14,8 +14,11 @@ export * from './generated-image';
 export * from './image-crop';
 export * from './image-mime';
 export * from './media-mime';
-export * from './entity-mentions';
-export * from './entity-type-registry';
+// Entity mentions, the entity-type registry, chapter front-matter and the
+// wiki-link parser were relocated into the narrative-knowledge package in
+// TASK-022 WP-0 (plan AD-1); re-exported here — as with the two extractions
+// above — so existing `../common` imports keep resolving.
+export * from '@ai-focused-editor/narrative-knowledge';
 export * from './text-range';
 export * from './entity-type-forms';
 export * from './excalidraw-canvas-ops';

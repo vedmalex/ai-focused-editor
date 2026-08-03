@@ -12,7 +12,7 @@
  */
 
 import { parse } from 'yaml';
-import type { EntityFieldDescriptor, EntityTypeDescriptor } from './entity-type-registry';
+import type { EntityFieldDescriptor, EntityTypeDescriptor } from '@ai-focused-editor/narrative-knowledge';
 
 /** Localization seam so this common module stays i18n-agnostic and byte-stable. */
 export interface EntityHoverLocalizeHooks {

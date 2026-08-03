@@ -29,7 +29,7 @@ import {
   type EntityFieldKind,
   type EntityTypeDescriptor,
   type EntityTypeProblem
-} from './entity-type-registry';
+} from '@ai-focused-editor/narrative-knowledge';
 
 /**
  * One editable field row of an author entity type. `label` carries the field's

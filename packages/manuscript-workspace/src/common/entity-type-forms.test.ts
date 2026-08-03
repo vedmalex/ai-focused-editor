@@ -4,7 +4,7 @@ import {
   DEFAULT_AUTHOR_FIELDS,
   DEFAULT_AUTHOR_ICON,
   parseEntityTypesYaml
-} from './entity-type-registry';
+} from '@ai-focused-editor/narrative-knowledge';
 import {
   defaultFieldRows,
   emptyAuthorTypeRow,

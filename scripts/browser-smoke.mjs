@@ -4,6 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import net from 'node:net';
 import { chromium } from 'playwright';
+import {
+  assertNarrativeKnowledgeRoundTrip,
+  probeReaderScript
+} from './narrative-knowledge-round-trip.mjs';
 
 const repoRoot = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
 const appDir = join(repoRoot, 'apps/browser');
@@ -111,6 +115,13 @@ try {
   undefined, {
     timeout: 20_000
   });
+
+  // TASK-022 WP-0: the narrative-knowledge RPC round-trip, read off the value
+  // the frontend probe recorded at start.
+  await assertNarrativeKnowledgeRoundTrip(
+    () => page.evaluate(probeReaderScript()),
+    'browser'
+  );
 
   console.log(`Browser smoke passed: ${url}`);
 } catch (error) {

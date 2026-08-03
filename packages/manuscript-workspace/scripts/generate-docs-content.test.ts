@@ -24,7 +24,7 @@ import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { computeSourceFingerprint } from '../src/node/docs/source-scan';
+import { computeSourceFingerprint, INVENTORY_SOURCE_ROOTS } from '../src/node/docs/source-scan';
 import { hashSourceRef } from '../src/node/docs/source-refs';
 
 /**
@@ -44,11 +44,15 @@ const CONTENT_DIR = `${PACKAGE_DIR}/src/browser/docs/content`;
 const INVENTORY_PATH = `${PACKAGE_DIR}/docs-inventory.generated.json`;
 const MODULE_PATH = `${PACKAGE_DIR}/src/browser/docs/docs-content.generated.ts`;
 
-const SOURCE_DIRS = [
-  `${PACKAGE_DIR}/src`,
-  'packages/ai-connect-theia/src',
-  'packages/document-preview-theia/src'
-];
+/**
+ * The declared traversal roots as bare directories — DERIVED from
+ * {@link INVENTORY_SOURCE_ROOTS}, not restated. This was the THIRD hand-kept
+ * copy of one declaration (the others are in `extract-feature-inventory.test.ts`
+ * and `src/node/docs/source-scan.test.ts`); adding a root in TASK-022 WP-0
+ * broke all three at once, since the generator rejects a declared-but-absent
+ * root and every fixture repo here is built from this list.
+ */
+const SOURCE_DIRS = INVENTORY_SOURCE_ROOTS.map(root => root.replace(/\/\*\*\/\*\.ts$/, ''));
 
 interface InventorySpec {
   commands?: string[];

@@ -2,7 +2,7 @@ import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { computeSourceFingerprint } from '../src/node/docs/source-scan';
+import { computeSourceFingerprint, INVENTORY_SOURCE_ROOTS } from '../src/node/docs/source-scan';
 
 /**
  * Fixture trees and extractor output live in the OS temp directory, never in the
@@ -19,11 +19,15 @@ let outCounter = 0;
 /** …/packages/manuscript-workspace/scripts → the repository root. */
 const REPO_ROOT = join(import.meta.dir, '../../..');
 
-const PACKAGE_SOURCE_DIRS = [
-  'packages/manuscript-workspace/src',
-  'packages/ai-connect-theia/src',
-  'packages/document-preview-theia/src'
-];
+/**
+ * The declared traversal roots as bare directories — DERIVED from
+ * {@link INVENTORY_SOURCE_ROOTS}, for the same reason the twin list in
+ * `src/node/docs/source-scan.test.ts` is: this was the SECOND hand-kept copy of
+ * one declaration, and adding a root in TASK-022 WP-0 broke both. The extractor
+ * rejects a declared-but-absent root, so a fixture repo that does not create
+ * every declared root fails for a reason that has nothing to do with the test.
+ */
+const PACKAGE_SOURCE_DIRS = INVENTORY_SOURCE_ROOTS.map(root => root.replace(/\/\*\*\/\*\.ts$/, ''));
 
 /** Where a fixture's own sources go, so a test never depends on the real tree. */
 const FIXTURE_SOURCE_DIR = 'packages/manuscript-workspace/src/browser';
@@ -878,11 +882,12 @@ export const A: Command = { id: 'ai-focused-editor.a', label: 'A' };
 
     const inventory = await extract(repoRoot);
     expect(inventory.version).toBe(2);
-    expect(inventory.packages).toEqual([
-      'manuscript-workspace',
-      'ai-connect-theia',
-      'document-preview-theia'
-    ]);
+    // Derived from the declaration for the same reason PACKAGE_SOURCE_DIRS is:
+    // the artifact lists exactly the traversed packages, so restating them here
+    // would be a third copy of one list.
+    expect(inventory.packages).toEqual(
+      PACKAGE_SOURCE_DIRS.map(dir => dir.replace(/^packages\//, '').replace(/\/src$/, ''))
+    );
     expect(inventory.sourceFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 

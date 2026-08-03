@@ -5,7 +5,7 @@
 
 | Metric | Value |
 |---|---|
-| Inventory packages | `manuscript-workspace`, `ai-connect-theia`, `document-preview-theia` |
+| Inventory packages | `manuscript-workspace`, `ai-connect-theia`, `document-preview-theia`, `narrative-knowledge` |
 | Inventory namespaces | `ai-focused-editor.`, `ai-connect.` |
 | Inventory ids (commands) | 173 |
 | Inventory keys (preferences) | 22 |

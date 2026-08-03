@@ -1,0 +1,35 @@
+{
+  "name": "@ai-focused-editor/narrative-knowledge",
+  "version": "0.1.0",
+  "description": "Narrative knowledge index for AI Focused Editor: deterministic entity/mention/relation extraction, an inspectable index behind a storage port, and the separable graph core.",
+  "keywords": [
+    "theia-extension"
+  ],
+  "license": "UNLICENSED",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "main": "lib/common/index.js",
+  "typings": "lib/common/index.d.ts",
+  "dependencies": {
+    "@theia/core": "1.73.1",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "reflect-metadata": "0.2.2",
+    "typescript": "~5.8.3"
+  },
+  "scripts": {
+    "build": "rm -rf lib && tsc",
+    "clean": "rm -rf lib *.tsbuildinfo",
+    "watch": "tsc -w"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/narrative-knowledge-frontend-module",
+      "backend": "lib/node/narrative-knowledge-backend-module"
+    }
+  ]
+}

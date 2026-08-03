@@ -8,6 +8,10 @@ import { _electron as electron } from 'playwright';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
+import {
+  assertNarrativeKnowledgeRoundTrip,
+  probeReaderScript
+} from './narrative-knowledge-round-trip.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const appDir = join(repoRoot, 'apps/electron');
@@ -170,6 +174,17 @@ try {
     for (const text of fatal) {
       fail(`console: ${text.slice(0, 300)}`);
     }
+  }
+
+  // TASK-022 WP-0: the narrative-knowledge RPC round-trip, read off the value
+  // the frontend probe recorded at start.
+  try {
+    await assertNarrativeKnowledgeRoundTrip(
+      () => window.evaluate(probeReaderScript()),
+      'electron'
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
 } finally {
   await app.close().catch(() => undefined);
