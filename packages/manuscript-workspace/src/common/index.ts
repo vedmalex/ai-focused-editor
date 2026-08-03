@@ -18,7 +18,20 @@ export * from './media-mime';
 // wiki-link parser were relocated into the narrative-knowledge package in
 // TASK-022 WP-0 (plan AD-1); re-exported here — as with the two extractions
 // above — so existing `../common` imports keep resolving.
-export * from '@ai-focused-editor/narrative-knowledge';
+//
+// THE FOUR RELOCATED MODULES, NOT THE WHOLE PACKAGE (TASK-022 WP-1). A wildcard
+// over the package barrel also drags in the new domain contracts, and one of
+// them is called `NarrativeEntity` — the same name this barrel already exports
+// from `./narrative-entity-protocol` for the PRE-RENAME shape. `export *`
+// resolves that collision by making the name ambiguous and dropping it, which
+// `tsc` reports as TS2308 and which, until it did, would have silently changed
+// which type dozens of consumers were compiled against. The two shapes coexist
+// on purpose until WP-7 migrates the consumers; keeping this re-export narrow
+// is what lets them.
+export * from '@ai-focused-editor/narrative-knowledge/lib/common/entity-mentions';
+export * from '@ai-focused-editor/narrative-knowledge/lib/common/entity-type-registry';
+export * from '@ai-focused-editor/narrative-knowledge/lib/common/chapter-front-matter';
+export * from '@ai-focused-editor/narrative-knowledge/lib/common/wiki-links';
 export * from './text-range';
 export * from './entity-type-forms';
 export * from './excalidraw-canvas-ops';

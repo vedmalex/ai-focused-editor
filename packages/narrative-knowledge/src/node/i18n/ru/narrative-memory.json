@@ -1,0 +1,13 @@
+{
+  "ai-focused-editor": {
+    "narrative-memory": {
+      "index-failure-storage-unavailable": "Не удалось открыть файл индекса рукописи.",
+      "index-failure-storage-corrupted": "Файл индекса повреждён и не восстановился. Нужна полная перестройка.",
+      "index-failure-disk-full": "На диске нет места для индекса рукописи.",
+      "index-failure-permission-denied": "Нет прав на чтение или запись файла индекса.",
+      "index-failure-manifest-unreadable": "Не удалось прочитать manifest.yaml — порядок глав неизвестен.",
+      "index-failure-extraction-failed": "Не удалось разобрать файл рукописи при построении индекса.",
+      "index-failure-internal": "Внутренняя ошибка индекса. Подробности — в журнале бэкенда."
+    }
+  }
+}

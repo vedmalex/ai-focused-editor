@@ -36,5 +36,5 @@ export interface NarrativeGraphEdge {
  * `NarrativeRelation`.
  */
 export function graphEdgeKey(edge: NarrativeGraphEdge): string {
-  return `${graphNodeKey(edge.source)}${edge.relType}${graphNodeKey(edge.target)}`;
+  return `${graphNodeKey(edge.source)}\u0001${edge.relType}\u0001${graphNodeKey(edge.target)}`;
 }

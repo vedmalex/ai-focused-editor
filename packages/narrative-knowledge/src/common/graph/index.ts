@@ -8,3 +8,13 @@
  */
 export * from './graph-node';
 export * from './graph-edge';
+
+// The domain the core consumes (TASK-022 WP-1). These live INSIDE the folder
+// rather than beside it because half 2 of prohibition (e) forbids the core from
+// importing its neighbours: anything the core reads has to travel with it, or
+// the folder is not liftable and the boundary is a word.
+export * from './narrative-origin';
+export * from './evidence';
+export * from './narrative-entity';
+export * from './narrative-mention';
+export * from './narrative-relation';

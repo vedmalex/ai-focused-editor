@@ -235,6 +235,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@theia/core": "1.73.1",
+        "ajv": "8.20.0",
         "yaml": "2.9.0",
       },
       "devDependencies": {

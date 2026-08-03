@@ -23,11 +23,12 @@
     "test:widget": "bun test packages/manuscript-workspace/src/browser/welcome-widget.test.ts packages/manuscript-workspace/src/browser/semantic-link-contribution.test.ts packages/manuscript-workspace/src/browser/narrative-consumer-baseline.test.ts",
     "test:typography": "bun test packages/manuscript-workspace/src/browser/typography",
     "test:scripts": "bun test ./scripts",
+    "typecheck:narrative-knowledge": "bun run --cwd packages/narrative-knowledge typecheck",
     "typecheck:obsidian": "bun run --cwd packages/obsidian-plugin typecheck",
     "test:electron": "node scripts/electron-smoke.mjs",
     "test:ui": "node scripts/browser-smoke.mjs",
     "test:ui:flows": "bash scripts/ui-flows/run-flow-checks.sh",
-    "verify": "bun run build:packages && bun run test && bun run typecheck:obsidian && bun run --cwd packages/manuscript-workspace docs:drift && bun run build && bun run build:electron",
+    "verify": "bun run build:packages && bun run test && bun run typecheck:narrative-knowledge && bun run typecheck:obsidian && bun run --cwd packages/manuscript-workspace docs:drift && bun run build && bun run build:electron",
     "verify:full": "bun run verify && bun run test:electron && bun run test:ui",
     "watch": "bun run --cwd packages/manuscript-workspace watch"
   },
