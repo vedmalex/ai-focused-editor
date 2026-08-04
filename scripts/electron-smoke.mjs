@@ -16,7 +16,9 @@ import {
   assertNarrativeKnowledgeRebuildReady,
   rebuildRoundTripReaderScript,
   assertNarrativeKnowledgeDiagnosticsEnvelopesAgree,
-  diagnosticsEnvelopesReaderScript
+  diagnosticsEnvelopesReaderScript,
+  assertNarrativeKnowledgeWatcherSelfUpdates,
+  watcherStatusSnapshotReaderScript
 } from './narrative-knowledge-round-trip.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -230,6 +232,20 @@ try {
   try {
     await assertNarrativeKnowledgeDiagnosticsEnvelopesAgree(
       () => window.evaluate(diagnosticsEnvelopesReaderScript()),
+      'electron'
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+
+  // TASK-022 ISS-359: the index must update ITSELF from an on-disk edit, with
+  // NO call to `rebuild()` anywhere in the check — the one shape of proof that
+  // catches "the file watcher never starts in a running application". Same
+  // shared function as the browser smoke; edits/restores a real fixture file
+  // on disk regardless of pass or fail.
+  try {
+    await assertNarrativeKnowledgeWatcherSelfUpdates(
+      () => window.evaluate(watcherStatusSnapshotReaderScript()),
       'electron'
     );
   } catch (error) {

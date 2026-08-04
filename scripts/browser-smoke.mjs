@@ -12,7 +12,9 @@ import {
   assertNarrativeKnowledgeRebuildReady,
   rebuildRoundTripReaderScript,
   assertNarrativeKnowledgeDiagnosticsEnvelopesAgree,
-  diagnosticsEnvelopesReaderScript
+  diagnosticsEnvelopesReaderScript,
+  assertNarrativeKnowledgeWatcherSelfUpdates,
+  watcherStatusSnapshotReaderScript
 } from './narrative-knowledge-round-trip.mjs';
 
 const repoRoot = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
@@ -153,6 +155,17 @@ try {
   // `getDuplicateEntities` never crossed the real RPC boundary in the unit tests.
   await assertNarrativeKnowledgeDiagnosticsEnvelopesAgree(
     () => page.evaluate(diagnosticsEnvelopesReaderScript()),
+    'browser'
+  );
+
+  // TASK-022 ISS-359: the index must update ITSELF from an on-disk edit, with
+  // NO call to `rebuild()` anywhere in the check — the one shape of proof that
+  // catches "the file watcher never starts in a running application" (every
+  // check above either observes the never-populated start-up probe or drives
+  // `rebuild()` explicitly, which works whether or not a maintainer exists at
+  // all). Runs LAST and edits/restores a real fixture file on disk.
+  await assertNarrativeKnowledgeWatcherSelfUpdates(
+    () => page.evaluate(watcherStatusSnapshotReaderScript()),
     'browser'
   );
 

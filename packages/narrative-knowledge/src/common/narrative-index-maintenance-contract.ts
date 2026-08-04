@@ -754,6 +754,39 @@ export const NARRATIVE_MAINTENANCE_CONTRACT: NarrativeMaintenanceContractCase[] 
     }
   },
   {
+    name: 'stop() disposes the watcher itself, not only its listeners (ISS-359)',
+    async run(makeHarness) {
+      // Regression fixture for ISS-359: `stop()` used to splice
+      // `this.subscriptions`, which holds only the disposables
+      // `onDidChangeFiles`/`onDidFail` return — "stop calling me back", never
+      // "stop watching". `NodeNarrativeKnowledgeService.dispose()`'s own doc
+      // comment promises the watcher itself is released; before this fix that
+      // promise was false the moment a maintainer's `start()` was ever really
+      // called by a running application (which, before ISS-359's main fix,
+      // never happened — so nothing observed the gap).
+      const harness = await makeHarness();
+      const scheduler = new ManualTimerScheduler();
+      const watcher = new TestNarrativeFileWatcher();
+      const session = new NarrativeIndexSession({ store: harness.store, schemaVersion: SCHEMA_VERSION });
+      const maintainer = new NarrativeIndexMaintainer({
+        session,
+        source: new InMemoryWorkspaceSource(manuscript()),
+        config: () => harness.configStore.resolve(CONTRACT_ROOT),
+        scheduler,
+        watcher,
+        rootPath: CONTRACT_ROOT
+      });
+      maintainer.start();
+      equal(watcher.isDisposed, false, 'not disposed while the maintainer is running');
+      maintainer.stop();
+      equal(watcher.isDisposed, true, 'stop() must dispose the watcher, releasing its dispatcher registration');
+      // Idempotent: a second stop() (e.g. from a caller that also disposes the
+      // whole service on shutdown) must not throw.
+      maintainer.stop();
+      equal(watcher.isDisposed, true, 'still disposed after a second, idempotent stop()');
+    }
+  },
+  {
     name: 'ОВ-9б tooth 3 — an IDEMPOTENT configure does not bump configVersion and does not recreate a timer',
     async run(makeHarness) {
       const built = await build(makeHarness);

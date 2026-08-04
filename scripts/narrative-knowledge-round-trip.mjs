@@ -1,3 +1,7 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+
 // Shared round-trip assertion for the narrative-knowledge RPC service
 // (TASK-022 WP-0).
 //
@@ -431,4 +435,150 @@ export async function assertNarrativeToolsRegistered(readToolRegistry, target) {
   console.log(
     `PASS [${target}] narrative read-only AI tools registered: ${NARRATIVE_TOOL_IDS.join(', ')}`
   );
+}
+
+// ---------------------------------------------------------------------------
+// TASK-022 ISS-359 — the index must update ITSELF from an on-disk edit, with
+// NO call to `rebuild()`. This is the one check this file did not have before
+// ISS-359: every assertion above either observes the START-UP probe (which
+// only ever sees `absent`/`not-built`) or drives `rebuild()` EXPLICITLY, which
+// is exactly the wrong shape to catch "the file watcher never starts" —
+// `rebuild()` works whether or not any maintainer/watcher is alive at all.
+// ---------------------------------------------------------------------------
+
+/** The fixture file this tooth edits and restores. Content-only changes to a
+ *  `content/*.md` chapter are INCREMENTAL (never a full-rebuild trigger — see
+ *  `changeForcesRebuild`), so a generation move here can only be the watcher
+ *  path, not an escalation this check would misread as success. */
+const WATCHER_SELF_UPDATE_TARGET_RELPATH = 'content/chapter-01.md';
+
+/**
+ * Renderer-side reader: resolve the workspace root exactly as the other
+ * readers in this file do, then read BOTH `getIndexStatus` and
+ * `listDocuments` in one round trip — the two facts
+ * {@link assertNarrativeKnowledgeWatcherSelfUpdates} needs on every poll.
+ */
+export function watcherStatusSnapshotReaderScript() {
+  return `(async () => {
+    const container = window.theia && window.theia.container;
+    if (!container) { return { ok: false, error: 'the Theia container is not available' }; }
+    const findKey = (label) => {
+      for (const [candidate] of container._bindingDictionary._map.entries()) {
+        const candidateLabel = candidate && (candidate.description || candidate.name);
+        if (candidateLabel === label) { return candidate; }
+      }
+      return undefined;
+    };
+    try {
+      const workspaceServiceKey = findKey('WorkspaceService');
+      if (!workspaceServiceKey) { return { ok: false, error: 'WorkspaceService is not bound in this container' }; }
+      const workspaceService = container.get(workspaceServiceKey);
+      await workspaceService.ready;
+      const roots = workspaceService.tryGetRoots();
+      const root = (roots && roots[0]) || (await workspaceService.roots)[0];
+      const rootUri = root && root.resource ? root.resource.toString() : undefined;
+      if (!rootUri) { return { ok: false, error: 'no workspace root is open' }; }
+
+      const serviceKey = findKey('NarrativeKnowledgeService');
+      if (!serviceKey) { return { ok: false, error: 'NarrativeKnowledgeService is not bound in this container' }; }
+      const service = container.get(serviceKey);
+
+      const [state, documentsEnvelope] = await Promise.all([
+        service.getIndexStatus(rootUri),
+        service.listDocuments(rootUri)
+      ]);
+      return { ok: true, rootUri, state, documents: documentsEnvelope.data };
+    } catch (error) {
+      return { ok: false, error: String((error && error.message) || error) };
+    }
+  })()`;
+}
+
+/**
+ * Prove the index updates ITSELF from a real on-disk edit — no `rebuild()`
+ * call anywhere in this function — within a bounded wait.
+ *
+ * WHY THIS IS THE RIGHT SHAPE TO CATCH ISS-359 AND THE OTHERS ARE NOT. Every
+ * existing check either reads the start-up probe (never populated) or drives
+ * `rebuild()` directly (`rebuildRoundTripReaderScript`), which exercises
+ * `NodeNarrativeKnowledgeService.rebuild()` regardless of whether any
+ * `NarrativeIndexMaintainer` was ever constructed — a maintainer that is never
+ * built, never started and owns no watcher is INVISIBLE to that call. This
+ * function instead edits a real fixture file ON DISK, through `node:fs`, and
+ * waits for `getIndexStatus().generation` to move and for the edited
+ * document's stored `sizeBytes`/`contentHash` to change — the only way either
+ * can happen with no `rebuild()` in the call chain is a live watcher (or, at
+ * worst, the fallback sweep) picking the edit up on its own.
+ *
+ * THE FIXTURE IS ALWAYS RESTORED, INCLUDING ON THE FAILURE/TIMEOUT PATH. A
+ * smoke run must leave `examples/sample-book` byte-for-byte as it found it —
+ * both smokes point AT THE SAME directory and a leftover edit would corrupt
+ * whichever target runs next (and the repository's own working tree).
+ *
+ * LIVES HERE, ONCE, RATHER THAN IN EITHER RUNNER. Both `browser-smoke.mjs` and
+ * `electron-smoke.mjs` call this with their own `readSnapshot`, and the
+ * electron runner wraps each assertion in `try { ... } catch { fail(...) }`
+ * rather than letting a failure abort the whole run — so the restore MUST
+ * happen inside this shared function's own `finally`, never depend on a
+ * runner's control flow noticing the throw.
+ */
+export async function assertNarrativeKnowledgeWatcherSelfUpdates(readSnapshot, target, timeoutMs = 30_000) {
+  const baseline = await readSnapshot();
+  if (!baseline || !baseline.ok) {
+    throw new Error(
+      `[${target}] could not read the narrative-knowledge watcher snapshot: ` +
+      `${baseline ? baseline.error : 'nothing returned'}`
+    );
+  }
+  const { rootUri, state: beforeState, documents: beforeDocuments } = baseline;
+  const beforeDoc = (beforeDocuments || []).find(doc => doc.relPath === WATCHER_SELF_UPDATE_TARGET_RELPATH);
+  if (!beforeDoc) {
+    throw new Error(
+      `[${target}] the fixture manuscript has no indexed document at ` +
+      `${WATCHER_SELF_UPDATE_TARGET_RELPATH} — cannot prove a self-update against it. ` +
+      'This check must run AFTER the index has reached ready (see assertNarrativeKnowledgeRebuildReady).'
+    );
+  }
+  const beforeGeneration = typeof beforeState?.generation === 'number' ? beforeState.generation : -1;
+
+  const filePath = join(fileURLToPath(rootUri), WATCHER_SELF_UPDATE_TARGET_RELPATH);
+  const originalBytes = readFileSync(filePath, 'utf8');
+  try {
+    const marker = `\n<!-- ISS-359 watcher self-update tooth: ${Date.now()} -->\n`;
+    writeFileSync(filePath, originalBytes + marker, 'utf8');
+
+    const deadline = Date.now() + timeoutMs;
+    let lastSeenGeneration = beforeGeneration;
+    while (Date.now() < deadline) {
+      const snapshot = await readSnapshot();
+      if (snapshot && snapshot.ok) {
+        const generation = typeof snapshot.state?.generation === 'number' ? snapshot.state.generation : -1;
+        lastSeenGeneration = generation;
+        const doc = (snapshot.documents || []).find(d => d.relPath === WATCHER_SELF_UPDATE_TARGET_RELPATH);
+        const contentReallyChanged = doc !== undefined && (
+          doc.sizeBytes !== beforeDoc.sizeBytes || doc.contentHash !== beforeDoc.contentHash
+        );
+        if (generation > beforeGeneration && contentReallyChanged) {
+          console.log(
+            `PASS [${target}] narrative-knowledge watcher self-update: generation ` +
+            `${beforeGeneration}->${generation}, ${WATCHER_SELF_UPDATE_TARGET_RELPATH} sizeBytes ` +
+            `${beforeDoc.sizeBytes}->${doc.sizeBytes} — NO rebuild() was called`
+          );
+          return;
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    throw new Error(
+      `[${target}] narrative-knowledge index did NOT self-update after an on-disk edit to ` +
+      `${WATCHER_SELF_UPDATE_TARGET_RELPATH} within ${timeoutMs}ms, and rebuild() was never called: ` +
+      `generation stayed at ${lastSeenGeneration} (baseline ${beforeGeneration}). ` +
+      'The file watcher/maintainer most likely never started for this workspace.'
+    );
+  } finally {
+    // ALWAYS restore — including on the timeout/error path above — a smoke
+    // fixture must leave the repository exactly as it found it.
+    writeFileSync(filePath, originalBytes, 'utf8');
+  }
 }

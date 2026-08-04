@@ -172,7 +172,21 @@ export class NarrativeIndexMaintainer {
     this.armSweep();
   }
 
-  /** Release timers and subscriptions. Idempotent; safe before `start`. */
+  /**
+   * Release timers, subscriptions AND the watcher itself. Idempotent; safe
+   * before `start`.
+   *
+   * `this.subscriptions` ONLY HOLDS LISTENER-REMOVAL DISPOSABLES —
+   * `onDidChangeFiles`/`onDidFail` return "stop calling me back", not "stop
+   * watching". The watcher's OWN `dispose()` (ISS-359, TASK-022 WP-4b) is what
+   * unregisters it from `FileSystemWatcherServiceDispatcher` and releases its
+   * OS watch handle; skipping it here was harmless only because nothing ever
+   * called `start()` in a running application. The moment `start()` is called
+   * for real, every `stop()` that omitted this line would leak one dispatcher
+   * client and one live filesystem watcher per workspace closed or evicted —
+   * exactly what `NodeNarrativeKnowledgeService.dispose()`'s own doc comment
+   * already promises does NOT happen.
+   */
   stop(): void {
     this.started = false;
     this.debounceTimer?.cancel();
@@ -182,6 +196,7 @@ export class NarrativeIndexMaintainer {
     for (const subscription of this.subscriptions.splice(0)) {
       subscription.dispose();
     }
+    this.watcher?.dispose();
   }
 
   /** Wait for the queue to drain. Shutdown needs it; so does every test. */

@@ -44,7 +44,6 @@ import {
   canonicalWorkspaceKey,
   hasManuscriptManifest
 } from './narrative-index-store-registry';
-import { scanWorkspaceFiles } from './narrative-workspace-scan';
 
 /**
  * Backend implementation of `NarrativeKnowledgeService` (TASK-022 WP-0,
@@ -131,7 +130,19 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
       // truthful zero rather than a fabricated success.
       return envelope(session.state(), emptyRebuildReport());
     }
-    return session.rebuild(scanWorkspaceFiles(rootPath));
+    // THROUGH THE MAINTAINER'S OWN GUARD, NOT `session.rebuild()` DIRECTLY
+    // (ISS-359 follow-through). `rebuildNow()` exists precisely because "the
+    // command is a THIRD writer" (see `NarrativeIndexMaintainer`'s class
+    // doc) — a call that bypassed it was harmless only while the watcher
+    // could never be live to race it. Now that `maintainer(rootPath)` starts
+    // a real watcher the moment this workspace's store opens, an explicit
+    // Rebuild and an in-flight watcher pass are reachable at once, and only
+    // the shared queue keeps them from writing over each other. `rebuildNow`
+    // reads the same file set through the same `readAll()` ->
+    // `scanWorkspaceFiles()` call `NodeNarrativeWorkspaceSource` already
+    // wraps, so this changes NOTHING about what a rebuild indexes — only
+    // that it now waits its turn.
+    return this.maintainer(rootPath).rebuildNow();
   }
 
   async getEntity(rootUri: string, entityId: string): Promise<Envelope<NarrativeEntity | undefined>> {
@@ -323,6 +334,14 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
    * is one writer per database. A process-wide maintainer would serialize two
    * unrelated manuscripts against each other for no reason; a per-call one would
    * not serialize anything at all.
+   *
+   * "FIRST USE" IS NOW `session()`'s, NOT A CALLER NOBODY HAS (ISS-359). This
+   * method itself has had a caller since WP-4b (`updateDocument`), but nothing
+   * in a running application ever CALLED `updateDocument` — so the watcher, the
+   * debounce window and the fallback sweep this class owns never existed
+   * outside a test. `session()` calling this the moment a manuscript's store
+   * opens is what makes "first use" mean "the workspace is open" instead of
+   * "a method nobody wires ran".
    */
   protected maintainer(rootUriOrPath: string): NarrativeIndexMaintainer {
     const rootPath = canonicalWorkspaceKey(rootUriOrPath);
@@ -348,7 +367,25 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
    *
    * A NON-MANUSCRIPT ROOT STILL GETS A SESSION, but never a database: the
    * manifest check runs first, and `registry.acquire` — the only thing that
-   * creates a file — is not called at all.
+   * creates a file — is not called at all. THE SAME GUARD KEEPS THE MAINTAINER
+   * OFF A NON-MANUSCRIPT ROOT TOO (ISS-359 trap 1) — a photo folder gets
+   * neither a database nor a live filesystem watcher.
+   *
+   * STARTING THE MAINTAINER HERE, RATHER THAN LEAVING IT TO WHOEVER FIRST CALLS
+   * `maintainer()`, IS WHAT MAKES THE INDEX SELF-UPDATE AT ALL (ISS-359). Every
+   * RPC method that reads or reports the index already funnels through this
+   * method — `getIndexStatus` first among them, polled by the frontend every
+   * five seconds from the moment a workspace opens — so hooking the maintainer
+   * to the SAME cache-miss branch that opens the store means the watcher goes
+   * live at the exact instant something first asks about this workspace, with
+   * no second entry point to forget.
+   *
+   * LOCK TIMING IS UNCHANGED. `registry.acquire(rootPath)` already claims the
+   * writer lock (or falls back to read-only) synchronously, right here, exactly
+   * as it always has — starting the maintainer AFTER that call adds a
+   * watcher subscription and a sweep timer, not an earlier or reordered lock
+   * claim (ISS-357 stays load-bearing: nothing here touches when or how often
+   * the writer role is (re)claimed).
    */
   protected session(rootUriOrPath: string): NarrativeIndexSession {
     const rootPath = canonicalWorkspaceKey(rootUriOrPath);
@@ -357,13 +394,54 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
       return existing;
     }
     const manuscript = hasManuscriptManifest(rootPath);
+    const store = manuscript ? this.registry.acquire(rootPath) : absentStore();
+    if (manuscript) {
+      // `registry.acquire()` above may just have evicted an older root's store
+      // to stay within `maxOpenWorkspaces` (ОВ-4 Б, ISS-359 trap 3) — drop this
+      // service's OWN cache for whatever it evicted before it caches anything
+      // new, or a maintainer built on that root would go on watching files and
+      // arming sweeps against a store that already closed underneath it.
+      this.reconcileMaintainers();
+    }
     const session = new NarrativeIndexSession({
-      store: manuscript ? this.registry.acquire(rootPath) : absentStore(),
+      store,
       schemaVersion: NARRATIVE_INDEX_SCHEMA_VERSION,
       ...(manuscript ? {} : { absentCause: 'no-manuscript' as const })
     });
     this.sessions.set(rootPath, session);
+    if (manuscript) {
+      this.maintainer(rootPath);
+    }
     return session;
+  }
+
+  /**
+   * Stop and drop the maintainer (and cached session) for any root the
+   * registry's LRU no longer holds open (ISS-359 trap 3).
+   *
+   * ONLY ROOTS WITH A MAINTAINER ARE CHECKED, deliberately: a non-manuscript
+   * root's session is never in `registry.openRoots()` at all (it was never
+   * acquired from the registry — see `absentStore()`), so checking every
+   * cached session against that list would evict every non-manuscript entry on
+   * its very next touch. Restricting the check to `this.maintainers.keys()`
+   * — which holds ONLY manuscript roots the registry actually opened — avoids
+   * that false positive by construction.
+   *
+   * SAFE AGAINST SELF-EVICTION. This runs right after `registry.acquire()`
+   * returns, and the LRU never evicts the entry it just inserted (`evictBeyond`
+   * enforces `limit >= 1`), so the root this call is servicing is never the one
+   * dropped here.
+   */
+  protected reconcileMaintainers(): void {
+    const openRoots = new Set(this.registry.openRoots());
+    for (const rootPath of [...this.maintainers.keys()]) {
+      if (openRoots.has(rootPath)) {
+        continue;
+      }
+      this.maintainers.get(rootPath)?.stop();
+      this.maintainers.delete(rootPath);
+      this.sessions.delete(rootPath);
+    }
   }
 }
 
