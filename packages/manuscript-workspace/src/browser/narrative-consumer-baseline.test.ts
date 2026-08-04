@@ -421,6 +421,20 @@ async function seedBaselineRoot(root: string): Promise<void> {
   // см. тест «узлы ранжируются по суммарным появлениям» — так что нессылочная
   // карточка ему не видна и его утверждений не двигает).
   await write(root, 'entities/characters/warrior-4.yaml', 'id: bhima\nname: Bhima\n');
+  // UR-032 — ДВЕ КИРИЛЛИЧЕСКИЕ КАРТОЧКИ, ПЕРВАЯ БУКВА РАЗНОГО РЕГИСТРА. Без них
+  // фикстура доказывает только то, что порядок ВЫДЕРЖИВАЕТСЯ, а не то, что он
+  // ПРАВИЛЬНЫЙ: все прежние имена — латиница нижнего регистра, где code point
+  // и алфавитный порядок случайно совпадают (это и был баг, найденный по
+  // отчёту WP-10, — «третий случай зелёного по совпадению на этой задаче»).
+  // `Ярость` (Я = U+042F) и `агни` (а = U+0430) РАСХОДЯТСЯ ровно по этой оси:
+  // по code point заглавная `Я` ИДЁТ ПЕРЕД строчной `а` (все прописные
+  // кириллические буквы < все строчные), а по коллации 'ru' — наоборот, `а`
+  // алфавитно раньше `я` независимо от регистра. Обе карточки НАМЕРЕННО НЕ
+  // упомянуты ни в одной главе (тот же приём, что у `orphan-hero`/`bhima`
+  // выше) — иначе они появились бы в узлах Narrative Map и сдвинули бы
+  // ассортимент графа, а не только порядок карточек Entity Cards.
+  await write(root, 'entities/characters/yarost.yaml', 'id: yarost\nname: Ярость\n');
+  await write(root, 'entities/characters/agni.yaml', 'id: agni\nname: агни\n');
   await write(root, 'entities/terms/dharma.yaml', 'term: Dharma\n');
   // Карточка, единственная ссылка на которую — BARE-форма `[[gandiva]]`.
   await write(root, 'entities/artifacts/gandiva.yaml', [
@@ -819,6 +833,67 @@ function collectRendered(node: unknown, out: RenderedNode[]): void {
   collectRendered(props.children, out);
 }
 
+/**
+ * UR-032 — порядок КАРТОЧЕК, а не текста внутри одной карточки. Один элемент
+ * на карточку: `{type, id}`, в том порядке, в котором `render()` выкладывает
+ * `article.afe-entity-card <type>` в дерево. `id` читается из вложенного
+ * `div.afe-entity-id`, который `renderEntityCard` кладёт БЕЗУСЛОВНО вторым
+ * ребёнком статьи (`entity.id`, простой текст) — тот же приём, что уже есть в
+ * `collectRendered` для `afe-entity-mention`, только ключ поиска другой.
+ * Строковое сравнение класса — `startsWith('afe-entity-card ')` С ПРОБЕЛОМ,
+ * чтобы не задеть `afe-entity-card-list`/`afe-entity-card-title`
+ * (дефис сразу после `card`, без пробела).
+ */
+interface RenderedEntityCard {
+  type: string;
+  id: string;
+}
+
+function findEntityIdText(node: unknown): string | undefined {
+  if (node === null || node === undefined || node === false || typeof node !== 'object') {
+    return undefined;
+  }
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findEntityIdText(child);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  const element = node as { props?: Record<string, unknown> };
+  const props = element.props ?? {};
+  if (props.className === 'afe-entity-id' && typeof props.children === 'string') {
+    return props.children;
+  }
+  return findEntityIdText(props.children);
+}
+
+function collectEntityCardOrder(node: unknown, out: RenderedEntityCard[] = []): RenderedEntityCard[] {
+  if (node === null || node === undefined || node === false || typeof node !== 'object') {
+    return out;
+  }
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      collectEntityCardOrder(child, out);
+    }
+    return out;
+  }
+  const element = node as { props?: Record<string, unknown> };
+  const props = element.props ?? {};
+  const className = typeof props.className === 'string' ? props.className : undefined;
+  if (className && className.startsWith('afe-entity-card ')) {
+    const type = className.slice('afe-entity-card '.length);
+    const id = findEntityIdText(props.children);
+    if (id !== undefined) {
+      out.push({ type, id });
+    }
+  }
+  collectEntityCardOrder(props.children, out);
+  return out;
+}
+
 describe('WP-9b базовая линия — Entity Cards (содержимое карточки)', () => {
   let root: string;
   /**
@@ -855,8 +930,21 @@ describe('WP-9b базовая линия — Entity Cards (содержимое
     // каталогам, `localeCompare` внутри каждого). `findEntities()` порта
     // (`narrative-index-store.ts`, `narrative-index-store-contract.ts:350-387`)
     // сортирует ГЛОБАЛЬНО по `id`, code point — это контракт индекса, а не
-    // деталь одного адаптера, и обходить его в тонком чтении значило бы
-    // изобретать третий порядок вдобавок к уже названным двум.
+    // деталь одного адаптера, и ЭТО утверждение проверяет ИМЕННО ЕГО:
+    // необработанный `snapshot.entities`, ДО того как `render()` (см. тест
+    // «КАРТОЧКИ ОТОБРАЖАЮТСЯ В КОЛЛИРОВАННОМ ПОРЯДКЕ» ниже) вообще его коснётся.
+    //
+    // ИСПРАВЛЕНО (UR-032). Здесь стоял довод, что обходить id-порядок индекса
+    // в тонком чтении значило бы «изобретать третий порядок вдобавок к уже
+    // названным двум». Довод был неверным и не по адресу: сортировка ДЛЯ
+    // ПОКАЗА — не третий порядок индекса, а уже принятое WP-6 правило
+    // отображения (`compareEntitiesForDisplay`, явный `Intl.Collator('ru', …)`),
+    // которое Narrative Map и четыре AI-инструмента (`narrative_*`) уже
+    // применяют к спискам ИМЁН, читаемым человеком. Entity Cards — именно
+    // такой список, и правило называет его поимённо (UR-032, requests.md).
+    // ГРАНИЦА НЕ СДВИНУЛАСЬ: индекс, а значит и `snapshot.entities` ниже,
+    // остаётся в code point — это утверждение тому свидетель. Сортировка живёт
+    // ТОЛЬКО в `EntityCardsWidget.render()`, отдельным шагом ПОСЛЕ снимка.
     //
     // ПРОВЕРЕНО ЗАПУСКОМ, А НЕ АРГУМЕНТОМ (review finding 1). Раньше это
     // утверждение опиралось на то, что в фикстуре `id` СОВПАДАЛ с именем файла
@@ -873,37 +961,85 @@ describe('WP-9b базовая линия — Entity Cards (содержимое
     // `in-memory-narrative-index-store.ts` (временно, для проверки, не
     // закоммичено) действительно красит это утверждение — `bhima` уезжает в
     // конец списка вместо второй позиции.
+    //
+    // `agni`/`yarost` ДОБАВЛЕНЫ НОВОЙ ФИКСТУРОЙ (UR-032), А НЕ ИЗМЕНИВШИМСЯ
+    // ПОВЕДЕНИЕМ: две кириллические карточки с разным регистром первой буквы,
+    // без которых новая коллированная сортировка виджета была бы зелёной по
+    // совпадению (см. врезку в `seedBaselineRoot`). В ЭТОМ, необработанном,
+    // списке они встают по id, code point — `agni` первой среди `a`-имён
+    // (`agni` < `arjuna` посимвольно), `yarost` последней (`y` — самая правая
+    // буква среди id фикстуры).
     expectSemantic(
       snapshot.entities.map(entity => ({ type: entity.type, id: entity.id, name: entity.name, sourcePath: entity.sourcePath })),
       [
+        { type: 'character', id: 'agni', name: 'агни', sourcePath: 'entities/characters/agni.yaml' },
         { type: 'character', id: 'arjuna', name: 'Arjuna', sourcePath: 'entities/characters/arjuna.yaml' },
         { type: 'character', id: 'bhima', name: 'Bhima', sourcePath: 'entities/characters/warrior-4.yaml' },
         // `dharma.yaml` не несёт `id` -> id берётся из ИМЕНИ ФАЙЛА, имя — из `term`.
         { type: 'term', id: 'dharma', name: 'Dharma', sourcePath: 'entities/terms/dharma.yaml' },
         { type: 'artifact', id: 'gandiva', name: 'Gandiva', sourcePath: 'entities/artifacts/gandiva.yaml' },
         { type: 'character', id: 'krishna', name: 'Krishna', sourcePath: 'entities/characters/krishna.yaml' },
-        { type: 'character', id: 'orphan-hero', name: 'Orphan Hero', sourcePath: 'entities/characters/orphan-hero.yaml' }
+        { type: 'character', id: 'orphan-hero', name: 'Orphan Hero', sourcePath: 'entities/characters/orphan-hero.yaml' },
+        { type: 'character', id: 'yarost', name: 'Ярость', sourcePath: 'entities/characters/yarost.yaml' }
       ],
       'состав и порядок карточек (id, code point)'
     );
-    // ИСПРАВЛЕНО (review finding 1). Старый комментарий здесь утверждал, что
-    // отображаемый (перегруппированный по типу) порядок «остаётся прежним» —
-    // тип → имя файла, — потому что render() виджета перегруппировывает через
-    // `.filter()`, который СОХРАНЯЕТ относительный порядок исходного массива.
-    // Это было ВЕРНО буквально, но вводило в заблуждение: `.filter()` сохраняет
-    // порядок `snapshot.entities`, а тот — id-порядок, не имя-файла-порядок;
-    // они просто СОВПАДАЛИ в старой фикстуре. С `bhima` они расходятся, и
-    // видно, какой из них настоящий: `bhima` отображается ВТОРОЙ (сразу после
-    // `arjuna`), а не последней, как было бы при группировке по имени файла.
-    // Значит рендер — тип → id, и это НОВОЕ наблюдаемое поведение по
-    // сравнению с легаси-сканом (тип → имя файла), просто не увиденное
-    // прежней фикстурой. Мигрированный виджет действительно меняет то, что
-    // видит автор, для любой карточки, где `id` не совпадает с именем файла.
+    // ЭТО УТВЕРЖДЕНИЕ — О СЫРОМ `snapshot.entities`, НЕ О ТОМ, ЧТО РИСУЕТ
+    // ВИДЖЕТ (ИСПРАВЛЕНО, UR-032). Прежний текст здесь заключал из этого же
+    // факта, что «рендер — тип → id»: это было верно ДО UR-032, когда
+    // `render()` строил группы голым `.filter()` без сортировки, и DOM-порядок
+    // буквально совпадал с порядком `snapshot.entities`. С UR-032 это
+    // совпадение ИСЧЕЗЛО НАРОЧНО: `render()` теперь сортирует копию массива
+    // через `compareEntitiesForDisplay` ПЕРЕД группировкой (см. виджет), так
+    // что рендер — коллированный порядок, а НЕ тип → id. Что утверждение ниже
+    // по-прежнему показывает верно — это что `snapshot.entities` (сырой снимок
+    // индекса, ДО отрисовки) идёт по id, а не по имени файла: `bhima`
+    // (`warrior-4.yaml`) стоит ВТОРОЙ среди персонажей, а не последней, как
+    // было бы при группировке по имени файла. Рендеримый DOM-порядок теперь
+    // проверяется ОТДЕЛЬНЫМ тестом ниже.
     expectSemantic(
       snapshot.entities.filter(entity => entity.type === 'character').map(entity => entity.id),
-      ['arjuna', 'bhima', 'krishna', 'orphan-hero'],
-      'порядок ВНУТРИ типа character — тип → id, НЕ тип → имя файла (стоящая находка)'
+      ['agni', 'arjuna', 'bhima', 'krishna', 'orphan-hero', 'yarost'],
+      'порядок ВНУТРИ типа character В СЫРОМ СНИМКЕ — id, code point (индекс, не рендер)'
     );
+  });
+
+  test('UR-032: КАРТОЧКИ ОТОБРАЖАЮТСЯ В КОЛЛИРОВАННОМ ПОРЯДКЕ, а не порядке индекса', () => {
+    // Виджет строится через прототип — тот же приём, что у теста отрисовки
+    // упоминаний ниже: `render()` настоящий, `snapshot` — уже прочитанный
+    // фикстурный снимок (сырой, id-порядок; сортировка — работа `render()`).
+    const widget: any = Object.create(EntityCardsWidget.prototype);
+    widget.snapshot = snapshot;
+    widget.mentionIndex = new Map();
+    const order = collectEntityCardOrder(widget.render());
+
+    // ГРУППА CHARACTERS — где живёт расхождение code point / коллации (UR-032):
+    // `агни` (lowercase а) и `Ярость` (uppercase Я) МЕНЯЮТСЯ МЕСТАМИ относительно
+    // id-порядка. Полный список карточек (все четыре группы, в порядке секций
+    // render()) — коллированный внутри каждой группы, а НЕ id-порядок индекса.
+    expectSemantic(
+      order,
+      [
+        { type: 'character', id: 'agni' },
+        { type: 'character', id: 'yarost' },
+        { type: 'character', id: 'arjuna' },
+        { type: 'character', id: 'bhima' },
+        { type: 'character', id: 'krishna' },
+        { type: 'character', id: 'orphan-hero' },
+        { type: 'artifact', id: 'gandiva' },
+        { type: 'term', id: 'dharma' }
+      ],
+      'порядок отрисованных карточек, компаратор compareEntitiesForDisplay'
+    );
+
+    // СТРАХОВКА ПРОТИВ ПОВТОРНОГО СЛУЧАЙНОГО СОВПАДЕНИЯ: явно утверждаем, что
+    // отрисованный порядок группы character ОТЛИЧАЕТСЯ от id-порядка сырого
+    // снимка. Если будущая правка фикстуры случайно вернёт эти два порядка к
+    // совпадению, эта проверка покраснеет раньше, чем список выше молча
+    // перестанет что-либо различать.
+    const renderedCharacterIds = order.filter(card => card.type === 'character').map(card => card.id);
+    const rawCharacterIds = snapshot.entities.filter(entity => entity.type === 'character').map(entity => entity.id);
+    expect(renderedCharacterIds).not.toEqual(rawCharacterIds);
   });
 
   test('полное содержимое одной карточки, включая пустые массивы вместо undefined', () => {
@@ -1078,10 +1214,19 @@ describe('WP-9b базовая линия — manuscript_find_entities', () => {
     // когда карточка их не объявляет (не `''`/`[]`, как у легаси-снимка) —
     // после `JSON.stringify` ключ с `undefined` пропадает целиком, так что
     // ABSENT здесь означает "ключа нет вовсе", а не "ключ есть и пуст".
+    //
+    // `agni`/`yarost` ДОБАВЛЕНЫ ФИКСТУРОЙ UR-032 (см. `seedBaselineRoot`), А НЕ
+    // ИЗМЕНИВШИМСЯ ПОВЕДЕНИЕМ: `manuscript_find_entities` этот список НЕ
+    // сортирует для показа вообще — `matches` уходит наружу как есть, в
+    // id-порядке индекса (`manuscript-tools-contribution.ts`). Это ОТДЕЛЬНЫЙ,
+    // до сих пор нескорректированный случай того же класса, что чинит UR-032
+    // для Entity Cards — записан как находка в отчёте задачи, не исправлен
+    // здесь (вне объявленного скоупа: UR-032 называет ИМЕННО Entity Cards).
     const all = await parse('{}');
     expectSemantic(
       all,
       [
+        { kind: 'character', id: 'agni', label: 'агни', aliases: [], epithets: ABSENT, summary: ABSENT, arc: ABSENT },
         { kind: 'character', id: 'arjuna', label: 'Arjuna', aliases: [], epithets: ABSENT, summary: ABSENT, arc: ABSENT },
         { kind: 'character', id: 'bhima', label: 'Bhima', aliases: [], epithets: ABSENT, summary: ABSENT, arc: ABSENT },
         { kind: 'term', id: 'dharma', label: 'Dharma', aliases: [], epithets: ABSENT, summary: ABSENT, arc: ABSENT },
@@ -1095,7 +1240,8 @@ describe('WP-9b базовая линия — manuscript_find_entities', () => {
           summary: 'Charioteer of [[char:arjuna|Arjuna]].',
           arc: 'From charioteer to teacher.'
         },
-        { kind: 'character', id: 'orphan-hero', label: 'Orphan Hero', aliases: [], epithets: ABSENT, summary: ABSENT, arc: ABSENT }
+        { kind: 'character', id: 'orphan-hero', label: 'Orphan Hero', aliases: [], epithets: ABSENT, summary: ABSENT, arc: ABSENT },
+        { kind: 'character', id: 'yarost', label: 'Ярость', aliases: [], epithets: ABSENT, summary: ABSENT, arc: ABSENT }
       ],
       'ответ на пустой запрос'
     );
@@ -1120,10 +1266,11 @@ describe('WP-9b базовая линия — manuscript_find_entities', () => {
 
   test('kind фильтрует по ТОЧНОМУ id типа, а не по виду тега', async () => {
     // ПРАВКА, ПРИЧИНА — НОВАЯ ФИКСТУРА (review finding 1): `bhima` — тоже
-    // character, id-порядок ставит её ВТОРОЙ.
+    // character, id-порядок ставит её ВТОРОЙ. `agni`/`yarost` — ТОЖЕ НОВАЯ
+    // ФИКСТУРА (UR-032, см. `seedBaselineRoot`), не изменившееся поведение.
     expectSemantic(
       (await parse('{"kind":"character"}')).map((entity: any) => entity.id),
-      ['arjuna', 'bhima', 'krishna', 'orphan-hero']
+      ['agni', 'arjuna', 'bhima', 'krishna', 'orphan-hero', 'yarost']
     );
     // `char` — ВИД ТЕГА, а не id типа; фильтр по нему не находит ничего.
     expectSemantic(await parse('{"kind":"char"}'), []);
@@ -1297,11 +1444,19 @@ describe('WP-9b базовая линия — Book Doctor (набор наход
     // `collectExistingEntityCards`'s doc comment называет «recorded rather than
     // hidden», просто впервые НАБЛЮДАЕМЫЙ здесь, а не только заявленный в
     // комментарии.
+    //
+    // `agni`/`yarost` ДОБАВЛЕНЫ ФИКСТУРОЙ UR-032 (см. `seedBaselineRoot`), А НЕ
+    // ИЗМЕНИВШИМСЯ ПОВЕДЕНИЕМ: обе кириллические карточки тоже намеренно НЕ
+    // упомянуты ни в одной главе (та же роль, что у `bhima`/`orphan-hero`), и
+    // тот же обход по id-порядку индекса ставит `agni` ПЕРЕД `bhima`, а
+    // `yarost` — ПОСЛЕДНЕЙ.
     expectSemantic(
       byCode(report.findings, 'entity-card-orphan').map(finding => finding.params),
       [
+        ['Character', 'agni', 'entities/characters/agni.yaml'],
         ['Character', 'bhima', 'entities/characters/bhima.yaml'],
-        ['Character', 'orphan-hero', 'entities/characters/orphan-hero.yaml']
+        ['Character', 'orphan-hero', 'entities/characters/orphan-hero.yaml'],
+        ['Character', 'yarost', 'entities/characters/yarost.yaml']
       ],
       'осиротевшие карточки'
     );
@@ -1599,6 +1754,11 @@ describe('WP-9b базовая линия — Book Doctor (набор наход
         'excerpts-parse-error',
         // ПРАВКА, ПРИЧИНА — НОВАЯ ФИКСТУРА (review finding 1): ВТОРАЯ осиротевшая
         // карточка, `bhima` (см. «ведро 1: осиротевшая карточка найдена» выше).
+        // ЕЩЁ ДВЕ — ФИКСТУРА UR-032 (`agni`, `yarost`), той же причины: обе
+        // кириллические карточки намеренно не упомянуты ни в одной главе.
+        // ЧЕТЫРЕ `entity-card-orphan` всего, не изменившееся поведение находки.
+        'entity-card-orphan',
+        'entity-card-orphan',
         'entity-card-orphan',
         'entity-card-orphan',
         'entity-tag-unknown-kind',

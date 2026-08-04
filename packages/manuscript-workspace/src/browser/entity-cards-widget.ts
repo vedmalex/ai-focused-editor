@@ -13,6 +13,7 @@ import {
 } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
 import {
+  compareEntitiesForDisplay,
   NarrativeKnowledgeService,
   type NarrativeEntity,
   type NarrativeKnowledgeService as NarrativeKnowledgeServiceType
@@ -113,11 +114,28 @@ export class EntityCardsWidget extends ReactWidget {
       return React.createElement('div', { className: 'afe-entity-cards' }, nls.localize('ai-focused-editor/entities/loading-cards', 'Loading knowledge cards...'));
     }
 
+    // `buildMentionIndex` reads `snapshot.entities` UNSORTED (index/code-point
+    // order): it is a first-match-wins lookup keyed by id, and sorting it would
+    // silently change which card a duplicated bare `[[id]]` resolves to for no
+    // display reason. The sort below is a SEPARATE, presentation-only
+    // projection built for the four groups rendered underneath.
     this.mentionIndex = this.buildMentionIndex(snapshot);
-    const characters = snapshot.entities.filter(entity => entity.type === 'character');
-    const terms = snapshot.entities.filter(entity => entity.type === 'term');
-    const artifacts = snapshot.entities.filter(entity => entity.type === 'artifact');
-    const locations = snapshot.entities.filter(entity => entity.type === 'location');
+    // UR-032: a list of entity NAMES read by a person is ordered FOR A READER,
+    // the same standing rule WP-6 already applied to the narrative graph and
+    // the four `narrative_*` AI tools (`compareEntitiesForDisplay`, an
+    // explicit `Intl.Collator('ru', …)` — never a bare `localeCompare()`,
+    // which reads the HOST locale and would make the same manuscript sort
+    // differently on two machines). THE INDEX ITSELF IS UNCHANGED: `.sort()`
+    // runs on a COPY, here, in the display layer only —
+    // `NarrativeKnowledgeService.findEntities` keeps returning code point
+    // (reproducibility; ISS-349; `narrative-memory-tools.ts`'s "Display
+    // order" section). `.filter()` after a `.sort()` preserves the sorted
+    // relative order, so each group below comes out reader-ordered too.
+    const displayOrdered = [...snapshot.entities].sort(compareEntitiesForDisplay);
+    const characters = displayOrdered.filter(entity => entity.type === 'character');
+    const terms = displayOrdered.filter(entity => entity.type === 'term');
+    const artifacts = displayOrdered.filter(entity => entity.type === 'artifact');
+    const locations = displayOrdered.filter(entity => entity.type === 'location');
 
     return React.createElement(
       'div',
