@@ -23,16 +23,41 @@
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test';
 import { computeSourceFingerprint, INVENTORY_SOURCE_ROOTS } from '../src/node/docs/source-scan';
 import { hashSourceRef } from '../src/node/docs/source-refs';
+
+/**
+ * The per-test budget, STATED rather than inherited — the same decision, for
+ * the same reason, as the one documented at length in
+ * `extract-feature-inventory.test.ts`.
+ *
+ * This file has the identical cost class: all 113 tests run the real generator
+ * as a `bun` SUBPROCESS, so each one pays interpreter startup before it does
+ * any work of its own. Measured idle at HEAD `adaff12`: ~16.9 s for the file,
+ * slowest case ~0.95 s. That case therefore sits only ~5.3x under bun's
+ * 5000 ms default — a THINNER margin than the real-tree case in the sibling
+ * file had (~7.2x), and the same measured >30x load multiplier applies to the
+ * spawn floor here. This file was also reported failing alongside that one in
+ * the flaky `verify` run this budget was written for.
+ */
+const SUBPROCESS_TEST_TIMEOUT_MS = 60_000;
+
+jest.setTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 /**
  * Fixture trees and generator output live in the OS temp directory, never in the
  * working tree: a test that leaves an artefact behind shows up in `git status`,
  * misleads the next reader and invites an accidental commit.
+ *
+ * PER PROCESS (`process.pid`) for the reason spelled out on the twin constant
+ * in `extract-feature-inventory.test.ts`: `afterEach` removes TEST_ROOT
+ * wholesale, so under a fixed shared name two overlapping runs of this file
+ * delete each other's fixtures and the generator subprocess exits 2 on a repo
+ * that no longer exists. That is exactly how a `bun run verify` here came back
+ * with 14 failures in this file that a solo re-run could not reproduce.
  */
-const TEST_ROOT = join(tmpdir(), 'generate-docs-content-test');
+const TEST_ROOT = join(tmpdir(), `generate-docs-content-test-${process.pid}`);
 
 const SCRIPT_PATH = join(import.meta.dir, 'generate-docs-content.mjs');
 
