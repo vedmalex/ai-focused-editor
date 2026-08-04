@@ -314,6 +314,39 @@ async function seedBaselineRoot(root: string): Promise<void> {
     ''
   ].join('\n'));
 
+  // ------------------------------------------------------------------------
+  // ОТВЕРГАЮЩИЙ СЛУЧАЙ ДЛЯ ОБЛАСТИ СКАНИРОВАНИЯ ТЕГОВ (добавлен в WP-7).
+  //
+  // ПОЧЕМУ ФАЙЛ ЛЕЖИТ В КОРНЕ, А НЕ В `content/`. Book Doctor складывает
+  // вхождения тегов из КАЖДОГО `.md` вне девяти исключённых каталогов
+  // (`walkMarkdownFiles` -> `isExcludedDiscoveryDir`,
+  // `manifest-reconstruction.ts:60-70`), тогда как индекс считает главой ТОЛЬКО
+  // markdown под `content/` (`document-classification.ts:104`, и это осознанное
+  // решение с записанным обоснованием). Области РАЗНЫЕ, и разница наблюдаема
+  // ровно на файле, который лежит вне `content/`.
+  //
+  // БЕЗ ЭТОГО ФАЙЛА БАЗОВАЯ ЛИНИЯ БЫЛА ЗЕЛЁНОЙ ПО СОВПАДЕНИЮ: её единственная
+  // внеманифестная глава — `content/stray.md`, то есть ВНУТРИ `content/`, где
+  // обе области согласны. Перевод Book Doctor на индекс сузил бы область
+  // молча, и ни одно утверждение не покраснело бы.
+  //
+  // ЧТО ИМЕННО ПОКРАСНЕЕТ. Тег ссылается на id, у которого КАРТОЧКИ НЕТ,
+  // поэтому сегодня он порождает наблюдаемое предложение `entity-card-missing`
+  // с `firstPath: 'outside-content.md'`. Реализация, считающая теги только под
+  // `content/`, это предложение потеряет.
+  //
+  // ПОЧЕМУ ИМЕННО НЕСУЩЕСТВУЮЩАЯ КАРТОЧКА, А НЕ ОСИРОТЕВШАЯ. Добавить карточку
+  // означало бы поменять состав `snapshot.entities` у Entity Cards и ответ
+  // `manuscript_find_entities` — два потребителя, к области сканирования
+  // отношения не имеющих. Отсутствующая карточка наблюдаема ТОЛЬКО у Book
+  // Doctor, то есть ровно там, где живёт расхождение.
+  await write(root, 'outside-content.md', [
+    '# Outside Content',
+    '',
+    'A chapter at the workspace root: [[char:root-only|Root Only]].',
+    ''
+  ].join('\n'));
+
   // `entities/types.yaml`: один ВАЛИДНЫЙ авторский тип + один отвергаемый
   // (коллизия со встроенным) -> `entityTypeProblems` ведра 1.
   await write(root, 'entities/types.yaml', [
@@ -965,6 +998,13 @@ describe('WP-9b базовая линия — Book Doctor (набор наход
     expectSemantic(
       byCode(report.fixes, 'entity-card-missing').map(fix => ({ path: fix.path, params: fix.params })),
       [
+        // ПРАВКА WP-7, ПРИЧИНА — НОВАЯ ФИКСТУРА, А НЕ ИЗМЕНИВШЕЕСЯ ПОВЕДЕНИЕ.
+        // Добавлен `outside-content.md` в КОРНЕ рабочей области (см. врезку в
+        // `seedBaselineRoot`): он делает наблюдаемым то, что область
+        // сканирования тегов у Book Doctor ШИРЕ, чем `content/**` у индекса.
+        // Порядок — `kind`, затем `id` (`collectManuscriptData` сортирует
+        // накопитель именно так), поэтому `Character` идёт перед `Sloka`.
+        { path: 'entities/characters/root-only.yaml', params: ['Character', 'Root Only', 1, 'outside-content.md'] },
         // Авторский тип `sloka` из `entities/types.yaml` — ЗНАЕТСЯ проверками.
         { path: 'entities/slokas/bg-2-47.yaml', params: ['Sloka', 'BG 2.47', 1, 'content/part-1/ch2.md'] }
       ],
@@ -1086,7 +1126,15 @@ describe('WP-9b базовая линия — Book Doctor (набор наход
     const append = byCode(report.fixes, 'manifest-append');
     expectSemantic(
       append.map(fix => ({ path: fix.path, fileCount: fix.manifest?.fileCount, samplePaths: fix.manifest?.samplePaths })),
-      [{ path: 'manifest.yaml', fileCount: 1, samplePaths: ['content/stray.md'] }],
+      // ПРАВКА WP-7, ПРИЧИНА — НОВАЯ ФИКСТУРА, А НЕ ИЗМЕНИВШЕЕСЯ ПОВЕДЕНИЕ.
+      // `outside-content.md` — тоже `.md` вне манифеста, поэтому обход считает
+      // его кандидатом наравне с `content/stray.md`. Порядок путей — сортировка
+      // по `path.localeCompare` в `collectManuscriptData`.
+      //
+      // И ЭТО САМО ПО СЕБЕ УТВЕРЖДЕНИЕ: `manuscriptCandidates` ВСЕГДА видел
+      // markdown вне `content/` — расхождение областей существовало и до
+      // миграции, просто ни одна фикстура его не показывала.
+      [{ path: 'manifest.yaml', fileCount: 2, samplePaths: ['content/stray.md', 'outside-content.md'] }],
       'дописывание манифеста'
     );
   });
@@ -1226,6 +1274,12 @@ describe('WP-9b базовая линия — Book Doctor (набор наход
         'create-file',
         'create-missing-chapter',
         'manifest-append',
+        // ПРАВКА WP-7, ПРИЧИНА — НОВАЯ ФИКСТУРА, А НЕ ИЗМЕНИВШЕЕСЯ ПОВЕДЕНИЕ.
+        // ДВА `entity-card-missing`: `root-only` из корневого
+        // `outside-content.md` и `bg-2-47` из `content/part-1/ch2.md`. Первое
+        // существует ровно для того, чтобы сужение области сканирования до
+        // `content/**` уронило ЭТОТ список, а не прошло молча.
+        'entity-card-missing',
         'entity-card-missing',
         'migrate-ai-settings',
         'gitignore-theia-settings'

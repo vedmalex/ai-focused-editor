@@ -30,8 +30,18 @@
  * readable by a future version that renames `meta`. A mismatch is not an error
  * to recover from — the database is a rebuildable cache, so a mismatch is
  * simply a rebuild with cause `schema-version-mismatch`.
+ *
+ * THIS CONSTANT IS THE ONLY PLACE THE NUMBER IS WRITTEN DOWN. tech_spec ОВ-1
+ * prints a `PRAGMA user_version = N` line as an ILLUSTRATION of the write below,
+ * not as a second source — an earlier edition of that section printed `1` while
+ * this constant already held `2`, and the divergence survived two phases
+ * unnoticed because the prose read as a claim rather than as an example.
+ *
+ * v3 (UR-031) added `document.title`, four chronology columns on `relation`, and
+ * `list_position` to `relation_identity`. No data migration accompanies it: a
+ * `user_version` mismatch already rebuilds the whole file from the manuscript.
  */
-export const NARRATIVE_INDEX_SCHEMA_VERSION = 2;
+export const NARRATIVE_INDEX_SCHEMA_VERSION = 3;
 
 /**
  * Pragmas applied to every connection, in this order.
@@ -70,6 +80,10 @@ CREATE TABLE document (
   mtime_ms          INTEGER NOT NULL,
   content_hash      TEXT    NOT NULL,
   chapter_order     INTEGER,
+  -- v3: the manifest's display title. NULLABLE for the same reason
+  -- \`chapter_order\` is: a \`content/\` chapter the manifest does not name has
+  -- neither. NULL and '' are DIFFERENT answers and nothing may fold them.
+  title             TEXT,
   manifest_included INTEGER NOT NULL DEFAULT 1,
   indexed_at        INTEGER NOT NULL,
   generation        INTEGER NOT NULL
@@ -173,10 +187,36 @@ CREATE TABLE relation (
   doc_id          INTEGER REFERENCES document(doc_id) ON DELETE CASCADE,
   source_resolved INTEGER NOT NULL,
   target_resolved INTEGER NOT NULL,
+  -- v3 (UR-031): the ownership chronology. All four are AUTHOR-WRITTEN TEXT
+  -- that extraction already produced and the v2 storage boundary discarded,
+  -- while the Narrative Map went on rendering them from its own file read.
+  --
+  -- NONE OF THEM IS GUARDED BY A CHECK, and that follows the rule this module's
+  -- header states. "An explicit relation read from a list must have a position"
+  -- is an invariant of EXTRACTION, not of structure: a derived edge legitimately
+  -- has none, and a future third producer may legitimately have none either. A
+  -- CHECK tying \`list_position IS NOT NULL\` to \`origin <> 'derived'\` would
+  -- forbid that producer before it exists and would be deleted by the first
+  -- person to meet it — guarding right up until its first real test.
+  list_position   INTEGER,
+  story_time_from TEXT,
+  story_time_to   TEXT,
+  note            TEXT,
   CHECK (origin = 'derived' OR doc_id IS NOT NULL)
 ) STRICT;
+-- \`list_position\` IS PART OF IDENTITY (v3). Without it, two \`ownership:\`
+-- entries naming the SAME owner — an artifact returning to a previous holder,
+-- which is an ordinary story beat — collide on this index, \`putRelation\`
+-- resolves the collision with an UPDATE, and the second entry's story-time
+-- labels and note overwrite the first's. Adding the columns without adding this
+-- term would have stored the chronology and still lost the beat.
+--
+-- COALESCE rather than NOT NULL: a derived edge has no list to have a position
+-- in. The sentinel cannot collide with a real value, because real positions are
+-- zero-based and non-negative.
 CREATE UNIQUE INDEX relation_identity ON relation(source_id, target_id, rel_type, origin,
-                                                  COALESCE(doc_id, -1));
+                                                  COALESCE(doc_id, -1),
+                                                  COALESCE(list_position, -1));
 CREATE INDEX relation_source ON relation(source_id);
 CREATE INDEX relation_target ON relation(target_id);
 CREATE INDEX relation_origin ON relation(origin);

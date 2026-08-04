@@ -88,6 +88,10 @@ function chapterDocument() {
     mtimeMs: 1_700_000_000_000,
     contentHash: 'a'.repeat(64),
     chapterOrder: 0,
+    // Manifest-derived, and beside `chapterOrder` on purpose: schema v3 stores
+    // both or neither, and a fixture that carried only one would let an adapter
+    // forget the other and still pass the round-trip case.
+    title: 'Глава первая',
     indexedAt: 1_700_000_001_000
   };
 }
@@ -204,6 +208,7 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
       equal(stored.mtimeMs, input.mtimeMs, 'mtimeMs');
       equal(stored.contentHash, input.contentHash, 'contentHash');
       equal(stored.chapterOrder, input.chapterOrder, 'chapterOrder');
+      equal(stored.title, input.title, 'title');
       equal(stored.indexedAt, input.indexedAt, 'indexedAt');
       equal(stored.manifestIncluded, true, 'manifestIncluded defaults to true');
 
@@ -234,6 +239,41 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
       check(stored !== undefined, 'document was not stored');
       equal(stored.manifestIncluded, false, 'manifestIncluded');
       equal(stored.chapterOrder, undefined, 'chapterOrder of an unlisted file');
+      equal(stored.title, undefined, 'title of an unlisted file');
+    }
+  },
+  {
+    // tech_spec ОВ-1, tooth A14 (schema v3, UR-031).
+    //
+    // ABSENT AND EMPTY ARE DIFFERENT CLAIMS: "the manifest does not name this
+    // file" against "the manifest names it with an empty title". A reader that
+    // renders a heading has to tell them apart, so no adapter may fold one into
+    // the other — which is exactly what `title ?? ''` or a truthiness test on
+    // the column would do, invisibly, on the commonest path.
+    name: 'document.title: an empty title is KEPT and an absent one stays absent',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      const base = chapterDocument();
+      store.transaction(writer => {
+        writer.putDocument({ ...base, relPath: 'manuscript/empty-title.md', title: '' });
+        const { title: _dropped, ...withoutTitle } = base;
+        writer.putDocument({ ...withoutTitle, relPath: 'manuscript/no-title.md' });
+      });
+      equal(store.getDocument('manuscript/empty-title.md')?.title, '', 'an empty title is a value');
+      equal(store.getDocument('manuscript/no-title.md')?.title, undefined, 'an absent title is absent');
+      // And it survives the LIST read as well as the point read: the two go
+      // through different queries in the SQLite adapter.
+      const listed = store.listDocuments();
+      equal(
+        listed.find(document => document.relPath === 'manuscript/empty-title.md')?.title,
+        '',
+        'empty title through listDocuments'
+      );
+      equal(
+        listed.find(document => document.relPath === 'manuscript/no-title.md')?.title,
+        undefined,
+        'absent title through listDocuments'
+      );
     }
   },
   {
@@ -617,6 +657,113 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
       });
       equal(store.getRelations().length, 2, 'relation count');
       equal(store.getRelations({ relType: 'mentor-of' }).length, 1, 'by relType');
+    }
+  },
+  {
+    // tech_spec ОВ-1, tooth A12 (schema v3, UR-031).
+    //
+    // AN ARTIFACT RETURNING TO A PREVIOUS OWNER IS AN ORDINARY STORY BEAT, and
+    // under the v2 identity key — `(ends, type, origin, owner document)` — the
+    // two `ownership:` entries that record it were INDISTINGUISHABLE. The second
+    // `putRelation` therefore resolved to the first row and OVERWROTE its
+    // story-time labels and note, so the manuscript said "Varuna, then Arjuna,
+    // then Varuna again" and the index said "Varuna once".
+    //
+    // THE REJECTING CASE IS THE OLD KEY ITSELF: remove `listPosition` from the
+    // identity in either adapter and this case fails on `relation count`, with
+    // the first `putRelation`'s id returned twice.
+    name: 'two ownership entries naming the SAME owner are TWO relations, told apart by listPosition',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      const ids = store.transaction(writer => [
+        writer.putRelation(
+          relation({ listPosition: 0, storyTimeTo: 'до изгнания', note: 'хранит лук' })
+        ),
+        writer.putRelation(
+          relation({ listPosition: 1, storyTimeFrom: 'после войны', note: 'получает его обратно' })
+        )
+      ]);
+      check(ids[0] !== ids[1], 'the second ownership entry was folded onto the first');
+      const stored = store
+        .getRelations({ relType: 'ownership' })
+        .slice()
+        .sort((left, right) => (left.listPosition ?? -1) - (right.listPosition ?? -1));
+      equal(stored.length, 2, 'relation count');
+      equal(stored[0].listPosition, 0, 'first hop position');
+      equal(stored[0].storyTimeTo, 'до изгнания', 'first hop storyTimeTo');
+      equal(stored[0].note, 'хранит лук', 'first hop note');
+      equal(stored[0].storyTimeFrom, undefined, 'first hop has no storyTimeFrom');
+      equal(stored[1].listPosition, 1, 'second hop position');
+      equal(stored[1].storyTimeFrom, 'после войны', 'second hop storyTimeFrom');
+      equal(stored[1].note, 'получает его обратно', 'second hop note');
+      // And the UPSERT still works WITHIN one position, so the new term made the
+      // key finer without making it useless: re-writing the same entry must not
+      // produce a third row.
+      store.transaction(writer =>
+        writer.putRelation(relation({ listPosition: 1, storyTimeFrom: 'после войны', note: 'исправлено' }))
+      );
+      const after = store.getRelations({ relType: 'ownership' });
+      equal(after.length, 2, 're-writing one entry did not add a row');
+      equal(
+        after.find(candidate => candidate.listPosition === 1)?.note,
+        'исправлено',
+        'the re-written entry was updated in place'
+      );
+    }
+  },
+  {
+    // tech_spec ОВ-1, tooth A13 (schema v3, UR-031).
+    //
+    // THE ONLY SHAPE IN WHICH "`?? undefined` INSTEAD OF `!== null`" IS VISIBLE.
+    // `listPosition: 0` is the FIRST owner of an artifact — the commonest value
+    // the column ever holds — so a reader written with a truthiness test drops it
+    // and the whole chain reads as though it began at the second hop. An adapter
+    // that stores the four columns and does not read them back passes every
+    // other case in this file.
+    name: 'the ownership chronology round-trips verbatim, including listPosition 0 and the absences',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putRelation(
+          relation({
+            listPosition: 0,
+            storyTimeFrom: 'век богов',
+            storyTimeTo: 'до изгнания',
+            note: 'заметка автора'
+          })
+        );
+        // A relation from a list with NO story time and NO note: the three
+        // strings must come back ABSENT, not as empty strings.
+        writer.putRelation(relation({ relType: 'mentions', listPosition: 7 }));
+        // And a fold that came from no list at all.
+        writer.putRelation(
+          relation({
+            origin: 'derived',
+            ownerPath: undefined,
+            relType: 'co-occurrence',
+            evidence: [wholeFileEvidence(CHAPTER)]
+          })
+        );
+      });
+      const owned = store.getRelations({ relType: 'ownership' })[0];
+      check(owned !== undefined, 'the ownership relation was dropped');
+      equal(owned.listPosition, 0, 'listPosition 0 survived — a truthiness read loses this');
+      equal(owned.storyTimeFrom, 'век богов', 'storyTimeFrom');
+      equal(owned.storyTimeTo, 'до изгнания', 'storyTimeTo');
+      equal(owned.note, 'заметка автора', 'note');
+
+      const mentioned = store.getRelations({ relType: 'mentions' })[0];
+      check(mentioned !== undefined, 'the card-mention relation was dropped');
+      equal(mentioned.listPosition, 7, 'listPosition of a relation with no chronology');
+      equal(mentioned.storyTimeFrom, undefined, 'absent storyTimeFrom is absent, not empty');
+      equal(mentioned.storyTimeTo, undefined, 'absent storyTimeTo is absent, not empty');
+      equal(mentioned.note, undefined, 'absent note is absent, not empty');
+
+      const derived = store.getRelations({ origin: 'derived' })[0];
+      check(derived !== undefined, 'the derived relation was dropped');
+      equal(derived.listPosition, undefined, 'a fold over every mention has no list position');
     }
   },
   {

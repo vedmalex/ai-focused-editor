@@ -78,6 +78,25 @@ export interface IndexedDocumentInput {
   contentHash: string;
   /** Position in `manifest.yaml`; ABSENT for a file the manifest does not list. */
   chapterOrder?: number;
+  /**
+   * Display title from `manifest.yaml` (schema v3, UR-031).
+   *
+   * MANIFEST-DERIVED, exactly like {@link chapterOrder}, and absent for exactly
+   * the same reason: a `content/` chapter the manifest does not name has no
+   * title the manuscript states, and the manifest's own file-name fallback
+   * applies to an ENTRY THAT EXISTS, not to a file the manifest never mentions.
+   *
+   * ABSENT IS NOT `''`. "The manifest does not name this file" and "the manifest
+   * names it with an empty title" are different claims, and a consumer that
+   * renders a heading has to be able to tell them apart. Nothing in this package
+   * may normalize one into the other.
+   *
+   * IT IS NOT PART OF THE FRESHNESS KEY. The title lives in `manifest.yaml`, so
+   * editing it changes the MANIFEST's bytes; the manifest edit escalates to a
+   * full rebuild because it shifts workspace-wide facts, and that is the one
+   * mechanism that already handles renumbering. See tech_spec ОВ-1.
+   */
+  title?: string;
   /** Whether `manifest.yaml` lists this file. Defaults to `true`. */
   manifestIncluded?: boolean;
   /** Epoch ms at which this document was last read. */
@@ -115,6 +134,16 @@ export interface DocumentMoveFreshness {
   indexedAt: number;
   /** Position of the NEW path in `manifest.yaml`; absent when unlisted. */
   chapterOrder?: number;
+  /**
+   * Title the manifest gives the NEW path; absent when unlisted (schema v3).
+   *
+   * IT TRAVELS WITH THE PATH, NOT WITH THE ROW, for the same reason
+   * `chapterOrder` does: a chapter renamed out of the manifest's list loses its
+   * title along with its position, and one renamed INTO the list gains both.
+   * Leaving the old title on the moved row would make the timeline show a
+   * heading the manifest no longer states.
+   */
+  title?: string;
   /** Whether `manifest.yaml` lists the NEW path. Defaults to `true`. */
   manifestIncluded?: boolean;
 }

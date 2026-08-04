@@ -24,6 +24,15 @@
  *      it is the defect: an owner id that matches nothing currently becomes its
  *      own label and disappears.
  *
+ * IDENTITY INCLUDES {@link NarrativeRelation.listPosition} (schema v3, UR-031).
+ * Point 2 above says two relations between the same ends with different types
+ * are two relations; the same is true of two ENTRIES IN ONE LIST naming the same
+ * owner. An artifact that returns to a previous owner is an ordinary story beat,
+ * and under the v2 identity key — which stopped at `(ends, type, origin, owner
+ * document)` — the second entry resolved to an UPDATE of the first and its
+ * story-time labels and note were overwritten. That is why the position is part
+ * of identity and not merely a field beside it.
+ *
  * WHERE THE TRUTH LIVES. A relation has no file of its own — it lives in the
  * CARD OF ITS `sourceId`, which {@link NarrativeRelation.ownerPath} names. That
  * is not a style choice: the database is a fully rebuildable cache, so an
@@ -70,6 +79,37 @@ export interface NarrativeRelation {
   sourceResolved: boolean;
   /** False when no card defines {@link targetId}. The relation is still stored. */
   targetResolved: boolean;
+  /**
+   * Zero-based position of this relation within the list it was read from, and
+   * PART OF IDENTITY (schema v3, UR-031).
+   *
+   * FOR `ownership` THIS IS THE CHRONOLOGY AND THE ONLY ONE (R-14) —
+   * `entity-card-extraction.ts` reads `ownership:` in list order and the story
+   * time labels below are not comparable. It is a stored field rather than an
+   * array index because an array index survives exactly until something
+   * re-sorts.
+   *
+   * ABSENT FOR A RELATION THAT CAME FROM NO LIST — a co-occurrence edge is a
+   * fold over every mention in the workspace and has no position, so demanding
+   * one would mean inventing a number. Extraction always has one, which is what
+   * `ExtractedRelation` states by requiring it.
+   */
+  listPosition?: number;
+  /**
+   * `ownership.from`, VERBATIM.
+   *
+   * A FREE-FORM STORY-TIME LABEL ("before the siege"), not a date, and not
+   * comparable between two cards — `yaml-schema-validator.ts:101-103` states
+   * outright that "Chronology follows list order; from/to are freeform
+   * story-time labels, not real dates". Never parsed, never sorted, never
+   * compared. The name is `storyTimeFrom` rather than `from` so that the reader
+   * of the FIELD sees what the reader of `from` does not.
+   */
+  storyTimeFrom?: string;
+  /** `ownership.to`, verbatim. Same rules as {@link storyTimeFrom}. */
+  storyTimeTo?: string;
+  /** `ownership.note`, verbatim. Author prose about the transfer. */
+  note?: string;
   /**
    * Where the relation was read from. At least one, and possibly several: a
    * relation restated in more than one document has evidence in each.

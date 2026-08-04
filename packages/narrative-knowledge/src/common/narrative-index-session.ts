@@ -573,17 +573,20 @@ export class NarrativeIndexSession {
     indexedAt: number,
     unchangedDocuments: readonly string[]
   ): NarrativeUpdateReport {
-    const orderByPath = new Map(plan.chapters.map(chapter => [chapter.path, chapter.order]));
+    // The WHOLE manifest entry, not only its position: schema v3 stores the
+    // display title beside `chapterOrder`, they are absent together, and reading
+    // them out of two different maps would be two chances to disagree.
+    const chapterByPath = new Map(plan.chapters.map(chapter => [chapter.path, chapter]));
     const documentsMoved: { from: string; to: string }[] = [];
     for (const move of plan.moves) {
-      const order = orderByPath.get(move.to.path);
+      const chapter = chapterByPath.get(move.to.path);
       writer.moveDocument(move.from, move.to.path, {
         sizeBytes: move.to.sizeBytes,
         mtimeMs: move.to.mtimeMs,
         contentHash: move.to.contentHash,
         indexedAt,
-        ...(order !== undefined ? { chapterOrder: order } : {}),
-        manifestIncluded: order !== undefined
+        ...(chapter !== undefined ? { chapterOrder: chapter.order, title: chapter.title } : {}),
+        manifestIncluded: chapter !== undefined
       });
       documentsMoved.push({ from: move.from, to: move.to.path });
     }
@@ -609,7 +612,7 @@ export class NarrativeIndexSession {
       if (classification === undefined) {
         continue;
       }
-      const order = orderByPath.get(path);
+      const chapter = chapterByPath.get(path);
       writer.putDocument({
         relPath: path,
         kind: classification.kind,
@@ -617,8 +620,8 @@ export class NarrativeIndexSession {
         mtimeMs: file.mtimeMs,
         contentHash: file.contentHash,
         indexedAt,
-        ...(order !== undefined ? { chapterOrder: order } : {}),
-        ...(classification.kind === 'chapter' ? { manifestIncluded: order !== undefined } : {})
+        ...(chapter !== undefined ? { chapterOrder: chapter.order, title: chapter.title } : {}),
+        ...(classification.kind === 'chapter' ? { manifestIncluded: chapter !== undefined } : {})
       });
       writer.clearDocumentContent(path);
       for (const mention of extractChapterMentions({ path, text: file.text }, catalog)) {
@@ -688,11 +691,14 @@ export class NarrativeIndexSession {
         mtimeMs: file.mtimeMs,
         contentHash: file.contentHash,
         indexedAt,
-        // `chapterOrder` is ABSENT for a `content/` chapter the manifest does
-        // not list, and that absence is the value: the file is still indexed
-        // (its mentions are real) but it has no provable position, which is
-        // what the spoiler-safe rule keys on.
-        ...(chapter !== undefined ? { chapterOrder: chapter.order } : {}),
+        // `chapterOrder` AND `title` are ABSENT together for a `content/`
+        // chapter the manifest does not list, and that absence is the value: the
+        // file is still indexed (its mentions are real) but it has no provable
+        // position — which is what the spoiler-safe rule keys on — and no title
+        // the manuscript states. The manifest's own file-name fallback
+        // (`manifest-extraction.ts:92`) applies to an ENTRY THAT EXISTS; using
+        // it here would invent a heading for a file the manifest never names.
+        ...(chapter !== undefined ? { chapterOrder: chapter.order, title: chapter.title } : {}),
         ...(kind === 'chapter' ? { manifestIncluded: chapter !== undefined } : {})
       };
       writer.putDocument(input);

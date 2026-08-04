@@ -181,6 +181,7 @@ interface DocumentRow {
   mtime_ms: number;
   content_hash: string;
   chapter_order: number | null;
+  title: string | null;
   manifest_included: number;
   indexed_at: number;
   generation: number;
@@ -217,6 +218,10 @@ interface RelationRow {
   confidence: number | null;
   source_resolved: number;
   target_resolved: number;
+  list_position: number | null;
+  story_time_from: string | null;
+  story_time_to: string | null;
+  note: string | null;
   doc_rel_path: string | null;
 }
 
@@ -244,6 +249,13 @@ function toDocument(row: DocumentRow): IndexedDocument {
   };
   if (row.chapter_order !== null) {
     document.chapterOrder = row.chapter_order;
+  }
+  // `!== null` and NOT `?? undefined`: a title the manifest states as the empty
+  // string is a real value the reader is entitled to see, and `??` would keep it
+  // while a truthiness test would silently turn it into "the manifest does not
+  // name this file". The two are different claims (tech_spec ОВ-1, tooth A14).
+  if (row.title !== null) {
+    document.title = row.title;
   }
   return document;
 }
@@ -929,6 +941,23 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
       if (row.doc_rel_path !== null) {
         relation.ownerPath = row.doc_rel_path;
       }
+      // EVERY ONE OF THE FOUR IS `!== null`, NEVER `??` AND NEVER TRUTHINESS.
+      // `list_position` is legitimately `0` — the FIRST owner of an artifact,
+      // which is the commonest value there is — and a truthy test would drop it
+      // and leave the whole chain looking like it starts at the second hop. The
+      // three strings are author prose and may legitimately be empty.
+      if (row.list_position !== null) {
+        relation.listPosition = row.list_position;
+      }
+      if (row.story_time_from !== null) {
+        relation.storyTimeFrom = row.story_time_from;
+      }
+      if (row.story_time_to !== null) {
+        relation.storyTimeTo = row.story_time_to;
+      }
+      if (row.note !== null) {
+        relation.note = row.note;
+      }
       return relation;
     });
   }
@@ -958,7 +987,7 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
           this.db
             .prepare(
               `UPDATE document SET kind = ?, size_bytes = ?, mtime_ms = ?, content_hash = ?,
-               chapter_order = ?, manifest_included = ?, indexed_at = ?, generation = ?
+               chapter_order = ?, title = ?, manifest_included = ?, indexed_at = ?, generation = ?
                WHERE doc_id = ?`
             )
             .run(
@@ -967,6 +996,7 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
               input.mtimeMs,
               input.contentHash,
               input.chapterOrder ?? null,
+              input.title ?? null,
               (input.manifestIncluded ?? true) ? 1 : 0,
               input.indexedAt,
               committedGeneration,
@@ -977,8 +1007,8 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
         const inserted = this.db
           .prepare(
             `INSERT INTO document (rel_path, kind, size_bytes, mtime_ms, content_hash,
-             chapter_order, manifest_included, indexed_at, generation)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             chapter_order, title, manifest_included, indexed_at, generation)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .run(
             input.relPath,
@@ -987,6 +1017,7 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
             input.mtimeMs,
             input.contentHash,
             input.chapterOrder ?? null,
+            input.title ?? null,
             (input.manifestIncluded ?? true) ? 1 : 0,
             input.indexedAt,
             committedGeneration
@@ -1035,7 +1066,7 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
         this.db
           .prepare(
             `UPDATE document SET rel_path = ?, size_bytes = ?, mtime_ms = ?, content_hash = ?,
-             chapter_order = ?, manifest_included = ?, indexed_at = ?, generation = ?
+             chapter_order = ?, title = ?, manifest_included = ?, indexed_at = ?, generation = ?
              WHERE doc_id = ?`
           )
           .run(
@@ -1044,6 +1075,7 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
             freshness.mtimeMs,
             freshness.contentHash,
             freshness.chapterOrder ?? null,
+            freshness.title ?? null,
             (freshness.manifestIncluded ?? true) ? 1 : 0,
             freshness.indexedAt,
             committedGeneration,
@@ -1153,29 +1185,45 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
           );
         }
         const docId = relation.ownerPath === undefined ? null : this.docIdOf(relation.ownerPath);
-        // `relation_identity` treats a NULL doc_id as -1, so the upsert has to
-        // find the existing row the same way rather than relying on
-        // `ON CONFLICT`, which cannot name an expression index.
+        const listPosition = relation.listPosition ?? null;
+        // `relation_identity` treats a NULL doc_id and a NULL list_position as
+        // -1, so the upsert has to find the existing row the same way rather
+        // than relying on `ON CONFLICT`, which cannot name an expression index.
+        //
+        // `list_position` JOINS THE LOOKUP IN v3 (UR-031). Without it the second
+        // `ownership:` entry naming an owner the card already named resolves to
+        // the FIRST row and overwrites its story-time labels and note — the
+        // artifact-returns-to-a-previous-holder beat, silently collapsed.
         const existing = this.db
           .prepare(
             `SELECT relation_id FROM relation
              WHERE source_id = ? AND target_id = ? AND rel_type = ? AND origin = ?
-               AND COALESCE(doc_id, -1) = COALESCE(?, -1)`
+               AND COALESCE(doc_id, -1) = COALESCE(?, -1)
+               AND COALESCE(list_position, -1) = COALESCE(?, -1)`
           )
-          .get(relation.sourceId, relation.targetId, relation.relType, relation.origin, docId) as
-          | { relation_id: number }
-          | undefined;
+          .get(
+            relation.sourceId,
+            relation.targetId,
+            relation.relType,
+            relation.origin,
+            docId,
+            listPosition
+          ) as { relation_id: number } | undefined;
         let relationId: number;
         if (existing) {
           relationId = existing.relation_id;
           this.db
             .prepare(
-              'UPDATE relation SET confidence = ?, source_resolved = ?, target_resolved = ? WHERE relation_id = ?'
+              `UPDATE relation SET confidence = ?, source_resolved = ?, target_resolved = ?,
+               story_time_from = ?, story_time_to = ?, note = ? WHERE relation_id = ?`
             )
             .run(
               relation.confidence ?? null,
               relation.sourceResolved ? 1 : 0,
               relation.targetResolved ? 1 : 0,
+              relation.storyTimeFrom ?? null,
+              relation.storyTimeTo ?? null,
+              relation.note ?? null,
               relationId
             );
           this.db.prepare('DELETE FROM relation_evidence WHERE relation_id = ?').run(relationId);
@@ -1183,7 +1231,8 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
           const inserted = this.db
             .prepare(
               `INSERT INTO relation (source_id, target_id, rel_type, origin, confidence, doc_id,
-               source_resolved, target_resolved) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+               source_resolved, target_resolved, list_position, story_time_from, story_time_to, note)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             )
             .run(
               relation.sourceId,
@@ -1193,7 +1242,11 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
               relation.confidence ?? null,
               docId,
               relation.sourceResolved ? 1 : 0,
-              relation.targetResolved ? 1 : 0
+              relation.targetResolved ? 1 : 0,
+              listPosition,
+              relation.storyTimeFrom ?? null,
+              relation.storyTimeTo ?? null,
+              relation.note ?? null
             );
           relationId = Number(inserted.lastInsertRowid);
         }

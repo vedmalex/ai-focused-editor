@@ -217,10 +217,17 @@ test("A7 paired positive: 'derived' with no owning document IS accepted", () => 
 });
 
 test('A7 rejecting case: without the CHECK the same insert succeeds', () => {
+  // THE ANCHOR IS THE CHECK LINE AND ITS CLOSER, NOT THE COLUMN ABOVE IT.
+  // It used to include `  target_resolved INTEGER NOT NULL,` as its first line,
+  // and schema v3 broke that by inserting the four chronology columns between
+  // the two — which is `weaken()` doing its job: it refused to run the rejecting
+  // case against an intact schema. Anchoring on the constraint being removed,
+  // rather than on whatever happens to sit above it, is what makes the next
+  // column added to `relation` a non-event here.
   const db = scratch(
     weaken(
-      "  target_resolved INTEGER NOT NULL,\n  CHECK (origin = 'derived' OR doc_id IS NOT NULL)\n) STRICT;",
-      '  target_resolved INTEGER NOT NULL\n) STRICT;'
+      ",\n  CHECK (origin = 'derived' OR doc_id IS NOT NULL)\n) STRICT;",
+      '\n) STRICT;'
     )
   );
   db.exec(
@@ -490,7 +497,7 @@ test('A11 rejecting case: without the two CHECKs both forbidden mentions are sto
 });
 
 // --------------------------------------------------------------------------
-// A12 — the collision record names the definition IN EFFECT
+// A-DUP — the collision record names the definition IN EFFECT
 //
 // The contract core asserts that both adapters answer a collision with a
 // winner and a set of losers. These assert that in SQLITE it is the SCHEMA
@@ -544,7 +551,20 @@ function scratchWithEntity(ddl: string): DatabaseSync {
   return db;
 }
 
-test('A12: a duplicate of an id NO card defines is refused BY THE SCHEMA', () => {
+// --------------------------------------------------------------------------
+// A-DUP — entity_duplicate: the FOREIGN KEY and the two TRIGGERS
+//
+// THESE TEETH CARRY NO ОВ-1 NUMBER, AND THE LABEL SAYS SO RATHER THAN INVENTING
+// ONE. They used to be titled `A12`, but ОВ-1's group A never numbered them:
+// its flat numbering ran out at 12, which is `B12` (relation source 5), and the
+// `A12` here was allocated locally. Schema v3 then gave ОВ-1 a real A12/A13/A14
+// (the ownership-chronology and `document.title` teeth), so the same string
+// named two different things. Renamed rather than renumbered, because picking a
+// free number here would be the same invention that caused the collision.
+// FOLLOW-UP: ОВ-1 group A should absorb these teeth under real numbers.
+// --------------------------------------------------------------------------
+
+test('A-DUP: a duplicate of an id NO card defines is refused BY THE SCHEMA', () => {
   const store = newStore();
   seedThreeCards(store);
   const error = caught(() =>
@@ -558,7 +578,7 @@ test('A12: a duplicate of an id NO card defines is refused BY THE SCHEMA', () =>
   );
 });
 
-test('A12 rejecting case: without that foreign key the winnerless collision is storable', () => {
+test('A-DUP rejecting case: without that foreign key the winnerless collision is storable', () => {
   // What the constraint prevents is not a crash — it is a FINDING NOBODY CAN
   // ACT ON: two cards named as colliding with no statement of which definition
   // the index is using. Here is the row, and here is the reader coming back
@@ -582,7 +602,7 @@ test('A12 rejecting case: without that foreign key the winnerless collision is s
   db.close();
 });
 
-test('A12: excluding the card that OWNS the entity is refused BY THE SCHEMA', () => {
+test('A-DUP: excluding the card that OWNS the entity is refused BY THE SCHEMA', () => {
   const store = newStore();
   seedThreeCards(store);
   store.transaction((writer: any) => writer.putEntity(card('krishna', CARD)));
@@ -595,7 +615,7 @@ test('A12: excluding the card that OWNS the entity is refused BY THE SCHEMA', ()
   );
 });
 
-test('A12 paired positive: a DIFFERENT card is accepted, and the record names both sides', () => {
+test('A-DUP paired positive: a DIFFERENT card is accepted, and the record names both sides', () => {
   // Without this half, a trigger that refused every duplicate would pass the
   // case above while making the whole table unwritable.
   const store = newStore();
@@ -609,7 +629,7 @@ test('A12 paired positive: a DIFFERENT card is accepted, and the record names bo
   ]);
 });
 
-test('A12 rejecting case: without the trigger a card is stored as both winner and loser', () => {
+test('A-DUP rejecting case: without the trigger a card is stored as both winner and loser', () => {
   const db = scratchWithEntity(
     weaken(
       "CREATE TRIGGER entity_duplicate_excludes_the_kept_card\nBEFORE INSERT ON entity_duplicate\nWHEN EXISTS (SELECT 1 FROM entity WHERE entity.entity_id = NEW.entity_id AND entity.doc_id = NEW.doc_id)\nBEGIN\n  SELECT RAISE(ABORT, 'entity_duplicate names the card that owns the entity');\nEND;",
@@ -631,7 +651,7 @@ test('A12 rejecting case: without the trigger a card is stored as both winner an
   db.close();
 });
 
-test('A12: moving the entity onto an already-excluded card is refused BY THE SCHEMA', () => {
+test('A-DUP: moving the entity onto an already-excluded card is refused BY THE SCHEMA', () => {
   const store = newStore();
   seedThreeCards(store);
   store.transaction((writer: any) => {
@@ -652,7 +672,7 @@ test('A12: moving the entity onto an already-excluded card is refused BY THE SCH
   );
 });
 
-test('A12 rejecting case: without the entity triggers the winner moves onto a loser', () => {
+test('A-DUP rejecting case: without the entity triggers the winner moves onto a loser', () => {
   const db = scratchWithEntity(
     weaken(
       "CREATE TRIGGER entity_update_is_not_an_excluded_card\nBEFORE UPDATE ON entity\nWHEN EXISTS (SELECT 1 FROM entity_duplicate\n             WHERE entity_duplicate.entity_id = NEW.entity_id AND entity_duplicate.doc_id = NEW.doc_id)\nBEGIN\n  SELECT RAISE(ABORT, 'entity update: this card is already excluded from this id');\nEND;",
@@ -666,7 +686,7 @@ test('A12 rejecting case: without the entity triggers the winner moves onto a lo
   db.close();
 });
 
-test('A12: a collision does not outlive its winner — deleting the kept card cascades it away', () => {
+test('A-DUP: a collision does not outlive its winner — deleting the kept card cascades it away', () => {
   const store = newStore();
   seedThreeCards(store);
   store.transaction((writer: any) => {
@@ -678,7 +698,7 @@ test('A12: a collision does not outlive its winner — deleting the kept card ca
   assert.deepEqual(store.getDuplicateEntities(), [], 'the collision survived its winner');
 });
 
-test('A12 rejecting case: without that foreign key the duplicate row outlives its winner', () => {
+test('A-DUP rejecting case: without that foreign key the duplicate row outlives its winner', () => {
   const db = scratchWithEntity(
     weaken(
       '  entity_id TEXT    NOT NULL REFERENCES entity(entity_id) ON DELETE CASCADE,\n  doc_id    INTEGER NOT NULL REFERENCES document(doc_id) ON DELETE CASCADE,\n  PRIMARY KEY (entity_id, doc_id)',
@@ -694,6 +714,126 @@ test('A12 rejecting case: without that foreign key the duplicate row outlives it
   assert.equal(Number(entities.n), 0, 'the entity did not cascade, so this proves nothing about the duplicate');
   const orphans = db.prepare('SELECT COUNT(*) AS n FROM entity_duplicate').get() as any;
   assert.equal(Number(orphans.n), 1, 'the weakened schema cascaded anyway');
+  db.close();
+});
+
+// --------------------------------------------------------------------------
+// A12/A13/A14 — schema v3: the ownership chronology and the chapter title
+//
+// The BEHAVIOUR of all three is asserted in the contract core, against BOTH
+// adapters. What is asserted HERE is that in SQLITE it is the SCHEMA doing the
+// work: real columns, and an identity index that really carries the position.
+// --------------------------------------------------------------------------
+
+test('A12: relation_identity really carries list_position, so the same owner twice is two rows', () => {
+  const db = scratch(NARRATIVE_INDEX_DDL);
+  const insert = (position: number, note: string) =>
+    db.exec(
+      `INSERT INTO relation (source_id, target_id, rel_type, origin, doc_id,
+       source_resolved, target_resolved, list_position, note)
+       VALUES ('gandiva', 'varuna', 'ownership', 'explicit', 1, 1, 1, ${position}, '${note}')`
+    );
+  insert(0, 'guards the bow');
+  insert(2, 'has it back');
+  const rows = db
+    .prepare('SELECT list_position, note FROM relation ORDER BY list_position')
+    .all() as any[];
+  assert.equal(rows.length, 2, 'the two ownership entries collapsed into one row');
+  assert.equal(Number(rows[0].list_position), 0);
+  assert.equal(rows[0].note, 'guards the bow');
+  assert.equal(Number(rows[1].list_position), 2);
+  assert.equal(rows[1].note, 'has it back');
+  // The index still BITES within one position: the same entry twice is a
+  // constraint violation, not a silent third row. Without this half, "add a
+  // column to the key" would be indistinguishable from "drop the key".
+  const again = caught(() => insert(0, 'duplicate'));
+  assert.ok(again !== undefined, 'relation_identity no longer refuses an exact duplicate');
+  assert.match(String(again), /UNIQUE|constraint/i);
+  db.close();
+});
+
+test('A12 rejecting case: the v2 identity key folds the second ownership entry onto the first', () => {
+  // THE REJECTING CASE IS THE OLD KEY. Perturbing the index back to its v2 shape
+  // must make the same two inserts collide — which is what silently overwrote
+  // the author's second `ownership:` entry before UR-031.
+  const db = scratch(
+    weaken(
+      "                                                  COALESCE(doc_id, -1),\n                                                  COALESCE(list_position, -1));",
+      '                                                  COALESCE(doc_id, -1));'
+    )
+  );
+  db.exec(
+    `INSERT INTO relation (source_id, target_id, rel_type, origin, doc_id,
+     source_resolved, target_resolved, list_position, note)
+     VALUES ('gandiva', 'varuna', 'ownership', 'explicit', 1, 1, 1, 0, 'guards the bow')`
+  );
+  const collision = caught(() =>
+    db.exec(
+      `INSERT INTO relation (source_id, target_id, rel_type, origin, doc_id,
+       source_resolved, target_resolved, list_position, note)
+       VALUES ('gandiva', 'varuna', 'ownership', 'explicit', 1, 1, 1, 2, 'has it back')`
+    )
+  );
+  assert.ok(
+    collision !== undefined,
+    'the weakened index accepted both rows, so the v3 term proves nothing'
+  );
+  db.close();
+});
+
+test('A13: the four chronology columns exist on relation and store NULL independently', () => {
+  const db = scratch(NARRATIVE_INDEX_DDL);
+  db.exec(
+    `INSERT INTO relation (source_id, target_id, rel_type, origin, doc_id,
+     source_resolved, target_resolved, list_position, story_time_from, story_time_to, note)
+     VALUES ('gandiva', 'arjuna', 'ownership', 'explicit', 1, 1, 1, 0, NULL, 'before exile', NULL)`
+  );
+  const row = db
+    .prepare('SELECT list_position, story_time_from, story_time_to, note FROM relation')
+    .get() as any;
+  assert.equal(Number(row.list_position), 0, 'position 0 is a value, not an absence');
+  assert.equal(row.story_time_from, null);
+  assert.equal(row.story_time_to, 'before exile');
+  assert.equal(row.note, null);
+  // STRICT is on, so the columns really are typed: a string into list_position
+  // must throw rather than be coerced.
+  const coerced = caught(() =>
+    db.exec(
+      `INSERT INTO relation (source_id, target_id, rel_type, origin, doc_id,
+       source_resolved, target_resolved, list_position)
+       VALUES ('a', 'b', 'ownership', 'explicit', 1, 1, 1, 'first')`
+    )
+  );
+  assert.ok(coerced !== undefined, 'list_position accepted a string — STRICT is not in force');
+  db.close();
+});
+
+test('A14: document.title exists, is nullable, and keeps an empty string apart from NULL', () => {
+  const db = scratch(NARRATIVE_INDEX_DDL);
+  db.exec(
+    `INSERT INTO document (rel_path, kind, size_bytes, mtime_ms, content_hash, title, indexed_at, generation)
+     VALUES ('content/named.md', 'chapter', 1, 1, 'h', 'Chapter One', 1, 1)`
+  );
+  db.exec(
+    `INSERT INTO document (rel_path, kind, size_bytes, mtime_ms, content_hash, title, indexed_at, generation)
+     VALUES ('content/blank.md', 'chapter', 1, 1, 'h', '', 1, 1)`
+  );
+  db.exec(
+    `INSERT INTO document (rel_path, kind, size_bytes, mtime_ms, content_hash, indexed_at, generation)
+     VALUES ('content/unlisted.md', 'chapter', 1, 1, 'h', 1, 1)`
+  );
+  const rows = db
+    .prepare("SELECT rel_path, title FROM document WHERE rel_path LIKE 'content/%' ORDER BY rel_path")
+    .all() as any[];
+  assert.deepEqual(
+    rows.map(row => [row.rel_path, row.title]),
+    [
+      ['content/blank.md', ''],
+      ['content/named.md', 'Chapter One'],
+      ['content/unlisted.md', null]
+    ],
+    'the empty title and the absent one are not distinguishable at the SQL level'
+  );
   db.close();
 });
 

@@ -119,18 +119,26 @@ function assertMentionInvariants(mention: NarrativeMention): void {
 }
 
 /**
- * Identity of a relation: ordered ends, type, origin and owning document.
+ * Identity of a relation: ordered ends, type, origin, owning document and
+ * POSITION IN THE LIST IT CAME FROM.
  *
  * This is the TypeScript reading of `relation_identity`, the unique index over
- * `(source_id, target_id, rel_type, origin, COALESCE(doc_id, -1))`. The joiner
- * is a NUL written AS AN ESCAPE and never as a literal control byte: a literal
- * one makes `grep` skip the file silently and `git` treat it as binary, which
- * has already happened three times in this task. The absent owner gets its own
- * sentinel so an ownerless relation cannot collide with one whose owning
+ * `(source_id, target_id, rel_type, origin, COALESCE(doc_id, -1),
+ * COALESCE(list_position, -1))`. The joiner is a NUL written AS AN ESCAPE and
+ * never as a literal control byte: a literal one makes `grep` skip the file
+ * silently and `git` treat it as binary, which has already happened three times
+ * in this task. The absent owner and the absent position each get their own
+ * sentinel, so a relation with neither cannot collide with one whose owning
  * document is literally named after the separator.
+ *
+ * THE POSITION TERM IS v3 (UR-031) AND IT IS NOT COSMETIC. Two `ownership:`
+ * entries naming the SAME owner differ in NOTHING else this key looks at, so
+ * without it the second one resolves onto the first and overwrites its
+ * story-time labels and its note.
  */
 const IDENTITY_SEPARATOR = '\u0000';
 const NO_OWNER = '\u0001no-owner';
+const NO_LIST_POSITION = '\u0001no-position';
 
 /**
  * Order two strings the way SQLite's default `BINARY` collation does.
@@ -179,7 +187,11 @@ function relationIdentity(relation: NarrativeRelation): string {
     relation.targetId,
     relation.relType,
     relation.origin,
-    relation.ownerPath ?? NO_OWNER
+    relation.ownerPath ?? NO_OWNER,
+    // `?? `, not a truthiness test: position `0` is the FIRST entry of an
+    // `ownership:` list, which is the commonest value there is, and folding it
+    // onto the sentinel would make the first and the positionless case collide.
+    relation.listPosition ?? NO_LIST_POSITION
   ].join(IDENTITY_SEPARATOR);
 }
 
@@ -489,6 +501,14 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
           ...(freshness.chapterOrder !== undefined
             ? { chapterOrder: freshness.chapterOrder }
             : { chapterOrder: undefined }),
+          // The SAME explicit clear as `chapterOrder`, and for the same reason:
+          // both are manifest-derived and both belong to the NEW path. Spreading
+          // the old row without this would leave a chapter renamed OUT of the
+          // manifest still carrying the heading the manifest no longer gives it
+          // — the one failure a `?? old` would look identical to.
+          ...(freshness.title !== undefined
+            ? { title: freshness.title }
+            : { title: undefined }),
           manifestIncluded: freshness.manifestIncluded ?? true,
           generation: committedGeneration
         });
