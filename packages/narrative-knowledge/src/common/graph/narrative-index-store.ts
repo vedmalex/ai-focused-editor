@@ -101,6 +101,25 @@ export interface IndexedDocument extends IndexedDocumentInput {
 }
 
 /**
+ * What a move writes onto the document row besides its new path.
+ *
+ * `contentHash` IS INCLUDED EVEN THOUGH A MOVE CANNOT CHANGE IT. The caller
+ * paired the delete with the add BY that hash, so passing it back is how the
+ * store can be asked to verify rather than to trust — and a future pairing rule
+ * that is not hash-based would then have to say so out loud.
+ */
+export interface DocumentMoveFreshness {
+  sizeBytes: number;
+  mtimeMs: number;
+  contentHash: string;
+  indexedAt: number;
+  /** Position of the NEW path in `manifest.yaml`; absent when unlisted. */
+  chapterOrder?: number;
+  /** Whether `manifest.yaml` lists the NEW path. Defaults to `true`. */
+  manifestIncluded?: boolean;
+}
+
+/**
  * An entity id seen in more than one card — kept as a finding, not a crash.
  *
  * THE WINNER IS A NAMED FIELD, NOT A POSITION IN AN ARRAY. The first question
@@ -292,6 +311,60 @@ export interface NarrativeIndexWriter {
   putDocument(document: IndexedDocumentInput): number;
   /** Remove a document and everything that cascades from it. */
   deleteDocument(relPath: string): void;
+  /**
+   * Re-key a document, KEEPING its row id and everything hanging off it
+   * (TASK-022 WP-4b, tech_spec ОВ-3 step 5).
+   *
+   * WHY THIS IS A METHOD AND NOT `delete` + `put`. A move detected inside one
+   * debounce window carries IDENTICAL BYTES — that is how it was detected, the
+   * pairing key is `contentHash` — so re-extracting is pure waste, and the only
+   * thing worth preserving is `docId`. Delete-then-insert destroys exactly that:
+   * every mention, relation and evidence row cascades away and comes back with
+   * new ids, which is the difference ОВ-3's first tooth measures.
+   *
+   * THE FRESHNESS FIELDS ARE STILL WRITTEN, because a move changes `mtimeMs`
+   * even when it does not change a byte, and a document row that kept the old
+   * `mtime` would be re-read by the very next prefiltered sweep.
+   *
+   * `chapterOrder` MOVES WITH THE PATH, not with the row: a chapter renamed out
+   * of the manifest's list has no position any more, and one renamed INTO it
+   * gains one. The caller passes what the manifest says about the NEW path.
+   *
+   * REFUSED when `from` is not indexed, or when `to` already is — either would
+   * be a silent merge of two documents into one row.
+   *
+   * @throws NarrativeIndexStoreError `constraint-violation` on either refusal.
+   */
+  moveDocument(from: string, to: string, freshness: DocumentMoveFreshness): void;
+  /**
+   * Drop the mentions and the owned relations of ONE document, keeping the
+   * document row (TASK-022 WP-4b).
+   *
+   * THE INCREMENTAL ANALOGUE OF {@link clearAll}, and it has to be in the port
+   * for the reason AD-6 gives about reads: the core may not formulate SQL, so a
+   * write that must touch one document's rows and no others has to be NAMED
+   * here or be impossible. Re-indexing one chapter through `deleteDocument` +
+   * `putDocument` would work and would also renumber `docId` on every edit,
+   * making "a rebuild is an increment" false for the commonest operation there
+   * is.
+   *
+   * ENTITIES ARE NOT TOUCHED. A card's entity row is workspace-level state —
+   * removing it here would break every mention that resolves through it — so a
+   * change to a CARD is not something this method can express, and the caller
+   * escalates to a full rebuild instead.
+   */
+  clearDocumentContent(relPath: string): void;
+  /**
+   * Drop every relation whose origin is `derived`.
+   *
+   * CO-OCCURRENCE IS A FOLD OVER ALL MENTIONS, so a single chapter losing a
+   * reference can DELETE an edge outright — the pair may share no other chapter.
+   * An upsert cannot express a deletion, so the incremental path recomputes the
+   * whole derived layer from the mention rows it has just finished writing. That
+   * is O(mentions) and reads no file, which is what keeps it an increment rather
+   * than a rebuild wearing a different name.
+   */
+  clearDerivedRelations(): void;
   /**
    * Store an entity card. The owning document is `entity.sourcePath`, which
    * must already exist — a second parameter naming the document could disagree

@@ -40,6 +40,7 @@ import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import {
   NarrativeIndexStoreError,
+  type DocumentMoveFreshness,
   type DuplicateEntityRecord,
   type EntityQuery,
   type EvidenceRef,
@@ -994,6 +995,86 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
       },
       deleteDocument: (relPath: string): void => {
         this.db.prepare('DELETE FROM document WHERE rel_path = ?').run(relPath);
+      },
+      /**
+       * Re-key a document, keeping `doc_id` (TASK-022 WP-4b, ОВ-3 step 5).
+       *
+       * ONE `UPDATE` MOVES ALMOST EVERYTHING, because `rel_path` lives in one
+       * table and `mention`, `relation`, `relation_evidence` and `entity` all
+       * hang off `doc_id` — which is exactly what ОВ-3 promises and why a paired
+       * move costs no extraction.
+       *
+       * ALMOST. `entity.payload` carries a DENORMALIZED `sourcePath` inside its
+       * JSON, because `getEntity` returns `JSON.parse(payload)` verbatim. That
+       * column is the one place ОВ-3's "строки entity не трогаются вообще" is
+       * not literally true, and leaving it would make a moved card report the
+       * path it used to live at — visible to the reader as a dead navigation
+       * target, and invisible to any test that only looked at `document`. It is
+       * repaired here rather than at read time so the two adapters agree without
+       * either of them owning a second source of truth.
+       */
+      moveDocument: (from: string, to: string, freshness: DocumentMoveFreshness): void => {
+        const source = this.db.prepare('SELECT doc_id FROM document WHERE rel_path = ?').get(from) as
+          | { doc_id: number }
+          | undefined;
+        if (source === undefined) {
+          throw new NarrativeIndexStoreError(
+            'constraint-violation',
+            `cannot move document '${from}': it is not indexed`
+          );
+        }
+        const destination = this.db.prepare('SELECT doc_id FROM document WHERE rel_path = ?').get(to) as
+          | { doc_id: number }
+          | undefined;
+        if (destination !== undefined) {
+          throw new NarrativeIndexStoreError(
+            'constraint-violation',
+            `cannot move document '${from}' onto '${to}': the destination is already indexed (UNIQUE(rel_path))`
+          );
+        }
+        this.db
+          .prepare(
+            `UPDATE document SET rel_path = ?, size_bytes = ?, mtime_ms = ?, content_hash = ?,
+             chapter_order = ?, manifest_included = ?, indexed_at = ?, generation = ?
+             WHERE doc_id = ?`
+          )
+          .run(
+            to,
+            freshness.sizeBytes,
+            freshness.mtimeMs,
+            freshness.contentHash,
+            freshness.chapterOrder ?? null,
+            (freshness.manifestIncluded ?? true) ? 1 : 0,
+            freshness.indexedAt,
+            committedGeneration,
+            source.doc_id
+          );
+        const owned = this.db
+          .prepare('SELECT entity_id, payload FROM entity WHERE doc_id = ?')
+          .all(source.doc_id) as unknown as { entity_id: string; payload: string }[];
+        const repair = this.db.prepare('UPDATE entity SET payload = ? WHERE entity_id = ?');
+        for (const row of owned) {
+          const entity = JSON.parse(row.payload) as NarrativeEntity;
+          entity.sourcePath = to;
+          repair.run(JSON.stringify(entity), row.entity_id);
+        }
+      },
+      clearDocumentContent: (relPath: string): void => {
+        const row = this.db.prepare('SELECT doc_id FROM document WHERE rel_path = ?').get(relPath) as
+          | { doc_id: number }
+          | undefined;
+        if (row === undefined) {
+          return;
+        }
+        this.db.prepare('DELETE FROM mention WHERE doc_id = ?').run(row.doc_id);
+        // `relation_evidence` goes with the relation by its own cascade; the
+        // evidence rows of a DERIVED relation that merely happens to cite this
+        // document are left alone, because the caller recomputes the whole
+        // derived layer immediately afterwards.
+        this.db.prepare('DELETE FROM relation WHERE doc_id = ?').run(row.doc_id);
+      },
+      clearDerivedRelations: (): void => {
+        this.db.prepare("DELETE FROM relation WHERE origin = 'derived'").run();
       },
       putEntity: (entity: NarrativeEntity): void => {
         const docId = this.docIdOf(entity.sourcePath);

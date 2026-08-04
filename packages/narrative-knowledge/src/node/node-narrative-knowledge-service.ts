@@ -4,9 +4,12 @@ import { inject, injectable } from '@theia/core/shared/inversify';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import {
   InMemoryNarrativeIndexStore,
+  NarrativeIndexMaintainer,
   NarrativeIndexSession,
+  NarrativeMemoryConfigurator,
   NOT_BUILT_INDEX_STATE,
   envelope,
+  type ConfigureResult,
   type EntityQuery,
   type Envelope,
   type IndexState,
@@ -14,14 +17,19 @@ import {
   type NarrativeContextOptions,
   type NarrativeDocumentContext,
   type NarrativeEntity,
+  type NarrativeFileWatcher,
   type NarrativeIndexStore,
   type NarrativeKnowledgeService,
+  type NarrativeMemoryConfigPatch,
   type NarrativeMention,
   type NarrativeRebuildReport,
   type NarrativeRelation,
+  type NarrativeUpdateReport,
   type RelationQuery
 } from '../common';
 import { NARRATIVE_INDEX_SCHEMA_VERSION } from './narrative-index-schema';
+import { NarrativeMemoryConfigResolver } from './narrative-memory-config-resolver';
+import { NodeNarrativeWorkspaceSource } from './node-narrative-workspace-source';
 import {
   NarrativeIndexStoreRegistry,
   canonicalWorkspaceKey,
@@ -52,10 +60,48 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
   @inject(NarrativeIndexStoreRegistry)
   protected readonly registry!: NarrativeIndexStoreRegistry;
 
+  @inject(NarrativeMemoryConfigResolver)
+  protected readonly resolver!: NarrativeMemoryConfigResolver;
+
   /** One session per canonical workspace root, alongside the registry's store.
    *  The session holds what the store cannot: whether a rebuild is in flight,
    *  the last hard failure, and when this instance first became read-only. */
   protected readonly sessions = new Map<string, NarrativeIndexSession>();
+
+  /** One maintainer per root: the watcher subscription, the debounce window,
+   *  the fallback sweep and THE SINGLE WRITE GUARD for that workspace. */
+  protected readonly maintainers = new Map<string, NarrativeIndexMaintainer>();
+
+  /**
+   * The `configure` handler, ONE PER PROCESS.
+   *
+   * Not per workspace, and that is tech_spec ОВ-9б tooth 6 in structural form: a
+   * patch may arrive BEFORE the first store is ever opened — the first store
+   * open happens on the first RPC call carrying a `rootUri`, not at boot — and a
+   * handler owned by a store could not exist to receive it.
+   *
+   * Built lazily so it composes with the INJECTED resolver rather than a second
+   * one; a field initializer would run before `@inject` had filled it in.
+   */
+  private configuratorInstance: NarrativeMemoryConfigurator | undefined;
+
+  /**
+   * The watcher factory.
+   *
+   * A SEAM, not a design flourish: the production implementation needs Theia's
+   * `FileSystemWatcherService` and its dispatcher, which the backend module
+   * supplies. Left unset the index still works — every write path goes through
+   * the maintainer either way — it simply has no live events and depends on the
+   * fallback sweep, which is exactly the behaviour a headless test wants.
+   */
+  createWatcher: ((rootPath: string) => NarrativeFileWatcher) | undefined;
+
+  protected get configurator(): NarrativeMemoryConfigurator {
+    if (this.configuratorInstance === undefined) {
+      this.configuratorInstance = new NarrativeMemoryConfigurator(this.resolver);
+    }
+    return this.configuratorInstance;
+  }
 
   async getIndexStatus(rootUri?: string): Promise<IndexState> {
     if (rootUri === undefined) {
@@ -121,11 +167,85 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
     });
   }
 
-  /** Close everything. The backend calls this on shutdown; without it a leaked
-   *  writer lock outlives the process that made it. */
+  /**
+   * Re-index one document (TASK-022 WP-4b).
+   *
+   * The root is found by walking UP to the nearest `manifest.yaml`, exactly as
+   * {@link getContextForDocument} does — one rule, one failure mode.
+   */
+  async updateDocument(uri: string): Promise<Envelope<NarrativeUpdateReport>> {
+    const documentPath = toFsPath(uri);
+    const rootPath = findManuscriptRoot(documentPath);
+    if (rootPath === undefined) {
+      return envelope(NOT_BUILT_INDEX_STATE, emptyUpdateReport());
+    }
+    return this.maintainer(rootPath).updateDocument(
+      relative(rootPath, documentPath).split(sep).join('/')
+    );
+  }
+
+  /**
+   * Change the live configuration (tech_spec ОВ-9б).
+   *
+   * THE ROOT IS CANONICALIZED FIRST, and skipping that would break the feature
+   * in a way no unit test of the handler would see: the registry keys everything
+   * by `realpath`, so on macOS a patch scoped to `/var/folders/...` would land
+   * under a key the store for `/private/var/folders/...` never reads, and the
+   * setting would be accepted, reported as applied, and quietly ignored.
+   */
+  async configure(patch: NarrativeMemoryConfigPatch, rootUri?: string): Promise<ConfigureResult> {
+    return this.configurator.configure(
+      patch,
+      rootUri === undefined ? undefined : canonicalWorkspaceKey(rootUri)
+    );
+  }
+
+  /**
+   * Close everything: watchers, timers, sessions and stores.
+   *
+   * WHO CALLS IT IS THE POINT. WP-4a left this method with no caller, so a
+   * writer lock outlived the process that took it and was recovered only by the
+   * 30-second stale-lock takeover — survivable, because that takeover exists.
+   * WP-4b makes it not survivable: a maintainer holds a live watcher
+   * subscription and a self-re-arming fallback timer, and neither is reclaimed
+   * by any expiry. So the backend module now binds this to
+   * `BackendApplicationContribution.onStop`, and the lock release comes along
+   * with it.
+   */
   dispose(): void {
+    for (const maintainer of this.maintainers.values()) {
+      maintainer.stop();
+    }
+    this.maintainers.clear();
     this.sessions.clear();
     this.registry.closeAll();
+  }
+
+  /**
+   * The maintainer for a workspace root, started on first use.
+   *
+   * ONE PER ROOT, because the guard it owns is a SINGLE-WRITER guard and there
+   * is one writer per database. A process-wide maintainer would serialize two
+   * unrelated manuscripts against each other for no reason; a per-call one would
+   * not serialize anything at all.
+   */
+  protected maintainer(rootUriOrPath: string): NarrativeIndexMaintainer {
+    const rootPath = canonicalWorkspaceKey(rootUriOrPath);
+    const existing = this.maintainers.get(rootPath);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const maintainer = new NarrativeIndexMaintainer({
+      session: this.session(rootPath),
+      source: new NodeNarrativeWorkspaceSource(rootPath),
+      config: () => this.resolver.resolve(rootPath),
+      configurator: this.configurator,
+      rootPath,
+      ...(this.createWatcher !== undefined ? { watcher: this.createWatcher(rootPath) } : {})
+    });
+    this.maintainers.set(rootPath, maintainer);
+    maintainer.start();
+    return maintainer;
   }
 
   /**
@@ -150,6 +270,21 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
     this.sessions.set(rootPath, session);
     return session;
   }
+}
+
+/** A report for an update against a document in no manuscript. Real zeros, for
+ *  the same reason `emptyRebuildReport` gives. */
+function emptyUpdateReport(): NarrativeUpdateReport {
+  return {
+    mode: 'incremental',
+    documentsReindexed: [],
+    documentsRemoved: [],
+    documentsMoved: [],
+    unchangedDocuments: [],
+    mentionsWritten: 0,
+    derivedRelations: 0,
+    unreadableDocuments: []
+  };
 }
 
 /** A report for a rebuild that had nothing to build. Every field is a real

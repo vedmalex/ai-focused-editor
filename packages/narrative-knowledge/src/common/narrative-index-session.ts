@@ -38,7 +38,10 @@ import {
   type WorkspaceFile
 } from './extraction';
 import { classifyDocument } from './extraction/document-classification';
+import { extractChapterMentions } from './extraction/chapter-extraction';
+import { buildEntityCatalog } from './extraction/entity-catalog';
 import { normalizeWorkspacePath } from './extraction/yaml-values';
+import type { IndexUpdatePlan, NarrativeUpdateReport } from './narrative-index-update';
 import {
   foldCoOccurrenceRelations,
   isRangeEvidence,
@@ -244,10 +247,31 @@ export class NarrativeIndexSession {
   private readonly now: () => number;
   private readonly absentCause: IndexAbsentCause | undefined;
 
-  private rebuilding = false;
+  /**
+   * How many maintenance passes are open, NOT a boolean (TASK-022 WP-4b).
+   *
+   * A COUNTER BECAUSE PASSES NEST. `rebuild()` opens one around its own
+   * transaction; the maintainer opens one around a whole QUEUE of them, so that
+   * a consumer polling between an incremental batch and the explicit rebuild
+   * queued behind it never sees `ready` over a half-applied manuscript. With a
+   * boolean the inner pass would clear the outer one's flag on the way out, and
+   * that momentary `ready` is exactly what plan WP-4b's first readiness case
+   * forbids.
+   */
+  private passDepth = 0;
   private failure: IndexFailureReason | undefined;
   private serviceStale: { reason: Exclude<IndexStaleReason, 'foreign-writer'>; since: number } | undefined;
   private readOnlySince: number | undefined;
+  /**
+   * Documents whose read failed and has not since succeeded or gone away.
+   *
+   * A SET AND NOT A FLAG, because ОВ-6's exit condition is per document: the
+   * index leaves `partial-update-failed` when THAT document updates successfully
+   * or disappears from disk. With a flag, one unreadable file and one repaired
+   * file would be indistinguishable, and the index would either be stuck stale
+   * or clear the staleness while a real failure was outstanding.
+   */
+  private readonly unreadable = new Set<string>();
 
   constructor(options: NarrativeIndexSessionOptions) {
     this.store = options.store;
@@ -277,7 +301,7 @@ export class NarrativeIndexSession {
     }
     return assembleIndexState({
       lifecycle,
-      rebuilding: this.rebuilding,
+      rebuilding: this.passDepth > 0,
       ...(this.failure !== undefined ? { failure: this.failure } : {}),
       ...(this.absentCause !== undefined ? { absent: this.absentCause } : {}),
       ...(this.serviceStale !== undefined ? { stale: this.serviceStale } : {}),
@@ -311,7 +335,51 @@ export class NarrativeIndexSession {
     this.serviceStale = undefined;
   }
 
+  /** The stale reason this session is currently reporting, if any. */
+  staleReason(): IndexStaleReason | undefined {
+    return this.serviceStale?.reason;
+  }
+
+  /**
+   * Open a maintenance pass: the index reports `rebuilding` until it closes.
+   *
+   * PUBLIC BECAUSE THE GUARD IS NOT IN THIS CLASS. WP-4b's serializer holds one
+   * pass open across a whole queue drain, which is what keeps the intermediate
+   * `ready` from ever being observable. Balanced by {@link endPass}, always in a
+   * `finally`.
+   */
+  beginPass(): void {
+    this.passDepth++;
+  }
+
+  /** Close a pass opened by {@link beginPass}. */
+  endPass(): void {
+    if (this.passDepth > 0) {
+      this.passDepth--;
+    }
+  }
+
   // ---- reads ------------------------------------------------------------
+
+  /**
+   * One document row, or `undefined`.
+   *
+   * NO ENVELOPE, unlike every other read on this class, and the difference is a
+   * boundary rather than an oversight: `IndexedDocument` is INTERNAL — it
+   * carries `docId` and the per-document `generation`, neither of which appears
+   * in any RPC result or in `NarrativeDocumentContext`. These two accessors
+   * exist for the maintenance path in this package (the freshness key, and the
+   * hash a deleted file is paired by), which is why they hand back the row and
+   * not a consumer-facing envelope.
+   */
+  documentOf(relPath: string): IndexedDocument | undefined {
+    return this.store.getDocument(normalizeWorkspacePath(relPath));
+  }
+
+  /** Every document row, by `relPath`, code point ascending. */
+  documents(): IndexedDocument[] {
+    return this.store.listDocuments();
+  }
 
   getEntity(entityId: string): Envelope<NarrativeEntity | undefined> {
     return envelope(this.state(), this.store.getEntity(entityId));
@@ -375,7 +443,8 @@ export class NarrativeIndexSession {
    */
   rebuild(files: readonly IndexableFile[], options: RebuildOptions = {}): Envelope<NarrativeRebuildReport> {
     const indexedAt = options.indexedAt ?? this.now();
-    this.rebuilding = true;
+    this.beginPass();
+    let report: NarrativeRebuildReport;
     try {
       if (options.fresh === true) {
         this.store.resetForRebuild();
@@ -388,20 +457,193 @@ export class NarrativeIndexSession {
           text: file.text
         }))
       );
-      const report = this.store.transaction(writer =>
+      report = this.store.transaction(writer =>
         this.writeRebuild(writer, normalized, extracted, indexedAt)
       );
       this.failure = undefined;
       this.serviceStale = undefined;
-      // Cleared BEFORE the state is assembled: a finished pass that reported
-      // itself as `rebuilding` would tell the caller its own result is
-      // provisional. The `finally` below still runs, and still matters — it is
-      // what clears the flag when the transaction THREW.
-      this.rebuilding = false;
-      return envelope(this.state(), report);
+      this.unreadable.clear();
     } finally {
-      this.rebuilding = false;
+      // Closed BEFORE the state is assembled below: a finished pass that still
+      // reported itself as `rebuilding` would tell the caller its own result is
+      // provisional. The `finally` is what closes it when the transaction THREW.
+      this.endPass();
     }
+    return envelope(this.state(), report);
+  }
+
+  /**
+   * Apply ONE incremental pass, in ONE transaction (TASK-022 WP-4b).
+   *
+   * IT TAKES FILES, NOT PATHS, for the same reason `rebuild` does: reading and
+   * hashing needs a disk, and this class deliberately has none, so the entire
+   * incremental path is executable under `bun` against the in-memory adapter and
+   * under `node` against real SQLite from one body of code.
+   *
+   * WHY THE FRESHNESS CHECK HERE IS HASH-AUTHORITATIVE. Every file that reaches
+   * this method has ALREADY been read — the watcher said it changed, or a sweep
+   * decided to read it. The `(size, mtime)` prefilter exists to avoid reads, and
+   * there is no read left to avoid; applying it anyway is what tech_spec ОВ-1's
+   * tooth C4 refuses, because a file whose `mtime` and size were RESTORED (a
+   * `git checkout` back and forth) would then be declared unchanged while its
+   * bytes differ. The prefilter lives one layer up, in the routine sweep, where
+   * it can actually save something — and ОВ-1 says so in as many words: "Где
+   * префильтр НЕ нужен: на пути вотчера".
+   *
+   * THE ORDER OF WRITES IS LOAD-BEARING. Moves go first, because a rename can
+   * free a path an addition is about to take. Removals go before upserts for the
+   * mirror-image reason. Derived relations are recomputed LAST and WHOLESALE:
+   * co-occurrence is a fold over every mention, so one chapter losing a
+   * reference can DELETE an edge, and an upsert cannot express a deletion.
+   */
+  applyUpdate(plan: IndexUpdatePlan, options: RebuildOptions = {}): Envelope<NarrativeUpdateReport> {
+    const indexedAt = options.indexedAt ?? this.now();
+    this.beginPass();
+    let report: NarrativeUpdateReport;
+    try {
+      // WHAT WOULD ACTUALLY BE WRITTEN, DECIDED BEFORE A TRANSACTION IS OPENED.
+      // Both filters are pure reads, and doing them here rather than inside the
+      // writer is what makes a no-op pass cost NOTHING — no transaction, so no
+      // committed generation. That matters twice over: `generation` is a cache
+      // key for gh#51 (`indexVersion` is `${schemaVersion}.${generation}`), so
+      // advancing it over a save that changed no byte would invalidate every
+      // consumer's cache for nothing; and a watcher event on a file the index
+      // refuses to read — `sources/**`, `knowledge/**` — must be free, or every
+      // citation save would churn the index.
+      const toWrite = plan.upsert.filter(file =>
+        documentNeedsReindex(this.store.getDocument(normalizeWorkspacePath(file.path)), file, {
+          hashAuthoritative: true
+        })
+      );
+      const unchanged = plan.upsert
+        .map(file => normalizeWorkspacePath(file.path))
+        .filter(path => !toWrite.some(file => normalizeWorkspacePath(file.path) === path));
+      const toRemove = plan.remove.filter(path => this.store.getDocument(path) !== undefined);
+
+      if (plan.moves.length === 0 && toWrite.length === 0 && toRemove.length === 0) {
+        report = {
+          mode: 'incremental',
+          documentsReindexed: [],
+          documentsRemoved: [],
+          documentsMoved: [],
+          unchangedDocuments: unchanged.sort(byCodePoint),
+          mentionsWritten: 0,
+          derivedRelations: this.store.getRelations({ origin: 'derived' }).length,
+          unreadableDocuments: [...plan.unreadable].sort(byCodePoint)
+        };
+      } else {
+        report = this.store.transaction(writer =>
+          this.writeUpdate(writer, { ...plan, upsert: toWrite, remove: toRemove }, indexedAt, unchanged)
+        );
+      }
+      for (const path of plan.upsert) {
+        this.unreadable.delete(path.path);
+      }
+      for (const path of plan.remove) {
+        // ОВ-6: `partial-update-failed` clears when the same document updates
+        // successfully OR DISAPPEARS FROM DISK. The second half is why this loop
+        // exists — a file nobody can read and nobody deletes would otherwise
+        // pin the index to `stale` for the rest of the session.
+        this.unreadable.delete(path);
+      }
+      for (const path of plan.unreadable) {
+        this.unreadable.add(path);
+      }
+      if (this.unreadable.size > 0) {
+        // A LOST WATCHER OUTRANKS A FAILED DOCUMENT, and is not overwritten by
+        // one. `watcher-lost` says the index does not know what changed at all;
+        // `partial-update-failed` says it knows exactly which one file it could
+        // not read. Downgrading the first to the second would understate the
+        // problem, and only a sweep can clear it.
+        if (this.serviceStale?.reason !== 'watcher-lost') {
+          this.recordStale('partial-update-failed');
+        }
+      } else if (this.serviceStale?.reason === 'partial-update-failed') {
+        this.serviceStale = undefined;
+      }
+    } finally {
+      this.endPass();
+    }
+    return envelope(this.state(), report);
+  }
+
+  private writeUpdate(
+    writer: NarrativeIndexWriter,
+    plan: IndexUpdatePlan,
+    indexedAt: number,
+    unchangedDocuments: readonly string[]
+  ): NarrativeUpdateReport {
+    const orderByPath = new Map(plan.chapters.map(chapter => [chapter.path, chapter.order]));
+    const documentsMoved: { from: string; to: string }[] = [];
+    for (const move of plan.moves) {
+      const order = orderByPath.get(move.to.path);
+      writer.moveDocument(move.from, move.to.path, {
+        sizeBytes: move.to.sizeBytes,
+        mtimeMs: move.to.mtimeMs,
+        contentHash: move.to.contentHash,
+        indexedAt,
+        ...(order !== undefined ? { chapterOrder: order } : {}),
+        manifestIncluded: order !== undefined
+      });
+      documentsMoved.push({ from: move.from, to: move.to.path });
+    }
+
+    const documentsRemoved: string[] = [];
+    for (const relPath of plan.remove) {
+      writer.deleteDocument(relPath);
+      documentsRemoved.push(relPath);
+    }
+
+    // The catalog is rebuilt from the ENTITIES THE INDEX ALREADY HOLDS, not from
+    // the cards on disk — which is what makes this an increment. It is sound
+    // only because a change to a card never reaches this method: the maintainer
+    // escalates such a batch to a full rebuild, precisely because resolvedness
+    // is workspace-level.
+    const { catalog } = buildEntityCatalog(this.store.findEntities(), plan.types);
+
+    const documentsReindexed: string[] = [];
+    let mentionsWritten = 0;
+    for (const file of plan.upsert) {
+      const path = normalizeWorkspacePath(file.path);
+      const classification = classifyDocument(path, plan.types);
+      if (classification === undefined) {
+        continue;
+      }
+      const order = orderByPath.get(path);
+      writer.putDocument({
+        relPath: path,
+        kind: classification.kind,
+        sizeBytes: file.sizeBytes,
+        mtimeMs: file.mtimeMs,
+        contentHash: file.contentHash,
+        indexedAt,
+        ...(order !== undefined ? { chapterOrder: order } : {}),
+        ...(classification.kind === 'chapter' ? { manifestIncluded: order !== undefined } : {})
+      });
+      writer.clearDocumentContent(path);
+      for (const mention of extractChapterMentions({ path, text: file.text }, catalog)) {
+        writer.putMention(mention);
+        mentionsWritten++;
+      }
+      documentsReindexed.push(path);
+    }
+
+    writer.clearDerivedRelations();
+    const derived = foldCoOccurrenceRelations(this.store.getMentions());
+    for (const relation of derived) {
+      writer.putRelation(relation);
+    }
+
+    return {
+      mode: 'incremental',
+      documentsReindexed: documentsReindexed.sort(byCodePoint),
+      documentsRemoved: documentsRemoved.sort(byCodePoint),
+      documentsMoved,
+      unchangedDocuments: [...unchangedDocuments].sort(byCodePoint),
+      mentionsWritten,
+      derivedRelations: derived.length,
+      unreadableDocuments: [...plan.unreadable].sort(byCodePoint)
+    };
   }
 
   private writeRebuild(

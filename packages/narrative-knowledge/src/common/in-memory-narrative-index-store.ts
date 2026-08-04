@@ -29,6 +29,7 @@
  */
 
 import type {
+  DocumentMoveFreshness,
   DuplicateEntityRecord,
   EntityQuery,
   IndexedDocument,
@@ -444,6 +445,84 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
           generation: committedGeneration
         });
         return docId;
+      },
+      /**
+       * Re-key a document, keeping its `docId` (TASK-022 WP-4b, ОВ-3 step 5).
+       *
+       * IT REWRITES MORE THAN THE SQLITE ADAPTER DOES, AND THE ASYMMETRY IS
+       * REAL. There, `rel_path` lives in exactly one table and every consumer
+       * joins to it, so a single `UPDATE` moves the whole document. Here, paths
+       * are DENORMALIZED onto every row — `mention.evidence.path`,
+       * `relation.ownerPath`, each evidence ref, `entity.sourcePath`, the
+       * duplicate sets — because this adapter has no joins. So the same move has
+       * to touch all of them, and the contract core is what proves the two ended
+       * up in the same state.
+       *
+       * (The SQLite side is not free of this either: `entity.payload` carries a
+       * denormalized `sourcePath` inside its JSON, so it has one row to repair
+       * too. tech_spec ОВ-3's "строки entity не трогаются вообще" is true of the
+       * FOREIGN KEYS and not of that column.)
+       */
+      moveDocument: (from: string, to: string, freshness: DocumentMoveFreshness): void => {
+        const document = this.documents.get(from);
+        if (document === undefined) {
+          throw new NarrativeIndexStoreError(
+            'constraint-violation',
+            `cannot move document '${from}': it is not indexed`
+          );
+        }
+        if (this.documents.has(to)) {
+          throw new NarrativeIndexStoreError(
+            'constraint-violation',
+            `cannot move document '${from}' onto '${to}': the destination is already indexed ` +
+              '(UNIQUE(rel_path))'
+          );
+        }
+        this.documents.delete(from);
+        this.documents.set(to, {
+          ...document,
+          relPath: to,
+          sizeBytes: freshness.sizeBytes,
+          mtimeMs: freshness.mtimeMs,
+          contentHash: freshness.contentHash,
+          indexedAt: freshness.indexedAt,
+          ...(freshness.chapterOrder !== undefined
+            ? { chapterOrder: freshness.chapterOrder }
+            : { chapterOrder: undefined }),
+          manifestIncluded: freshness.manifestIncluded ?? true,
+          generation: committedGeneration
+        });
+        for (const entity of this.entities.values()) {
+          if (entity.sourcePath === from) {
+            entity.sourcePath = to;
+          }
+        }
+        for (const paths of this.duplicates.values()) {
+          if (paths.delete(from)) {
+            paths.add(to);
+          }
+        }
+        this.mentions = this.mentions.map(mention =>
+          mention.evidence.path === from
+            ? { ...mention, evidence: { ...mention.evidence, path: to } }
+            : mention
+        );
+        for (const row of this.relations) {
+          const relation = row.relation;
+          if (relation.ownerPath === from) {
+            relation.ownerPath = to;
+          }
+          relation.evidence = relation.evidence.map(evidence =>
+            evidence.path === from ? { ...evidence, path: to } : evidence
+          );
+        }
+      },
+      clearDocumentContent: (relPath: string): void => {
+        this.mentions = this.mentions.filter(mention => mention.evidence.path !== relPath);
+        this.relations = this.relations.filter(row => row.relation.ownerPath !== relPath);
+      },
+      clearDerivedRelations: (): void => {
+        this.relations = this.relations.filter(row => row.relation.origin !== 'derived');
       },
       deleteDocument: (relPath: string): void => {
         if (!this.documents.delete(relPath)) {

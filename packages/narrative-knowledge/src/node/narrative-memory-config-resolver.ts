@@ -152,6 +152,28 @@ export class NarrativeMemoryConfigResolver {
     return { rejected };
   }
 
+  /**
+   * Drop rung-1 values, so the rung below wins again (TASK-022 WP-4b).
+   *
+   * THE OTHER HALF OF `setRuntimeOverrides`, and the ladder is unusable without
+   * it. tech_spec ОВ-9б distinguishes an ABSENT key in a patch ("leave it
+   * alone") from a key explicitly set to `undefined` ("drop my override"), and
+   * the second is the only way a user can put a setting back to whatever the
+   * CLI, the environment, the workspace file or the defaults say. Merging
+   * `undefined` into the override record would not do it: the key would still be
+   * present in the spread and would overwrite the lower rung with nothing.
+   */
+  clearRuntimeOverrides(keys: readonly (keyof NarrativeMemoryConfig)[], rootPath?: string): void {
+    const target = rootPath === undefined ? this.runtimeGlobal : this.runtimeByRoot.get(rootPath);
+    if (target === undefined) {
+      return;
+    }
+    for (const key of keys) {
+      delete target[key];
+    }
+    this.resolvedByRoot.clear();
+  }
+
   /** Forget memoized results, so the next `resolve` reads the rungs again. */
   invalidate(rootPath?: string): void {
     if (rootPath === undefined) {

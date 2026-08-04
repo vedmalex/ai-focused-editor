@@ -8,8 +8,8 @@
  * from a frontend or a backend.
  *
  * WP-0 shipped ONE method — `getIndexStatus()`, the round-trip probe. WP-4a
- * adds the reading surface and the full rebuild; `updateDocument` and
- * `configure` arrive in WP-4b.
+ * added the reading surface and the full rebuild. WP-4b completes it with
+ * `updateDocument` and `configure`.
  *
  * EVERY READING METHOD RETURNS AN `Envelope`, never a bare payload (plan WP-1).
  * An empty list on its own cannot distinguish "there is no such relation" from
@@ -37,6 +37,8 @@ import type { IndexState } from './index-state';
 import type { Envelope } from './narrative-envelope';
 import type { NarrativeContextOptions, NarrativeDocumentContext } from './narrative-context';
 import type { NarrativeRebuildReport } from './narrative-index-session';
+import type { NarrativeUpdateReport } from './narrative-index-update';
+import type { ConfigureResult, NarrativeMemoryConfigPatch } from './narrative-memory-configure';
 
 /** DI symbol of the service. Bound to the node implementation on the backend
  *  and to the RPC proxy on the frontend. */
@@ -85,4 +87,41 @@ export interface NarrativeKnowledgeService {
     uri: string,
     options?: NarrativeContextOptions
   ): Promise<Envelope<NarrativeDocumentContext | undefined>>;
+
+  /**
+   * Re-index ONE document (TASK-022 WP-4b).
+   *
+   * `uri` AND NO `rootUri`, matching `getContextForDocument` and for the same
+   * reason: the workspace is found by walking up to the nearest ancestor holding
+   * a `manifest.yaml`, which is deterministic and needs no second parameter a
+   * caller could get wrong.
+   *
+   * IT GOES THROUGH THE SAME WRITE GUARD as the watcher and the explicit
+   * rebuild. A caller cannot use it to slip a write past a rebuild in flight,
+   * and it may return `mode: 'rebuild'` — a change to an entity card, the
+   * manifest or `types.yaml` shifts facts the whole workspace depends on, and
+   * the escalation is reported rather than hidden.
+   */
+  updateDocument(uri: string): Promise<Envelope<NarrativeUpdateReport>>;
+
+  /**
+   * Change the live configuration (tech_spec ОВ-9б).
+   *
+   * RETURNS A RESULT, NEVER `void`. Without it a settings UI can prove it CALLED
+   * this method and nothing else: not that the value was accepted, not that it
+   * was refused as out of range or locked by a launch flag, not that it will
+   * only take effect at the next start. Those three are different things and the
+   * user has to be told which one happened.
+   *
+   * `rootUri` ABSENT MEANS GLOBAL — every open workspace and every future one.
+   * Two windows on two manuscripts of very different sizes legitimately want
+   * different debounce windows, and Theia settings can be workspace-scoped, so
+   * the scope has to be expressible.
+   *
+   * NOT PERSISTED. The durable home for these values is Theia's own preference
+   * storage, which re-sends them whenever a frontend connects. Persisting here
+   * would create a sixth source that outlives the UI that set it and drifts
+   * quietly away from it — the divergence this whole epic exists to remove.
+   */
+  configure(patch: NarrativeMemoryConfigPatch, rootUri?: string): Promise<ConfigureResult>;
 }
