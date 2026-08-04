@@ -19,6 +19,11 @@ export * from './narrative-entity';
 export * from './narrative-mention';
 export * from './narrative-relation';
 
+// Relation source 6, the DERIVED one (TASK-022 WP-4a). The RULE of the fold is
+// core business and imports nothing outward; the materialization is the
+// caller's, in one write transaction — see the module note.
+export * from './derived-relations';
+
 // The storage port (TASK-022 WP-3). It lives INSIDE the folder for the same
 // reason the domain types do: the core reads and writes the index through it,
 // so a core lifted out without it would not run. It speaks in lifecycle

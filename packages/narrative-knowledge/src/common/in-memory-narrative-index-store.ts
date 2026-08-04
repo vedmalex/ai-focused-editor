@@ -147,6 +147,31 @@ function compareByCodePoint(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/**
+ * A relation with its evidence in a DEFINED order (TASK-022 WP-4a).
+ *
+ * READ-SIDE, NOT WRITE-SIDE, and deliberately: the SQLite adapter is forbidden
+ * from normalizing on write (a repaired value would move enforcement out of the
+ * schema), so the only place the two adapters can agree is here. SQLite reaches
+ * the same order with `ORDER BY re.relation_id, d.rel_path, re.start_line,
+ * re.start_char`; this adapter would otherwise return whatever order the
+ * PRODUCER wrote, which is a different thing that merely LOOKS the same until a
+ * producer writes out of order — and WP-4b's incremental update, which appends
+ * one evidence row to an existing co-occurrence edge, is exactly such a
+ * producer.
+ */
+function withOrderedEvidence(relation: NarrativeRelation): NarrativeRelation {
+  return {
+    ...relation,
+    evidence: [...relation.evidence].sort(
+      (left, right) =>
+        compareByCodePoint(left.path, right.path) ||
+        (left.range?.start.line ?? -1) - (right.range?.start.line ?? -1) ||
+        (left.range?.start.character ?? -1) - (right.range?.start.character ?? -1)
+    )
+  };
+}
+
 function relationIdentity(relation: NarrativeRelation): string {
   return [
     relation.sourceId,
@@ -244,8 +269,18 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
     return found ? clone(found) : undefined;
   }
 
+  /**
+   * Every document, ordered by `relPath`, CODE POINT ascending (ISS-349).
+   *
+   * It used to be `localeCompare`, which disagrees with the SQLite adapter's
+   * `ORDER BY rel_path` for every mixed-case Cyrillic pair — `Ярость` before
+   * `арджуна` under `BINARY`, the reverse under a Russian locale. No contract
+   * case noticed, because every fixture happened to use paths the two orders
+   * agree about; the `entities/Ярость.yaml` vs `entities/арджуна.yaml` pair in
+   * the contract core exists so that is no longer true.
+   */
   listDocuments(): IndexedDocument[] {
-    return [...this.documents.values()].map(clone).sort((a, b) => a.relPath.localeCompare(b.relPath));
+    return [...this.documents.values()].map(clone).sort((a, b) => compareByCodePoint(a.relPath, b.relPath));
   }
 
   getEntity(entityId: string): NarrativeEntity | undefined {
@@ -270,7 +305,11 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
       }
       return true;
     });
-    matches.sort((a, b) => a.id.localeCompare(b.id));
+    // Ordered by `id`, CODE POINT ascending — matching the SQLite adapter's
+    // `ORDER BY e.entity_id` (ISS-349, same reason as `listDocuments`). The cap
+    // is applied AFTER sorting in both adapters, so `limit` returns the same
+    // rows and not merely the same number of them.
+    matches.sort((a, b) => compareByCodePoint(a.id, b.id));
     const limited = query.limit === undefined ? matches : matches.slice(0, query.limit);
     return limited.map(clone);
   }
@@ -295,7 +334,7 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
   getRelations(query: RelationQuery = {}): NarrativeRelation[] {
     return this.relations
       .filter(row => matchesRelationQuery(row.relation, query))
-      .map(row => clone(row.relation));
+      .map(row => withOrderedEvidence(clone(row.relation)));
   }
 
   neighbourhood(query: NeighbourhoodQuery): NarrativeRelation[] {
@@ -320,7 +359,7 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
           const key = `${row.relationId}`;
           if (!collectedKeys.has(key)) {
             collectedKeys.add(key);
-            collected.push(clone(relation));
+            collected.push(withOrderedEvidence(clone(relation)));
           }
           for (const end of [relation.sourceId, relation.targetId]) {
             if (!seenEntities.has(end)) {

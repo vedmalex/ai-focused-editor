@@ -891,10 +891,19 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
     const placeholders = kept.map(() => '?').join(', ');
     const evidenceRows = this.db
       .prepare(
+        // ORDERED DOWN TO A TOTAL KEY, not just by relation (TASK-022 WP-4a).
+        // `ORDER BY re.relation_id` alone left the evidence rows of ONE
+        // relation in whatever order the engine chose, while the in-memory
+        // adapter returns them in the order they were written. That was
+        // invisible while every relation had exactly one evidence row — and it
+        // stopped being invisible when co-occurrence edges arrived, which carry
+        // one row per shared chapter. `d.rel_path` rather than `re.doc_id`,
+        // because a row id is an insertion artefact and a path is the identity
+        // the producer sorts by.
         `SELECT re.*, d.rel_path AS doc_rel_path FROM relation_evidence re
          JOIN document d ON d.doc_id = re.doc_id
          WHERE re.relation_id IN (${placeholders})
-         ORDER BY re.relation_id`
+         ORDER BY re.relation_id, d.rel_path, re.start_line, re.start_char`
       )
       .all(...kept.map(row => row.relation_id)) as unknown as EvidenceRow[];
     const evidenceByRelation = new Map<number, EvidenceRef[]>();

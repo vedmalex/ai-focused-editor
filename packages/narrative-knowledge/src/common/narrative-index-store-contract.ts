@@ -28,6 +28,7 @@ import type {
   NarrativeRelation
 } from './graph';
 import { isNarrativeIndexStoreError, rangeEvidence, wholeFileEvidence } from './graph';
+import { check, deepEqual, equal, rejectsSomehow, rejectsWithKind } from './contract-assertions';
 
 /**
  * How a harness produces a store for one case.
@@ -48,94 +49,13 @@ export interface NarrativeIndexStoreContractCase {
 }
 
 // --------------------------------------------------------------------------
-// Assertions — deliberately hand-rolled, see the module note
+// Assertions — hand-rolled and SHARED, see `contract-assertions.ts`
 // --------------------------------------------------------------------------
 
-class ContractViolation extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ContractViolation';
-  }
-}
-
-function check(condition: boolean, message: string): asserts condition {
-  if (!condition) {
-    throw new ContractViolation(message);
-  }
-}
-
-function equal<T>(actual: T, expected: T, what: string): void {
-  if (!Object.is(actual, expected)) {
-    throw new ContractViolation(`${what}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
-  }
-}
-
-/**
- * Serialize with sorted keys.
- *
- * KEY ORDER IS NOT PART OF THE CONTRACT and must not be asserted by accident.
- * The in-memory adapter returns a structural clone of what it was handed, so it
- * preserves the literal's key order; the SQLite adapter rebuilds the object
- * column by column and cannot. A plain `JSON.stringify` comparison would fail
- * for SQLite on that difference alone — a red test with nothing wrong behind it,
- * which is worse than no test because it teaches people to weaken the assertion.
- */
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(',')}]`;
-  }
-  if (value !== null && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'undefined';
-}
-
-function deepEqual(actual: unknown, expected: unknown, what: string): void {
-  const a = stableStringify(actual);
-  const b = stableStringify(expected);
-  if (a !== b) {
-    throw new ContractViolation(`${what}: expected ${b}, got ${a}`);
-  }
-}
-
-/**
- * Assert that `body` throws this port's error with the given kind.
- *
- * The KIND is asserted, never the message: the in-memory adapter phrases its
- * refusal itself while SQLite's text comes from the engine, and an assertion on
- * wording would be an assertion about which adapter is running.
- */
+/** As the shared helper, bound to this port's error narrowing so a call site
+ *  does not have to pass it every time. */
 async function rejects(body: () => unknown, kind: string, what: string): Promise<void> {
-  let threw: unknown;
-  let returned = false;
-  try {
-    await body();
-    returned = true;
-  } catch (error) {
-    threw = error;
-  }
-  check(!returned, `${what}: expected a rejection, but the call returned normally`);
-  check(
-    isNarrativeIndexStoreError(threw) ? threw.kind === kind : false,
-    `${what}: expected NarrativeIndexStoreError of kind '${kind}', got ${String(threw)}`
-  );
-}
-
-/** As {@link rejects}, but the rejection may come from the ENGINE rather than
- *  from this port — a SQLite `CHECK` throws its own `Error`. What is asserted
- *  is only that the write did not succeed. */
-async function rejectsSomehow(body: () => unknown, what: string): Promise<void> {
-  let returned = false;
-  try {
-    await body();
-    returned = true;
-  } catch {
-    return;
-  }
-  check(!returned, `${what}: expected a rejection, but the call returned normally`);
+  return rejectsWithKind(body, kind, what, isNarrativeIndexStoreError);
 }
 
 // --------------------------------------------------------------------------

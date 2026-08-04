@@ -66,11 +66,30 @@ export const INDEX_STALE_REASONS = [
  * State of the narrative index, as reported to every consumer alongside the
  * data it asks for.
  *
- * `generation` increments on each completed rebuild, so a consumer can tell a
- * stale answer from a fresh one without comparing payloads. It is present on
- * EVERY branch: an empty answer during a rebuild must be distinguishable from
- * an empty answer meaning "there is no such thing", which is the whole reason
- * this envelope exists.
+ * `generation` IS THE STORE'S WRITE COUNTER: it advances by one on every
+ * COMMITTED write transaction, under the compare-and-set of tech_spec ОВ-4.
+ * A consumer can therefore tell a stale answer from a fresh one without
+ * comparing payloads. It is present on EVERY branch: an empty answer during a
+ * rebuild must be distinguishable from an empty answer meaning "there is no
+ * such thing", which is the whole reason this envelope exists.
+ *
+ * THIS SENTENCE USED TO SAY "increments on each completed rebuild", AND THAT
+ * WAS WRONG — corrected in WP-4a, the first work package that had to show the
+ * number to a human. Nothing ever counted rebuilds; ОВ-4 requires the
+ * compare-and-set on EVERY writing transaction, and WP-3 implemented exactly
+ * that. The difference is not academic: WP-4b adds `updateDocument(uri)`, which
+ * commits without rebuilding anything, so a counter that only moved on rebuilds
+ * would let a consumer's cache key stay put across a real change. Since
+ * `indexVersion` in tech_spec ОВ-2 is literally `${schemaVersion}.${generation}`
+ * and gh#51 uses it as a cache key, the per-commit reading is the only one that
+ * is safe to cache against.
+ *
+ * DO NOT CONFUSE IT WITH `IndexedDocument.generation`, which is PER DOCUMENT —
+ * the store generation at which THAT file was last written, and the machine
+ * form of "re-indexing one file leaves its neighbours alone" (WP-9a assertion
+ * 2, ОВ-1 tooth A5). That one is never surfaced to a consumer: it appears on
+ * the storage port and nowhere in this envelope, in `NarrativeDocumentContext`,
+ * or in any RPC result.
  */
 export type IndexState =
   | { state: 'ready' | 'rebuilding'; generation: number }

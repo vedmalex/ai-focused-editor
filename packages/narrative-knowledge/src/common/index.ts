@@ -26,11 +26,20 @@ export * from './narrative-knowledge-protocol';
 export * from './narrative-schema';
 export * from './legacy-narrative-entity';
 
+// Reading and full rebuild over the store (WP-4a). `IndexState` is ASSEMBLED
+// here, outside `graph/`, from the four lifecycle primitives the port returns —
+// the port may not name the type at all (prohibition (e) half 2).
+export * from './narrative-envelope';
+export * from './index-state-assembly';
+export * from './narrative-context';
+export * from './narrative-index-session';
+
 // The in-memory store adapter and the runner-agnostic contract core (WP-3).
 // They live in `src/common` because `bun` must be able to run them: the whole
 // reason they exist is that `bun` cannot reach the SQLite adapter in `src/node`.
 export * from './in-memory-narrative-index-store';
 export * from './narrative-index-store-contract';
+export * from './narrative-index-read-contract';
 
 // Deterministic parsers relocated in TASK-022 WP-0 (plan AD-1). They are the
 // inputs the index is extracted from, which is why they live on this side of
