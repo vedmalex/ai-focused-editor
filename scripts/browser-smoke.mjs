@@ -6,7 +6,9 @@ import net from 'node:net';
 import { chromium } from 'playwright';
 import {
   assertNarrativeKnowledgeRoundTrip,
-  probeReaderScript
+  probeReaderScript,
+  assertNarrativeToolsRegistered,
+  toolRegistryReaderScript
 } from './narrative-knowledge-round-trip.mjs';
 
 const repoRoot = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
@@ -120,6 +122,14 @@ try {
   // the frontend probe recorded at start.
   await assertNarrativeKnowledgeRoundTrip(
     () => page.evaluate(probeReaderScript()),
+    'browser'
+  );
+
+  // TASK-022 WP-6: the four read-only AI tools reached the invocation registry.
+  // `bindToolProvider` runs inside a ContainerModule no `bun` lane can
+  // instantiate, so this is the only place a missing binding is visible at all.
+  await assertNarrativeToolsRegistered(
+    () => page.evaluate(toolRegistryReaderScript()),
     'browser'
   );
 

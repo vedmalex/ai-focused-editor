@@ -10,6 +10,8 @@ import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import {
   assertNarrativeKnowledgeRoundTrip,
+  assertNarrativeToolsRegistered,
+  toolRegistryReaderScript,
   probeReaderScript
 } from './narrative-knowledge-round-trip.mjs';
 
@@ -181,6 +183,20 @@ try {
   try {
     await assertNarrativeKnowledgeRoundTrip(
       () => window.evaluate(probeReaderScript()),
+      'electron'
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+
+  // TASK-022 WP-6: the four read-only AI tools reached the invocation registry
+  // in THIS target too. The frontend module is shared, but the container is not
+  // — WP-0's round-trip probe was added to both runners for exactly this
+  // reason, and a binding that resolves in the browser and not in Electron is a
+  // shape this repository has already seen.
+  try {
+    await assertNarrativeToolsRegistered(
+      () => window.evaluate(toolRegistryReaderScript()),
       'electron'
     );
   } catch (error) {

@@ -41,13 +41,24 @@ function phrase(key: string, fallback: string): string {
  */
 const DEFAULTS = new Map(NARRATIVE_MEMORY_PHRASES.map(entry => [entry.key, entry.default]));
 
-function localizeKey(key: string): string {
+/**
+ * Localize one catalog key.
+ *
+ * EXPORTED SO WP-6 SHARES IT rather than building a second `DEFAULTS` map. Two
+ * maps over the same catalog is the rot this function's own note warns about,
+ * one layer up: the second copy would go stale the first time a phrase was
+ * reworded, invisibly in ru (where the bundle wins) and visibly only in the
+ * locale nobody tests.
+ */
+export function localizeNarrativeMemoryKey(key: string): string {
   // The `??` arm is unreachable while every key rendered here comes from the
   // catalog, and the ru-bundle test asserts exactly that. It is a leaf name
   // rather than a thrown error on purpose: a missing phrase must degrade to an
   // ugly status bar, never to a frontend that fails to start.
   return phrase(key, DEFAULTS.get(key) ?? key.slice(`${NARRATIVE_MEMORY_NLS_PREFIX}/`.length));
 }
+
+const localizeKey = localizeNarrativeMemoryKey;
 
 /** The status bar entry's text, icon included. */
 export function statusBarText(presentation: NarrativeStatusBarPresentation): string {

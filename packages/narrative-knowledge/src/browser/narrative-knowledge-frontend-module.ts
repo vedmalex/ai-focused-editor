@@ -3,6 +3,7 @@ import { CommandContribution } from '@theia/core/lib/common/command';
 import { PreferenceContribution } from '@theia/core/lib/common/preferences';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { ServiceConnectionProvider } from '@theia/core/lib/browser/messaging/service-connection-provider';
+import { bindToolProvider } from '@theia/ai-core/lib/common/tool-invocation-registry';
 import {
   NarrativeKnowledgeService,
   NarrativeKnowledgeServicePath
@@ -10,6 +11,12 @@ import {
 import { NarrativeKnowledgeRoundTripProbe } from './narrative-knowledge-round-trip-probe';
 import { NarrativeMemoryContribution } from './narrative-memory-contribution';
 import { NarrativeMemoryPreferenceContribution } from './narrative-memory-preferences';
+import {
+  NarrativeDocumentContextTool,
+  NarrativeEntityRelationsTool,
+  NarrativeFindEntitiesTool,
+  NarrativeFindMentionsTool
+} from './narrative-memory-tools-contribution';
 
 /**
  * Frontend module (TASK-022 WP-0, completed for the user-facing surfaces by
@@ -21,7 +28,7 @@ import { NarrativeMemoryPreferenceContribution } from './narrative-memory-prefer
  *   WP-5  StatusBarContribution      — index state indicator             [DONE]
  *   WP-5  PreferenceContribution     — the `narrativeMemory.*` keys      [DONE]
  *   WP-5  (diagnostics publisher)    — broken references as markers      [DONE]
- *   WP-6  ToolProvider               — read-only AI tools over the index
+ *   WP-6  ToolProvider               — read-only AI tools over the index [DONE]
  *
  * The status bar, the commands and the diagnostics publisher are ONE class
  * rather than three. They are not three concerns: all three are functions of
@@ -46,4 +53,15 @@ export default new ContainerModule(bind => {
   bind(NarrativeMemoryContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(NarrativeMemoryContribution);
   bind(CommandContribution).toService(NarrativeMemoryContribution);
+
+  // WP-6. `bindToolProvider` is the helper `@theia/ai-core` ships for the pair
+  // `bind(X).toSelf().inSingletonScope(); bind(ToolProvider).toService(X)`, and
+  // it is what every existing tool in this repository is registered with (grep
+  // `bindToolProvider` — there are six older call sites). The contribution slot
+  // itself is bound by ai-core's FRONTEND module only, which is why these live
+  // here and not in the backend module.
+  bindToolProvider(NarrativeFindEntitiesTool, bind);
+  bindToolProvider(NarrativeFindMentionsTool, bind);
+  bindToolProvider(NarrativeEntityRelationsTool, bind);
+  bindToolProvider(NarrativeDocumentContextTool, bind);
 });

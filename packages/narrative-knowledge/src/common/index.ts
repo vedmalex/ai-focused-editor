@@ -27,6 +27,12 @@ export * from './narrative-knowledge-protocol';
 export * from './narrative-memory-presentation';
 export * from './narrative-memory-preference-contract';
 
+// What the read-only AI tools DECIDE (WP-6). Theia-free for the same reason the
+// presentation rule is: the four requirements of the readiness block are
+// statements about a decision, not about `@theia/ai-core`.
+export * from './narrative-memory-tools';
+export * from './narrative-memory-query-skill';
+
 // The schema layer, and the seam to the pre-rename entity shape. Both sit here
 // rather than in `graph/` — one needs `ajv`, the other needs the entity-type
 // registry, and the core may import neither.

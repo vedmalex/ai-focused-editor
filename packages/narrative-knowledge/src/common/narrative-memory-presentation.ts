@@ -158,13 +158,98 @@ export const NARRATIVE_MEMORY_SETTINGS_PHRASES: readonly NarrativeMemoryPhrase[]
   phrase('pref-max-open-workspaces', 'How many workspace indexes may stay open at once; the least recently used is closed beyond this. A value outside 1-32 is refused, not clamped.')
 ];
 
+/**
+ * The read-only AI tools: their names, their descriptions, and the sentences an
+ * answer is not allowed to leave out (TASK-022 WP-6).
+ *
+ * DECLARED HERE RATHER THAN IN `narrative-memory-tools.ts`, and the reason is
+ * the import direction. That module needs {@link NARRATIVE_MEMORY_NLS_PREFIX}
+ * and {@link indexStaleLocalizationKey} from this one; if this one also imported
+ * its phrase list back, the two would form a cycle. So the catalog stays whole
+ * — the ru-bundle test asserts the bundle EQUALS it in both directions, and a
+ * split catalog would quietly weaken that to a subset check — and the leaf names
+ * are asserted against the tool module's own key constants by
+ * `narrative-memory-tools.test.ts`, which is what stops the two editions
+ * drifting.
+ *
+ * ARITY 0, LIKE EVERY OTHER CATALOG PHRASE. A tool answer that needs a value
+ * (a stale timestamp, an incident id, a path) carries it as its OWN JSON field
+ * next to the sentence, never as a `{0}` inside it — the same rule ОВ-8 states
+ * for `incidentId` in Show Index Status, and for the same reason: a translator
+ * may reorder words and must not be able to reorder an identifier.
+ */
+export const NARRATIVE_MEMORY_TOOL_PHRASES: readonly NarrativeMemoryPhrase[] = [
+  phrase('tool-find-entities-name', 'Find Narrative Entities'),
+  phrase(
+    'tool-find-entities-description',
+    'Search the narrative index for entity cards — characters, terms, artifacts, locations, or any type this book declares. ' +
+      'The query matches a case-insensitive PREFIX of the name or of any alias; an empty query returns every entity. ' +
+      'Every result names the card it was read from, and says whether the author wrote it, the index computed it, or an agent proposed it.'
+  ),
+  phrase('tool-find-mentions-name', 'Find Narrative Mentions'),
+  phrase(
+    'tool-find-mentions-description',
+    'List every place an entity is referenced, or every reference inside one document. ' +
+      'A reference written in prose carries its exact span; one read from YAML front matter carries the file and no position, and says so. ' +
+      'References naming an entity no card defines are returned too, marked unresolved — they are what the author most needs to see.'
+  ),
+  phrase('tool-entity-relations-name', 'Get Narrative Relations'),
+  phrase(
+    'tool-entity-relations-description',
+    'List the DIRECT relations of one entity: the links written in its card and the links computed from shared chapters. One hop only. ' +
+      'A relation the author restated in both cards arrives as two relations, not one. ' +
+      'Every relation names both ends, its type, its origin, whether either end resolves to a real card, and every file it was read from.'
+  ),
+  phrase('tool-document-context-name', 'Read Narrative Context'),
+  phrase(
+    'tool-document-context-description',
+    'Everything the narrative index knows about one document, or one passage of it: the entities referenced there, every reference with its position, ' +
+      'the relations those entities take part in, where they appeared in earlier chapters, and the defects found. ' +
+      'It returns pointers, never manuscript prose. Chapters positioned after this one are withheld unless you ask for them, so an answer cannot spoil a book for its own author.'
+  ),
+
+  phrase(
+    'tool-notice-not-built',
+    'The narrative index has not been built yet, so there is nothing to answer from. Build it with the Rebuild Index command.'
+  ),
+  phrase(
+    'tool-notice-no-manuscript',
+    'This workspace is not a manuscript, so there is no narrative index to read.'
+  ),
+  phrase(
+    'tool-notice-rebuilding',
+    'The narrative index is being built right now. No answer would be complete yet, so none was given.'
+  ),
+  phrase(
+    'tool-notice-stale',
+    'This answer comes from an index that is no longer guaranteed to match the files. Treat every fact in it as possibly out of date.'
+  ),
+  phrase(
+    'tool-notice-broken',
+    'The narrative index is broken and answered nothing. The incident id in this answer appears beside the details in the backend log.'
+  ),
+  phrase(
+    'tool-notice-whole-file-evidence',
+    'Some evidence in this answer names a file and no position inside it, because the fact was read from a structural YAML field or from front matter. Open the file; do not claim a line.'
+  ),
+  phrase(
+    'tool-notice-no-workspace',
+    'No manuscript is open, so there is no narrative index to read.'
+  ),
+  phrase(
+    'tool-notice-document-not-indexed',
+    'The narrative index does not hold this document, so it can say nothing about it. That is not the same as the document holding nothing.'
+  )
+];
+
 /** Every arity-0 phrase this package owns, failure codes included. */
 export const NARRATIVE_MEMORY_PHRASES: readonly NarrativeMemoryPhrase[] = [
   ...NARRATIVE_MEMORY_FAILURE_PHRASES,
   ...NARRATIVE_MEMORY_STATUS_PHRASES,
   ...NARRATIVE_MEMORY_STALE_PHRASES,
   ...NARRATIVE_MEMORY_COMMAND_PHRASES,
-  ...NARRATIVE_MEMORY_SETTINGS_PHRASES
+  ...NARRATIVE_MEMORY_SETTINGS_PHRASES,
+  ...NARRATIVE_MEMORY_TOOL_PHRASES
 ];
 
 /**
