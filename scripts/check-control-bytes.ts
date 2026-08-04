@@ -136,10 +136,30 @@ export function isUtf8Text(bytes: Uint8Array): boolean {
   }
 }
 
-/** Every tracked path, read via NUL-delimited output so odd filenames survive. */
+/**
+ * Every path git would show you: tracked, PLUS untracked-and-not-ignored.
+ *
+ * The untracked half is not a nicety — it is the hole this guard fell through
+ * once. `git ls-files` alone lists only TRACKED paths, so a brand-new file is
+ * invisible to the check until the commit that adds it. TASK-022 WP-4b wrote a
+ * raw NUL into a new `narrative-memory-configure.ts`; `bun run verify` passed at
+ * EXIT 0 because the file was still untracked, and the byte only surfaced on the
+ * NEXT verify, after the commit had already landed. That is exactly backwards:
+ * new code is where a fresh raw byte is most likely, and it was the one place
+ * the guard did not look.
+ *
+ * `--exclude-standard` keeps `.gitignore` honoured, so `lib/`, `node_modules/`
+ * and every other ignored tree stay out. Deduplicated because a path staged with
+ * `git add -N` appears in both halves.
+ */
 export function listTrackedFiles(cwd: string): string[] {
-  const out = execFileSync('git', ['ls-files', '-z'], { cwd, maxBuffer: 64 * 1024 * 1024 });
-  return out.toString('utf8').split('\0').filter(path => path.length > 0);
+  const out = execFileSync(
+    'git',
+    ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+    { cwd, maxBuffer: 64 * 1024 * 1024 }
+  );
+  const paths = out.toString('utf8').split('\0').filter(path => path.length > 0);
+  return [...new Set(paths)];
 }
 
 /**

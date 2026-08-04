@@ -11,6 +11,11 @@
  * byte into this file would reproduce the exact defect under test.
  */
 
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, test } from 'bun:test';
 
 import {
@@ -18,6 +23,7 @@ import {
   controlByteName,
   formatReport,
   isUtf8Text,
+  listTrackedFiles,
   scanBytes,
   suggestedEscape
 } from './check-control-bytes';
@@ -128,6 +134,70 @@ describe('failure message', () => {
     expect(message).toContain('0x00 (NUL)');
     expect(message).toContain('offset 4213');
     expect(message).toContain('\\u0000');
+  });
+});
+
+describe('listTrackedFiles — which files the guard can even see', () => {
+  /**
+   * The hole this guard fell through once, now nailed shut.
+   *
+   * `git ls-files` alone lists only TRACKED paths, so a brand-new file is
+   * invisible until the commit that adds it. TASK-022 WP-4b wrote a raw NUL into
+   * a new `narrative-memory-configure.ts`; `bun run verify` passed at EXIT 0
+   * because the file was still untracked, and the byte surfaced only on the NEXT
+   * verify — after the commit had landed. New code is where a fresh raw byte is
+   * most likely, and it was the one place the guard did not look.
+   *
+   * Built as a throwaway repository rather than against this one, so the test
+   * asserts the behaviour instead of the contents of whatever tree it runs in.
+   */
+  const withScratchRepo = (body: (dir: string) => void): void => {
+    const dir = mkdtempSync(join(tmpdir(), 'control-bytes-listing-'));
+    try {
+      const git = (...args: string[]): void => {
+        execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+      };
+      git('init', '-q');
+      git('config', 'user.email', 'test@example.invalid');
+      git('config', 'user.name', 'test');
+      writeFileSync(join(dir, '.gitignore'), 'ignored/\n');
+      writeFileSync(join(dir, 'committed.ts'), 'export const a = 1;\n');
+      git('add', '.gitignore', 'committed.ts');
+      git('commit', '-qm', 'seed');
+      body(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  test('an UNTRACKED file is listed — the case that let a NUL through the gate', () => {
+    withScratchRepo(dir => {
+      writeFileSync(join(dir, 'brand-new.ts'), 'export const b = 2;\n');
+      expect(listTrackedFiles(dir)).toContain('brand-new.ts');
+    });
+  });
+
+  test('a tracked file is still listed', () => {
+    withScratchRepo(dir => {
+      expect(listTrackedFiles(dir)).toContain('committed.ts');
+    });
+  });
+
+  test('an IGNORED file is not listed, so lib/ and node_modules/ stay out', () => {
+    withScratchRepo(dir => {
+      execFileSync('mkdir', ['-p', join(dir, 'ignored')]);
+      writeFileSync(join(dir, 'ignored', 'built.js'), 'module.exports = 1;\n');
+      expect(listTrackedFiles(dir)).not.toContain('ignored/built.js');
+    });
+  });
+
+  test('a path staged with `git add -N` appears once, not twice', () => {
+    withScratchRepo(dir => {
+      writeFileSync(join(dir, 'intent.ts'), 'export const c = 3;\n');
+      execFileSync('git', ['add', '-N', 'intent.ts'], { cwd: dir, stdio: 'ignore' });
+      const listed = listTrackedFiles(dir).filter(path => path === 'intent.ts');
+      expect(listed).toHaveLength(1);
+    });
   });
 });
 
