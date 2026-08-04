@@ -820,20 +820,50 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
     return query.limit === undefined ? collected : collected.slice(0, query.limit);
   }
 
+  /**
+   * The collisions, each naming the definition in effect.
+   *
+   * THE WINNER IS JOINED, NOT STORED. `entity.doc_id` already says which card
+   * owns the id, and `entity_id` is a primary key there, so that join yields
+   * exactly one kept path per collision and cannot disagree with a second copy
+   * — because there is no second copy. The joins are INNER on purpose: the
+   * foreign key from `entity_duplicate.entity_id` means a row with no entity
+   * behind it does not exist, and an OUTER join would be code handling a state
+   * the schema forbids.
+   *
+   * ORDER IS PART OF THE CONTRACT (see {@link DuplicateEntityRecord}), so it is
+   * sorted in SQL under the default `BINARY` collation — which the in-memory
+   * adapter matches with a code-unit comparison, and which `localeCompare`
+   * would not.
+   */
   getDuplicateEntities(): DuplicateEntityRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT dup.entity_id AS entity_id, d.rel_path AS rel_path FROM entity_duplicate dup
-         JOIN document d ON d.doc_id = dup.doc_id ORDER BY dup.entity_id, d.rel_path`
+        `SELECT dup.entity_id AS entity_id, kept.rel_path AS kept_rel_path, excluded.rel_path AS excluded_rel_path
+         FROM entity_duplicate dup
+         JOIN entity e          ON e.entity_id      = dup.entity_id
+         JOIN document kept     ON kept.doc_id      = e.doc_id
+         JOIN document excluded ON excluded.doc_id  = dup.doc_id
+         ORDER BY dup.entity_id, excluded.rel_path`
       )
-      .all() as { entity_id: string; rel_path: string }[];
-    const byId = new Map<string, string[]>();
+      .all() as { entity_id: string; kept_rel_path: string; excluded_rel_path: string }[];
+    const byId = new Map<string, DuplicateEntityRecord>();
     for (const row of rows) {
-      const paths = byId.get(row.entity_id) ?? [];
-      paths.push(row.rel_path);
-      byId.set(row.entity_id, paths);
+      const record = byId.get(row.entity_id);
+      if (record === undefined) {
+        byId.set(row.entity_id, {
+          entityId: row.entity_id,
+          keptRelPath: row.kept_rel_path,
+          excludedRelPaths: [row.excluded_rel_path]
+        });
+        continue;
+      }
+      record.excludedRelPaths.push(row.excluded_rel_path);
     }
-    return [...byId.entries()].map(([entityId, relPaths]) => ({ entityId, relPaths }));
+    // `Map` preserves insertion order, and insertion followed `ORDER BY
+    // dup.entity_id` — so the grouping does not have to re-sort what SQL
+    // already sorted.
+    return [...byId.values()];
   }
 
   /** Shared relation reader: one query for the rows, one for their evidence. */
@@ -981,10 +1011,16 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
           alias.run(entity.id, value);
         }
       },
-      putDuplicateEntity: (entityId: string, relPath: string): void => {
+      // Both refusals this call owes the port — "no entity row" and "the
+      // excluded card IS the kept card" — come from the SCHEMA, not from here:
+      // the first from the foreign key on `entity_id`, the second from
+      // `entity_duplicate_excludes_the_kept_card`. Checking them in this method
+      // too would move the enforcement into a layer a repair script bypasses,
+      // and the schema teeth would then be testing this file.
+      putDuplicateEntity: (entityId: string, excludedRelPath: string): void => {
         this.db
           .prepare('INSERT OR REPLACE INTO entity_duplicate (entity_id, doc_id) VALUES (?, ?)')
-          .run(entityId, this.docIdOf(relPath));
+          .run(entityId, this.docIdOf(excludedRelPath));
       },
       putMention: (mention: NarrativeMention): void => {
         const docId = this.docIdOf(mention.evidence.path);

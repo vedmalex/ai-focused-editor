@@ -131,6 +131,22 @@ function assertMentionInvariants(mention: NarrativeMention): void {
 const IDENTITY_SEPARATOR = '\u0000';
 const NO_OWNER = '\u0001no-owner';
 
+/**
+ * Order two strings the way SQLite's default `BINARY` collation does.
+ *
+ * NOT `localeCompare`, and the difference is not cosmetic: `localeCompare`
+ * folds case and applies language rules, so `'Б' < 'а'` under BINARY and the
+ * other way round under a Russian locale. Anything whose order this package
+ * PROMISES has to be sorted this way, or the in-memory adapter and the SQLite
+ * adapter return the same rows in different orders and only the node run
+ * notices. Code-unit comparison and UTF-8 byte comparison agree for every
+ * character outside the astral planes, which is every character a workspace
+ * path realistically holds.
+ */
+function compareByCodePoint(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function relationIdentity(relation: NarrativeRelation): string {
   return [
     relation.sourceId,
@@ -322,10 +338,49 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
     return query.limit === undefined ? collected : collected.slice(0, query.limit);
   }
 
+  /**
+   * The collisions, each naming the definition in effect.
+   *
+   * THE WINNER IS LOOKED UP, NOT STORED BESIDE THE LOSERS — the entity map is
+   * keyed by id, so the card that owns the entity IS the winner and there is no
+   * second copy to fall out of step. This mirrors the SQLite adapter's join
+   * through `entity.doc_id`.
+   *
+   * A COLLISION WITH NO WINNER IS A THROW HERE, NOT A SKIP, and the difference
+   * is worth the words. In SQLite that state is unrepresentable — the foreign
+   * key from `entity_duplicate.entity_id` refuses to create it and cascades to
+   * remove it — so this adapter's only equivalent of the engine is its own
+   * write path: `putDuplicateEntity` refuses an id no entity defines, and
+   * `deleteDocument` drops the duplicates of an entity it deletes. If the map
+   * holds one anyway, one of those two is broken. Returning the collision
+   * QUIETLY MINUS its winner would hide exactly the bug the field exists to
+   * expose — and it would make the cascade untestable, because a test that
+   * deletes the winning card cannot tell "cascaded" from "still there but
+   * filtered out of the answer".
+   *
+   * ORDER IS BY CODE POINT, not by locale: SQLite sorts these with its default
+   * `BINARY` collation, and `localeCompare` would put Cyrillic paths in a
+   * different order than the node run sees.
+   */
   getDuplicateEntities(): DuplicateEntityRecord[] {
-    return [...this.duplicates.entries()]
-      .map(([entityId, relPaths]) => ({ entityId, relPaths: [...relPaths].sort() }))
-      .sort((a, b) => a.entityId.localeCompare(b.entityId));
+    const records: DuplicateEntityRecord[] = [];
+    for (const [entityId, excluded] of this.duplicates) {
+      const kept = this.entities.get(entityId);
+      if (kept === undefined) {
+        throw new NarrativeIndexStoreError(
+          'constraint-violation',
+          `entity '${entityId}' has duplicate cards recorded (${[...excluded].join(', ')}) but no card defines it; ` +
+            'the entity/duplicate cascade is broken ' +
+            '(FOREIGN KEY entity_duplicate.entity_id REFERENCES entity(entity_id) ON DELETE CASCADE)'
+        );
+      }
+      records.push({
+        entityId,
+        keptRelPath: kept.sourcePath,
+        excludedRelPaths: [...excluded].sort(compareByCodePoint)
+      });
+    }
+    return records.sort((a, b) => compareByCodePoint(a.entityId, b.entityId));
   }
 
   // ---- writes -----------------------------------------------------------
@@ -358,6 +413,12 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
         for (const [entityId, entity] of [...this.entities]) {
           if (entity.sourcePath === relPath) {
             this.entities.delete(entityId);
+            // MIRRORS `entity_duplicate.entity_id REFERENCES entity(entity_id)
+            // ON DELETE CASCADE`. Losing the card that WON ends the collision
+            // outright rather than leaving a finding whose winner is gone: a
+            // losing card that is now the only definition of its id is not a
+            // duplicate, it is the definition.
+            this.duplicates.delete(entityId);
           }
         }
         for (const [entityId, paths] of [...this.duplicates]) {
@@ -371,12 +432,39 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
       },
       putEntity: (entity: NarrativeEntity): void => {
         requireDocument(entity.sourcePath, `entity '${entity.id}'`);
+        if (this.duplicates.get(entity.id)?.has(entity.sourcePath) === true) {
+          throw new NarrativeIndexStoreError(
+            'constraint-violation',
+            `entity '${entity.id}' is owned by '${entity.sourcePath}', which is already recorded as an EXCLUDED ` +
+              'definition of that id; one card cannot both win and lose the same collision ' +
+              '(TRIGGER entity_insert_is_not_an_excluded_card)'
+          );
+        }
         this.entities.set(entity.id, clone(entity));
       },
-      putDuplicateEntity: (entityId: string, relPath: string): void => {
-        requireDocument(relPath, `duplicate of entity '${entityId}'`);
+      putDuplicateEntity: (entityId: string, excludedRelPath: string): void => {
+        requireDocument(excludedRelPath, `duplicate of entity '${entityId}'`);
+        // The two refusals the port names, mirrored from the schema: the first
+        // is a FOREIGN KEY there, the second a TRIGGER. They are what let
+        // `DuplicateEntityRecord.keptRelPath` be a required field.
+        const kept = this.entities.get(entityId);
+        if (kept === undefined) {
+          throw new NarrativeIndexStoreError(
+            'constraint-violation',
+            `duplicate of entity '${entityId}' at '${excludedRelPath}' has no card to have lost TO: ` +
+              'no entity row defines that id ' +
+              '(FOREIGN KEY entity_duplicate.entity_id REFERENCES entity(entity_id))'
+          );
+        }
+        if (kept.sourcePath === excludedRelPath) {
+          throw new NarrativeIndexStoreError(
+            'constraint-violation',
+            `'${excludedRelPath}' is the card that OWNS entity '${entityId}', so it cannot also be excluded ` +
+              'from that id (TRIGGER entity_duplicate_excludes_the_kept_card)'
+          );
+        }
         const paths = this.duplicates.get(entityId) ?? new Set<string>();
-        paths.add(relPath);
+        paths.add(excludedRelPath);
         this.duplicates.set(entityId, paths);
       },
       putMention: (mention: NarrativeMention): void => {

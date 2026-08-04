@@ -31,7 +31,7 @@
  * to recover from — the database is a rebuildable cache, so a mismatch is
  * simply a rebuild with cause `schema-version-mismatch`.
  */
-export const NARRATIVE_INDEX_SCHEMA_VERSION = 1;
+export const NARRATIVE_INDEX_SCHEMA_VERSION = 2;
 
 /**
  * Pragmas applied to every connection, in this order.
@@ -98,11 +98,50 @@ CREATE TABLE entity_alias (
 ) STRICT;
 CREATE INDEX entity_alias_ci ON entity_alias(alias COLLATE NOCASE);
 
+-- The LOSERS of an id collision. The WINNER is not a column here: it is the
+-- card that owns the \`entity\` row, named once by the foreign key below.
+--
+-- THAT FOREIGN KEY IS WHY \`DuplicateEntityRecord.keptRelPath\` CAN BE REQUIRED.
+-- Without it a duplicate row could outlive the entity it lost to — delete the
+-- winning card and the row would still be there, naming a collision no
+-- definition is in effect for. With it, the winner's card cascades to the
+-- entity and the entity cascades to here, so "a collision with no winner" is
+-- not a state to handle but a state that cannot be written.
 CREATE TABLE entity_duplicate (
-  entity_id TEXT    NOT NULL,
+  entity_id TEXT    NOT NULL REFERENCES entity(entity_id) ON DELETE CASCADE,
   doc_id    INTEGER NOT NULL REFERENCES document(doc_id) ON DELETE CASCADE,
   PRIMARY KEY (entity_id, doc_id)
 ) STRICT;
+
+-- One card cannot be both the winner and a loser of the same collision. This
+-- is a two-table invariant, so it is a TRIGGER rather than a CHECK — but it is
+-- still in the DDL, for the reason the module note gives: an adapter can be
+-- bypassed by a migration or by a second implementation of the port, and the
+-- shape it protects (\`keptRelPath\` never appearing in \`excludedRelPaths\`) is a
+-- promise the READER is entitled to. Both directions are covered, because the
+-- entity upsert can move the winner onto a card already recorded as excluded.
+CREATE TRIGGER entity_duplicate_excludes_the_kept_card
+BEFORE INSERT ON entity_duplicate
+WHEN EXISTS (SELECT 1 FROM entity WHERE entity.entity_id = NEW.entity_id AND entity.doc_id = NEW.doc_id)
+BEGIN
+  SELECT RAISE(ABORT, 'entity_duplicate names the card that owns the entity');
+END;
+
+CREATE TRIGGER entity_insert_is_not_an_excluded_card
+BEFORE INSERT ON entity
+WHEN EXISTS (SELECT 1 FROM entity_duplicate
+             WHERE entity_duplicate.entity_id = NEW.entity_id AND entity_duplicate.doc_id = NEW.doc_id)
+BEGIN
+  SELECT RAISE(ABORT, 'entity insert: this card is already excluded from this id');
+END;
+
+CREATE TRIGGER entity_update_is_not_an_excluded_card
+BEFORE UPDATE ON entity
+WHEN EXISTS (SELECT 1 FROM entity_duplicate
+             WHERE entity_duplicate.entity_id = NEW.entity_id AND entity_duplicate.doc_id = NEW.doc_id)
+BEGIN
+  SELECT RAISE(ABORT, 'entity update: this card is already excluded from this id');
+END;
 
 CREATE TABLE mention (
   mention_id INTEGER PRIMARY KEY,

@@ -490,6 +490,214 @@ test('A11 rejecting case: without the two CHECKs both forbidden mentions are sto
 });
 
 // --------------------------------------------------------------------------
+// A12 — the collision record names the definition IN EFFECT
+//
+// The contract core asserts that both adapters answer a collision with a
+// winner and a set of losers. These assert that in SQLITE it is the SCHEMA
+// holding that shape up: a foreign key so a duplicate cannot exist without —
+// or outlive — the entity it lost to, and a trigger pair so one card cannot be
+// both sides of one collision. An adapter-level check would be bypassed by the
+// first repair script anyone writes, and `keptRelPath` would silently become a
+// field the reader has to distrust.
+// --------------------------------------------------------------------------
+
+const OTHER_CARD = 'entities/arjuna.yaml';
+
+function seedThreeCards(store: ReturnType<typeof newStore>) {
+  seed(store);
+  store.transaction((writer: any) =>
+    writer.putDocument({
+      relPath: OTHER_CARD,
+      kind: 'entity-card',
+      sizeBytes: 1,
+      mtimeMs: 1,
+      contentHash: 'h',
+      indexedAt: 1
+    })
+  );
+}
+
+function card(id: string, sourcePath: string) {
+  return {
+    id,
+    type: 'character',
+    name: id,
+    sourcePath,
+    sourceUri: `file:///workspace/${sourcePath}`,
+    origin: 'explicit',
+    aliases: []
+  };
+}
+
+/** A scratch database carrying `ddl`, two documents and one entity owned by the
+ *  first of them — the smallest state in which a collision is expressible. */
+function scratchWithEntity(ddl: string): DatabaseSync {
+  const db = scratch(ddl);
+  db.exec(
+    `INSERT INTO document (rel_path, kind, size_bytes, mtime_ms, content_hash, indexed_at, generation)
+     VALUES ('${CARD}', 'entity-card', 1, 1, 'h', 1, 1)`
+  );
+  db.exec(
+    `INSERT INTO entity (entity_id, type, name, origin, doc_id, payload)
+     VALUES ('krishna', 'character', 'krishna', 'explicit', 2, '{}')`
+  );
+  return db;
+}
+
+test('A12: a duplicate of an id NO card defines is refused BY THE SCHEMA', () => {
+  const store = newStore();
+  seedThreeCards(store);
+  const error = caught(() =>
+    store.transaction((writer: any) => writer.putDuplicateEntity('krishna', OTHER_CARD))
+  );
+  assert.ok(error !== undefined, 'a duplicate with no entity behind it was accepted');
+  assert.match(
+    messageOf(error),
+    /FOREIGN KEY constraint failed/,
+    `expected the entity_duplicate.entity_id foreign key to refuse it, got: ${messageOf(error)}`
+  );
+});
+
+test('A12 rejecting case: without that foreign key the winnerless collision is storable', () => {
+  // What the constraint prevents is not a crash — it is a FINDING NOBODY CAN
+  // ACT ON: two cards named as colliding with no statement of which definition
+  // the index is using. Here is the row, and here is the reader coming back
+  // empty because it has no winner to join to.
+  const db = scratch(
+    weaken(
+      '  entity_id TEXT    NOT NULL REFERENCES entity(entity_id) ON DELETE CASCADE,\n  doc_id    INTEGER NOT NULL REFERENCES document(doc_id) ON DELETE CASCADE,\n  PRIMARY KEY (entity_id, doc_id)',
+      '  entity_id TEXT    NOT NULL,\n  doc_id    INTEGER NOT NULL REFERENCES document(doc_id) ON DELETE CASCADE,\n  PRIMARY KEY (entity_id, doc_id)'
+    )
+  );
+  db.exec("INSERT INTO entity_duplicate (entity_id, doc_id) VALUES ('krishna', 1)");
+  const stored = db.prepare('SELECT COUNT(*) AS n FROM entity_duplicate').get() as any;
+  assert.equal(Number(stored.n), 1, 'the weakened schema still refused');
+  const joined = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM entity_duplicate dup
+       JOIN entity e ON e.entity_id = dup.entity_id`
+    )
+    .get() as any;
+  assert.equal(Number(joined.n), 0, 'the orphan row somehow found a winner');
+  db.close();
+});
+
+test('A12: excluding the card that OWNS the entity is refused BY THE SCHEMA', () => {
+  const store = newStore();
+  seedThreeCards(store);
+  store.transaction((writer: any) => writer.putEntity(card('krishna', CARD)));
+  const error = caught(() => store.transaction((writer: any) => writer.putDuplicateEntity('krishna', CARD)));
+  assert.ok(error !== undefined, 'the kept card was accepted as its own duplicate');
+  assert.match(
+    messageOf(error),
+    /entity_duplicate names the card that owns the entity/,
+    `expected the DDL trigger to refuse it, got: ${messageOf(error)}`
+  );
+});
+
+test('A12 paired positive: a DIFFERENT card is accepted, and the record names both sides', () => {
+  // Without this half, a trigger that refused every duplicate would pass the
+  // case above while making the whole table unwritable.
+  const store = newStore();
+  seedThreeCards(store);
+  store.transaction((writer: any) => {
+    writer.putEntity(card('krishna', CARD));
+    writer.putDuplicateEntity('krishna', OTHER_CARD);
+  });
+  assert.deepEqual(store.getDuplicateEntities(), [
+    { entityId: 'krishna', keptRelPath: CARD, excludedRelPaths: [OTHER_CARD] }
+  ]);
+});
+
+test('A12 rejecting case: without the trigger a card is stored as both winner and loser', () => {
+  const db = scratchWithEntity(
+    weaken(
+      "CREATE TRIGGER entity_duplicate_excludes_the_kept_card\nBEFORE INSERT ON entity_duplicate\nWHEN EXISTS (SELECT 1 FROM entity WHERE entity.entity_id = NEW.entity_id AND entity.doc_id = NEW.doc_id)\nBEGIN\n  SELECT RAISE(ABORT, 'entity_duplicate names the card that owns the entity');\nEND;",
+      ''
+    )
+  );
+  db.exec("INSERT INTO entity_duplicate (entity_id, doc_id) VALUES ('krishna', 2)");
+  const row = db
+    .prepare(
+      `SELECT kept.rel_path AS kept, excluded.rel_path AS excluded
+       FROM entity_duplicate dup
+       JOIN entity e          ON e.entity_id     = dup.entity_id
+       JOIN document kept     ON kept.doc_id     = e.doc_id
+       JOIN document excluded ON excluded.doc_id = dup.doc_id`
+    )
+    .get() as any;
+  assert.ok(row !== undefined, 'the weakened schema still refused');
+  assert.equal(row.kept, row.excluded, 'the contradiction did not materialise, so the tooth proves nothing');
+  db.close();
+});
+
+test('A12: moving the entity onto an already-excluded card is refused BY THE SCHEMA', () => {
+  const store = newStore();
+  seedThreeCards(store);
+  store.transaction((writer: any) => {
+    writer.putEntity(card('krishna', CARD));
+    writer.putDuplicateEntity('krishna', OTHER_CARD);
+  });
+  const error = caught(() => store.transaction((writer: any) => writer.putEntity(card('krishna', OTHER_CARD))));
+  assert.ok(error !== undefined, 'the winner was moved onto a card excluded from the same id');
+  assert.match(
+    messageOf(error),
+    /this card is already excluded from this id/,
+    `expected one of the entity triggers to refuse it, got: ${messageOf(error)}`
+  );
+  assert.deepEqual(
+    store.getDuplicateEntities(),
+    [{ entityId: 'krishna', keptRelPath: CARD, excludedRelPaths: [OTHER_CARD] }],
+    'the refused move left something behind'
+  );
+});
+
+test('A12 rejecting case: without the entity triggers the winner moves onto a loser', () => {
+  const db = scratchWithEntity(
+    weaken(
+      "CREATE TRIGGER entity_update_is_not_an_excluded_card\nBEFORE UPDATE ON entity\nWHEN EXISTS (SELECT 1 FROM entity_duplicate\n             WHERE entity_duplicate.entity_id = NEW.entity_id AND entity_duplicate.doc_id = NEW.doc_id)\nBEGIN\n  SELECT RAISE(ABORT, 'entity update: this card is already excluded from this id');\nEND;",
+      ''
+    )
+  );
+  db.exec("INSERT INTO entity_duplicate (entity_id, doc_id) VALUES ('krishna', 1)");
+  db.exec("UPDATE entity SET doc_id = 1 WHERE entity_id = 'krishna'");
+  const row = db.prepare("SELECT doc_id FROM entity WHERE entity_id = 'krishna'").get() as any;
+  assert.equal(Number(row.doc_id), 1, 'the weakened schema still refused the move');
+  db.close();
+});
+
+test('A12: a collision does not outlive its winner — deleting the kept card cascades it away', () => {
+  const store = newStore();
+  seedThreeCards(store);
+  store.transaction((writer: any) => {
+    writer.putEntity(card('krishna', CARD));
+    writer.putDuplicateEntity('krishna', OTHER_CARD);
+  });
+  store.transaction((writer: any) => writer.deleteDocument(CARD));
+  assert.equal(store.getEntity('krishna'), undefined, 'the entity survived its card');
+  assert.deepEqual(store.getDuplicateEntities(), [], 'the collision survived its winner');
+});
+
+test('A12 rejecting case: without that foreign key the duplicate row outlives its winner', () => {
+  const db = scratchWithEntity(
+    weaken(
+      '  entity_id TEXT    NOT NULL REFERENCES entity(entity_id) ON DELETE CASCADE,\n  doc_id    INTEGER NOT NULL REFERENCES document(doc_id) ON DELETE CASCADE,\n  PRIMARY KEY (entity_id, doc_id)',
+      '  entity_id TEXT    NOT NULL,\n  doc_id    INTEGER NOT NULL REFERENCES document(doc_id) ON DELETE CASCADE,\n  PRIMARY KEY (entity_id, doc_id)'
+    )
+  );
+  db.exec("INSERT INTO entity_duplicate (entity_id, doc_id) VALUES ('krishna', 1)");
+  // Delete the WINNER's card. The entity cascades away; without the foreign key
+  // the duplicate row does not, and the index is left asserting a collision
+  // whose winning definition no longer exists.
+  db.exec(`DELETE FROM document WHERE rel_path = '${CARD}'`);
+  const entities = db.prepare('SELECT COUNT(*) AS n FROM entity').get() as any;
+  assert.equal(Number(entities.n), 0, 'the entity did not cascade, so this proves nothing about the duplicate');
+  const orphans = db.prepare('SELECT COUNT(*) AS n FROM entity_duplicate').get() as any;
+  assert.equal(Number(orphans.n), 1, 'the weakened schema cascaded anyway');
+  db.close();
+});
+
+// --------------------------------------------------------------------------
 // The partial indexes the findings layer will read
 // --------------------------------------------------------------------------
 

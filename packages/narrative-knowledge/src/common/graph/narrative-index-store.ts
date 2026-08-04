@@ -100,11 +100,47 @@ export interface IndexedDocument extends IndexedDocumentInput {
   generation: number;
 }
 
-/** An entity id seen in more than one card — kept as a finding, not a crash. */
+/**
+ * An entity id seen in more than one card — kept as a finding, not a crash.
+ *
+ * THE WINNER IS A NAMED FIELD, NOT A POSITION IN AN ARRAY. The first question
+ * an author asks on seeing this diagnostic is "which of these two definitions
+ * is the one in effect", and the answer is known at extraction time
+ * ({@link EntityDuplicate.keptSourcePath}). The previous shape here was a flat
+ * `relPaths: string[]`, which could say "these files collide" and nothing more;
+ * the fold from extraction into storage was therefore LOSSY IN THE DIRECTION
+ * THAT MATTERS — the extraction shape folds into this one, but this one could
+ * not be unfolded back. Encoding the winner positionally ("element 0 won")
+ * would have been the same loss wearing a convention.
+ *
+ * `keptRelPath` IS NOT A SECOND COPY OF A FACT THE INDEX ALREADY HOLDS. It is
+ * read back OUT of the entity row — the card that owns `entity.entityId` IS the
+ * winner, by definition, because `entity_id` is a primary key. So there is one
+ * source of truth and no way for the two to disagree; what the store adds is
+ * that the collision cannot outlive its winner (see
+ * {@link NarrativeIndexWriter.putDuplicateEntity}).
+ */
 export interface DuplicateEntityRecord {
+  /** The contested id. */
   entityId: string;
-  /** Workspace-relative path of each card that defines it. */
-  relPaths: string[];
+  /**
+   * Workspace-relative path of the card whose definition the index HOLDS.
+   *
+   * Never absent: a duplicate row cannot exist without the entity row it lost
+   * to, so "a collision with no winner" is unrepresentable rather than merely
+   * unexpected.
+   */
+  keptRelPath: string;
+  /**
+   * Workspace-relative paths of the cards EXCLUDED by the collision.
+   *
+   * Never empty — a record with nothing excluded is not a collision — and never
+   * containing {@link keptRelPath}. Sorted by code point, so the two adapters
+   * return the same order: SQLite's default `BINARY` collation over UTF-8 and a
+   * plain code-unit comparison in TypeScript agree for every character below
+   * the astral planes, whereas `localeCompare` agrees with neither.
+   */
+  excludedRelPaths: string[];
 }
 
 /** Filter for {@link NarrativeIndexStore.findEntities}. */
@@ -260,10 +296,34 @@ export interface NarrativeIndexWriter {
    * Store an entity card. The owning document is `entity.sourcePath`, which
    * must already exist — a second parameter naming the document could disagree
    * with the field, and there would be no way to tell which one was right.
+   *
+   * REJECTED when that card is already recorded as an EXCLUDED definition of
+   * the same id: it would make the card both the winner and a loser of one
+   * collision, and {@link DuplicateEntityRecord} has no way to say that.
    */
   putEntity(entity: NarrativeEntity): void;
-  /** Record that `entityId` is defined by a second card at `relPath`. */
-  putDuplicateEntity(entityId: string, relPath: string): void;
+  /**
+   * Record that `excludedRelPath` also defines `entityId`, and LOST.
+   *
+   * THE WINNER IS NOT A PARAMETER HERE, AND THAT IS THE POINT. It is the card
+   * that owns the entity row, so it is stated once — by the {@link putEntity}
+   * call that must already have happened — instead of twice with a chance to
+   * disagree. Two refusals make that an enforced ordering rather than an
+   * unwritten one:
+   *
+   *   - REJECTED when no entity row defines `entityId`. In SQLite this is a
+   *     FOREIGN KEY, so it also holds against a repair script; the in-memory
+   *     adapter mirrors it by hand. It is what makes `keptRelPath` a required
+   *     field rather than an optional one nobody would remember to check.
+   *   - REJECTED when `excludedRelPath` IS the card that owns the entity.
+   *
+   * The same foreign key makes the collision die with its winner: deleting the
+   * card that owns the entity cascades the entity away and the duplicate rows
+   * with it. A losing card that is now the only definition of its id is not a
+   * duplicate — it is simply the definition, which is what the next index pass
+   * will record.
+   */
+  putDuplicateEntity(entityId: string, excludedRelPath: string): void;
   /**
    * Store one mention. The owning document is `mention.evidence.path`.
    *
@@ -295,7 +355,8 @@ export interface NarrativeIndexReader {
    * here or not at all. This is the acknowledged price of separability.
    */
   neighbourhood(query: NeighbourhoodQuery): NarrativeRelation[];
-  /** Entity ids defined by more than one card. */
+  /** Entity ids defined by more than one card, each naming the definition that
+   *  is in effect. Ordered by `entityId`, code point ascending. */
   getDuplicateEntities(): DuplicateEntityRecord[];
 }
 

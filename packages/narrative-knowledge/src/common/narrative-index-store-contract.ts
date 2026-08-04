@@ -146,6 +146,20 @@ const CHAPTER = 'manuscript/ch-01.md';
 const CARD = 'entities/krishna.yaml';
 const OTHER_CARD = 'entities/arjuna.yaml';
 
+/**
+ * Two more cards, named so that BINARY order and Russian locale order DISAGREE
+ * about them.
+ *
+ * `'Я'` is U+042F and `'а'` is U+0430, so by code point — which is what SQLite's
+ * default collation compares, byte for byte over UTF-8 — the upper-case one
+ * comes first. `localeCompare` under a Russian locale folds case and puts
+ * `'арджуна'` first instead. Any list this port promises an order for has to be
+ * sorted the first way in BOTH adapters, and these two paths are how the suite
+ * finds out when one of them is sorted the second way.
+ */
+const CYRILLIC_CARD_UPPER = 'entities/Ярость.yaml';
+const CYRILLIC_CARD_LOWER = 'entities/арджуна.yaml';
+
 function chapterDocument() {
   return {
     relPath: CHAPTER,
@@ -213,6 +227,17 @@ function seedDocuments(store: NarrativeIndexStore): void {
     writer.putDocument(chapterDocument());
     writer.putDocument(cardDocument(CARD));
     writer.putDocument(cardDocument(OTHER_CARD));
+  });
+}
+
+/** Add further card documents, for the cases that need more than the three
+ *  {@link seedDocuments} provides. Kept separate so that adding a card here
+ *  cannot quietly change the document count every other case sees. */
+function seedCards(store: NarrativeIndexStore, ...relPaths: readonly string[]): void {
+  store.transaction(writer => {
+    for (const relPath of relPaths) {
+      writer.putDocument(cardDocument(relPath));
+    }
   });
 }
 
@@ -403,18 +428,158 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
     }
   },
   {
-    name: 'a duplicated entity id is kept as a finding, naming every card that defines it',
+    name: 'a duplicated entity id names the definition IN EFFECT, not only the cards that collide',
     async run(makeStore) {
+      // THE POINT OF THIS CASE. The store used to answer a collision with a
+      // flat list of paths, which said "these files collide" and stopped —
+      // while the extraction that produced the collision knew perfectly well
+      // which card had won and threw the answer away at this boundary. The
+      // assertion is a whole-record comparison ON PURPOSE: an adapter that
+      // dropped the winner, or that swapped it with a loser, would still pass
+      // an `includes` check on the excluded list.
       const store = await open(makeStore);
       seedDocuments(store);
       store.transaction(writer => {
         writer.putEntity(entity('krishna', CARD));
         writer.putDuplicateEntity('krishna', OTHER_CARD);
       });
-      const duplicates = store.getDuplicateEntities();
-      equal(duplicates.length, 1, 'duplicate count');
-      equal(duplicates[0].entityId, 'krishna', 'duplicate id');
-      check(duplicates[0].relPaths.includes(OTHER_CARD), 'the second defining card is named');
+      deepEqual(
+        store.getDuplicateEntities(),
+        [{ entityId: 'krishna', keptRelPath: CARD, excludedRelPaths: [OTHER_CARD] }],
+        'the collision record'
+      );
+      // And the winner is the card the INDEX actually holds — a `keptRelPath`
+      // that disagreed with the entity row would be a diagnostic pointing the
+      // author at the wrong file.
+      equal(store.getEntity('krishna')?.sourcePath, CARD, 'the entity the index holds');
+    }
+  },
+  {
+    name: 'three cards claiming one id fold into ONE finding: one winner, two losers, in code-point order',
+    async run(makeStore) {
+      // Two things at once, and both of them are drift the suite exists to
+      // catch. FIRST, aggregation: extraction reports one finding PER LOSING
+      // CARD, storage reports one PER ID, and a third colliding card is where
+      // an adapter that kept only the last loser — or only the first — would
+      // show it. SECOND, order: these two paths sort one way by code point and
+      // the other way under a Russian locale, so an adapter sorting with
+      // `localeCompare` disagrees with SQLite here and nowhere else.
+      const store = await open(makeStore);
+      seedDocuments(store);
+      seedCards(store, CYRILLIC_CARD_UPPER, CYRILLIC_CARD_LOWER);
+      store.transaction(writer => {
+        writer.putEntity(entity('krishna', CARD));
+        // Written in the order that is NOT the expected one, so a store simply
+        // echoing insertion order cannot pass by luck.
+        writer.putDuplicateEntity('krishna', CYRILLIC_CARD_LOWER);
+        writer.putDuplicateEntity('krishna', CYRILLIC_CARD_UPPER);
+      });
+      deepEqual(
+        store.getDuplicateEntities(),
+        [
+          {
+            entityId: 'krishna',
+            keptRelPath: CARD,
+            excludedRelPaths: [CYRILLIC_CARD_UPPER, CYRILLIC_CARD_LOWER]
+          }
+        ],
+        'the three-way collision record'
+      );
+    }
+  },
+  {
+    name: 'several ids colliding at once come back one record each, ordered by id',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      seedCards(store, CYRILLIC_CARD_UPPER);
+      store.transaction(writer => {
+        writer.putEntity(entity('krishna', CARD));
+        writer.putEntity(entity('arjuna', OTHER_CARD));
+        writer.putDuplicateEntity('krishna', CYRILLIC_CARD_UPPER);
+        writer.putDuplicateEntity('arjuna', CYRILLIC_CARD_UPPER);
+      });
+      deepEqual(
+        store.getDuplicateEntities(),
+        [
+          { entityId: 'arjuna', keptRelPath: OTHER_CARD, excludedRelPaths: [CYRILLIC_CARD_UPPER] },
+          { entityId: 'krishna', keptRelPath: CARD, excludedRelPaths: [CYRILLIC_CARD_UPPER] }
+        ],
+        'two collisions, each with its own winner'
+      );
+    }
+  },
+  {
+    name: 'a collision with no winner cannot be written, and neither can a card excluded from its own id',
+    async run(makeStore) {
+      // These two refusals are what make `keptRelPath` a REQUIRED field instead
+      // of an optional one every reader would have to defend against. The first
+      // says a duplicate cannot exist before the definition it lost to; the
+      // second says one card cannot be both sides of one collision.
+      const store = await open(makeStore);
+      seedDocuments(store);
+      await rejectsSomehow(
+        () => store.transaction(writer => writer.putDuplicateEntity('krishna', OTHER_CARD)),
+        'a duplicate of an id no card defines'
+      );
+      equal(store.getDuplicateEntities().length, 0, 'nothing was written by the refused call');
+
+      store.transaction(writer => writer.putEntity(entity('krishna', CARD)));
+      await rejectsSomehow(
+        () => store.transaction(writer => writer.putDuplicateEntity('krishna', CARD)),
+        'the kept card excluded from its own id'
+      );
+      deepEqual(store.getDuplicateEntities(), [], 'the store after both refusals');
+    }
+  },
+  {
+    name: 'the winner cannot be moved onto a card already excluded from the same id',
+    async run(makeStore) {
+      // The same invariant approached from the other side. Without this the
+      // entity upsert is a back door: re-point the entity row at a losing card
+      // and the record starts naming one path as both the definition in effect
+      // and a definition excluded.
+      const store = await open(makeStore);
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putEntity(entity('krishna', CARD));
+        writer.putDuplicateEntity('krishna', OTHER_CARD);
+      });
+      await rejectsSomehow(
+        () => store.transaction(writer => writer.putEntity(entity('krishna', OTHER_CARD))),
+        'moving the entity onto an excluded card'
+      );
+      deepEqual(
+        store.getDuplicateEntities(),
+        [{ entityId: 'krishna', keptRelPath: CARD, excludedRelPaths: [OTHER_CARD] }],
+        'the record after the refused move'
+      );
+    }
+  },
+  {
+    name: 'a collision does not outlive its winner: deleting the kept card ends it entirely',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      seedCards(store, CYRILLIC_CARD_UPPER);
+      store.transaction(writer => {
+        writer.putEntity(entity('krishna', CARD));
+        writer.putDuplicateEntity('krishna', OTHER_CARD);
+        writer.putDuplicateEntity('krishna', CYRILLIC_CARD_UPPER);
+      });
+      // Losing ONE loser narrows the finding; the winner is unaffected.
+      store.transaction(writer => writer.deleteDocument(OTHER_CARD));
+      deepEqual(
+        store.getDuplicateEntities(),
+        [{ entityId: 'krishna', keptRelPath: CARD, excludedRelPaths: [CYRILLIC_CARD_UPPER] }],
+        'the record after one excluded card was deleted'
+      );
+      // Losing the WINNER ends the collision instead of leaving a finding whose
+      // winner is gone. The remaining card is no longer a duplicate of
+      // anything — it is whatever the next index pass says it is.
+      store.transaction(writer => writer.deleteDocument(CARD));
+      equal(store.getEntity('krishna'), undefined, 'the entity after its card was deleted');
+      deepEqual(store.getDuplicateEntities(), [], 'the collision after its winner was deleted');
     }
   },
   {
