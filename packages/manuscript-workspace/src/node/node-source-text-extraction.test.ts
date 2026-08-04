@@ -88,6 +88,10 @@ describe('NodeSourceLibraryService.extractSourceText', () => {
     expect(result.detail).toBeUndefined();
   });
 
+  // TASK-024: 180s — see the matching comment in packages/book-export/src/pdf-generator.test.ts
+  // for the measured margin (PdfGenerator.ts's own launch/setContent timeouts are 60s each,
+  // browser.close() teardown is bounded to 10s with a forced kill on top; worst case ≈135s,
+  // this test-level budget must stay strictly larger than that sum, with real margin).
   test.skipIf(!CHROME)('extracts text from a Chrome-generated PDF', async () => {
     const pdfPath = join(root, 'sources/documents/generated.pdf');
     await renderHtmlToPdf(
@@ -97,7 +101,7 @@ describe('NodeSourceLibraryService.extractSourceText', () => {
     const result = await service.extractSourceText(root, 'sources/documents/generated.pdf');
     expect(result.ok).toBe(true);
     expect(result.text).toContain('Unmistakable Token 90210');
-  }, 60000);
+  }, 180000);
 
   test('reads a non-PDF source file as UTF-8 text', async () => {
     await fs.writeFile(join(root, 'sources/documents/notes.md'), '# Notes\n\nPlain markdown body.\n');

@@ -652,6 +652,10 @@ describe('EPUB cover image', () => {
 });
 
 describe('PDF export', () => {
+  // TASK-024: 180s — see the matching comment in packages/book-export/src/pdf-generator.test.ts
+  // for the measured margin (PdfGenerator.ts's own launch/setContent timeouts are 60s each,
+  // browser.close() teardown is bounded to 10s with a forced kill on top; worst case ≈135s,
+  // this test-level budget must stay strictly larger than that sum, with real margin).
   test.skipIf(!CHROME)('produces a valid build/book.pdf from the manifest tree', async () => {
     const rootPath = await createWorkspace('pdf-nested', {
       'metadata.yaml': ['title: Sample Book', 'language: en', 'author: Test Author', ''].join('\n'),
@@ -684,7 +688,7 @@ describe('PDF export', () => {
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-');
     expect((await fs.stat(result.outputPath)).size).toBeGreaterThan(1024);
     expect(result.contentLength).toBe((await fs.stat(result.outputPath)).size);
-  }, 60000);
+  }, 180000);
 });
 
 describe('math rendering (HTML export)', () => {
