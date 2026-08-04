@@ -35,6 +35,7 @@ import type {
   RelationQuery
 } from './graph';
 import type { EffectiveEntityType, EntityTypeProblem } from './entity-type-registry';
+import type { ManuscriptManifest } from './extraction';
 import type { IndexState } from './index-state';
 import type { Envelope } from './narrative-envelope';
 import type { NarrativeContextOptions, NarrativeDocumentContext } from './narrative-context';
@@ -113,6 +114,30 @@ export interface NarrativeKnowledgeService {
   getEntityTypeRegistry(
     rootUri: string
   ): Promise<Envelope<{ types: EffectiveEntityType[]; problems: EntityTypeProblem[] }>>;
+
+  /**
+   * `manifest.yaml`, read directly and without a rebuild (TASK-022 WP-7,
+   * tech_spec TECH_SPEC WP-7 §7, obstacle 1).
+   *
+   * WHY THIS EXISTS ALONGSIDE `listDocuments`. `IndexedDocument.manifestIncluded`
+   * answers "does the manifest LIST this file", never "is it part of the BUILT
+   * book" — that second, INHERITED question (`include: false` on a parent
+   * excludes every descendant) only {@link ManifestChapter.buildIncluded} can
+   * answer, and it requires the full manifest walk `listDocuments` does not do.
+   * The same walk is also the only way to learn that the manifest names a
+   * chapter no document row exists for at all: `listDocuments` can only be
+   * silent about a path it never scanned. A caller that has both this method's
+   * `chapters` and `listDocuments`' rows can therefore compute BOTH `Skipping
+   * missing chapter file: …` (present here, absent there) AND `buildIncluded`
+   * (present here, unavailable there) without a third protocol method.
+   *
+   * `present: false` (no `manifest.yaml` at all) is not an error — same rule as
+   * {@link getEntityTypeRegistry} for a missing `entities/types.yaml` — and
+   * `problems` reports only a MALFORMED manifest, exactly what
+   * `NarrativeRebuildReport.problems.manifest` would report from a full rebuild,
+   * read here without paying for one.
+   */
+  getManifestChapters(rootUri: string): Promise<Envelope<ManuscriptManifest>>;
 
   /**
    * Everything the index can say about one passage (tech_spec ОВ-2).

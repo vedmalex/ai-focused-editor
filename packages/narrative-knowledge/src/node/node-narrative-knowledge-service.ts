@@ -9,6 +9,7 @@ import {
   NarrativeMemoryConfigurator,
   NOT_BUILT_INDEX_STATE,
   envelope,
+  extractManifestChapters,
   resolveEffectiveEntityTypes,
   type ConfigureResult,
   type EffectiveEntityType,
@@ -17,6 +18,7 @@ import {
   type Envelope,
   type IndexState,
   type IndexedDocument,
+  type ManuscriptManifest,
   type MentionQuery,
   type NarrativeContextOptions,
   type NarrativeDocumentContext,
@@ -177,6 +179,25 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
       text = undefined;
     }
     return envelope(session.state(), resolveEffectiveEntityTypes(text));
+  }
+
+  /**
+   * `manifest.yaml`, read directly and without a rebuild (TASK-022 WP-7 §7).
+   *
+   * Same shape of cheapness as {@link getEntityTypeRegistry}: `extractManifestChapters`
+   * is the pure text-in/structure-out function the rebuild path already runs,
+   * called here with no effect on the store.
+   */
+  async getManifestChapters(rootUri: string): Promise<Envelope<ManuscriptManifest>> {
+    const session = this.session(rootUri);
+    const rootPath = canonicalWorkspaceKey(rootUri);
+    let text: string | undefined;
+    try {
+      text = await fs.readFile(join(rootPath, 'manifest.yaml'), 'utf8');
+    } catch {
+      text = undefined;
+    }
+    return envelope(session.state(), extractManifestChapters(text));
   }
 
   /**

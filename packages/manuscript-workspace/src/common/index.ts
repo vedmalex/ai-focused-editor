@@ -42,6 +42,7 @@ export * from './legacy-transcript-import';
 export * from './book-build-task-protocol';
 export * from './manuscript-workspace-protocol';
 export * from './narrative-entity-protocol';
+export * from './narrative-graph-assembler';
 export * from './narrative-graph-protocol';
 export * from './obsidian-plugin-protocol';
 // Office/document preview extracted into the reusable document-preview Theia

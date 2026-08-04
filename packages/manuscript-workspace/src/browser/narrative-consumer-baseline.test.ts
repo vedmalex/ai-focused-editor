@@ -146,19 +146,21 @@ const URI = (await import('@theia/core/lib/common/uri')).default;
 type TheiaURI = InstanceType<typeof URI>;
 const { FileUri } = await import('@theia/core/lib/common/file-uri');
 
-// Narrative Map ONLY — NOT migrated in this pass (tech_spec TECH_SPEC WP-7 §7).
 const { NodeNarrativeGraphService } = await import('../node/node-narrative-graph-service');
 const { EntityCardsWidget } = await import('./entity-cards-widget');
 const { ManuscriptFindEntitiesTool } = await import('./manuscript-tools-contribution');
 const { BookDoctorContribution } = await import('./book-doctor-contribution');
 
-// TASK-022 WP-7: the fixture knowledge-service double for the three migrated
-// consumers (Entity Cards, manuscript_find_entities, Book Doctor). See
-// `buildFixtureKnowledgeService` below for what it is and why.
+// TASK-022 WP-7: the fixture knowledge-service double for all four migrated
+// consumers, `NodeNarrativeGraphService` (Narrative Map) included since it is
+// now a thin adapter over `NarrativeKnowledgeService` too (tech_spec TECH_SPEC
+// WP-7 §1/§7). See `buildFixtureKnowledgeService` below for what it is and why.
 const {
   InMemoryNarrativeIndexStore,
   NarrativeIndexSession,
+  OWNERSHIP_REL_TYPE,
   resolveEffectiveEntityTypes,
+  extractManifestChapters,
   envelope
 } = await import('@ai-focused-editor/narrative-knowledge');
 const { scanWorkspaceFiles } = await import('@ai-focused-editor/narrative-knowledge/lib/node/narrative-workspace-scan');
@@ -505,6 +507,13 @@ function toFsPath(rootUri: string): string {
 interface FixtureKnowledgeService {
   findEntities(rootUri: string): Promise<{ data: NarrativeEntity[] }>;
   getEntityTypeRegistry(rootUri: string): Promise<{ data: { types: unknown[]; problems: unknown[] } }>;
+  // TASK-022 WP-7: added for `NodeNarrativeGraphService`'s thin-adapter tests
+  // below — ADDED to this shared double, not a change to the two methods above
+  // the three already-migrated consumers rely on.
+  getManifestChapters(rootUri: string): Promise<{ data: { present: boolean; chapters: unknown[]; problems: unknown[] } }>;
+  listDocuments(rootUri: string): Promise<{ data: unknown[] }>;
+  getMentions(rootUri: string, query?: { relPath?: string }): Promise<{ data: unknown[] }>;
+  getRelations(rootUri: string, query?: { relType?: string; origin?: string }): Promise<{ data: unknown[] }>;
 }
 
 function buildFixtureKnowledgeService(): FixtureKnowledgeService {
@@ -536,6 +545,27 @@ function buildFixtureKnowledgeService(): FixtureKnowledgeService {
         text = undefined;
       }
       return envelope(session.state(), resolveEffectiveEntityTypes(text));
+    },
+    async getManifestChapters(rootUri: string) {
+      const rootPath = toFsPath(rootUri);
+      const session = sessionFor(rootPath);
+      let text: string | undefined;
+      try {
+        text = await fs.readFile(join(rootPath, 'manifest.yaml'), 'utf8');
+      } catch {
+        text = undefined;
+      }
+      return envelope(session.state(), extractManifestChapters(text));
+    },
+    async listDocuments(rootUri: string) {
+      const session = sessionFor(toFsPath(rootUri));
+      return envelope(session.state(), session.documents());
+    },
+    async getMentions(rootUri: string, query?: { relPath?: string }) {
+      return sessionFor(toFsPath(rootUri)).getMentions(query);
+    },
+    async getRelations(rootUri: string, query?: { relType?: string; origin?: string }) {
+      return sessionFor(toFsPath(rootUri)).getRelations(query);
     }
   };
 }
@@ -594,9 +624,19 @@ describe('WP-9b базовая линия — Narrative Map (снимок гра
   let root: string;
   let snapshot: Awaited<ReturnType<InstanceType<typeof NodeNarrativeGraphService>['getSnapshot']>>;
 
+  /**
+   * ПРАВКА WP-7, ПРИЧИНА — ФИКСТУРНАЯ ПРОВОДКА, А НЕ ИЗМЕНИВШЕЕСЯ ПОВЕДЕНИЕ.
+   * `new NodeNarrativeGraphService()` больше не работает: класс СТАЛ тонким
+   * адаптером над `NarrativeKnowledgeService` (`@inject`, tech_spec TECH_SPEC
+   * WP-7 §1/§7), и `@inject`-поле не заполняется голым `new`. Тот же приём,
+   * которым уже собраны `EntityCardsWidget`/`ManuscriptFindEntitiesTool` ниже —
+   * `Object.create(prototype)` + прямое присвоение поля, минуя Inversify.
+   */
   beforeAll(async () => {
     root = await newBaselineRoot();
-    snapshot = await new NodeNarrativeGraphService().getSnapshot(root);
+    const service: any = Object.create(NodeNarrativeGraphService.prototype);
+    service.knowledge = buildFixtureKnowledgeService();
+    snapshot = await service.getSnapshot(root);
   });
 
   test('таймлайн: порядок манифеста, заголовки, buildIncluded, пропуск отсутствующей главы', () => {
@@ -631,16 +671,23 @@ describe('WP-9b базовая линия — Narrative Map (снимок гра
   });
 
   test('вхождения главы: kind сворачивается на канонический, label берётся из карточки', () => {
+    // ПРАВКА WP-7, ПРИЧИНА — СТОЯЩЕЕ ИЗМЕНЕНИЕ ПОВЕДЕНИЯ (задачи «Standing
+    // rules»): тай-брейк count=1 теперь идёт через `compareEntitiesForDisplay`
+    // (явный `Intl.Collator('ru', …)`), а не голый `label.localeCompare()`
+    // (локаль хоста, `en-US` на этой машине). Измерено: под 'ru' кириллица
+    // сортируется ПЕРЕД латиницей ('Кришна' < 'Arjuna'), под голым
+    // `localeCompare()` на `en-US` — наоборот. Разные реализации дают РАЗНЫЙ
+    // порядок, значит утверждение ниже различает их, а не проходит случайно.
     expectSemantic(
       snapshot.timeline[0].entities,
       [
-        // Сортировка: count desc, затем label.localeCompare.
         { kind: 'character', id: 'krishna', label: 'Krishna', count: 2 },
-        { kind: 'character', id: 'arjuna', label: 'Arjuna', count: 1 },
         // gh#66: кириллический ВИД ТЕГА из ПРОЗЫ извлекается. `персонаж` не
-        // сворачивается на `character` (в TAG_KIND_TO_ENTITY_KIND его нет),
-        // поэтому это ОТДЕЛЬНЫЙ узел, а label берётся из самого тега.
-        { kind: 'персонаж', id: 'krishna', label: 'Кришна', count: 1 }
+        // сворачивается на `character` (не зарегистрированное написание тега
+        // для типа `character`, `entity-catalog.ts:taggedIds`), поэтому это
+        // ОТДЕЛЬНЫЙ узел, а label берётся из самого тега.
+        { kind: 'персонаж', id: 'krishna', label: 'Кришна', count: 1 },
+        { kind: 'character', id: 'arjuna', label: 'Arjuna', count: 1 }
       ],
       'вхождения content/ch1.md'
     );
@@ -650,17 +697,23 @@ describe('WP-9b базовая линия — Narrative Map (снимок гра
   });
 
   test('узлы ранжируются по суммарным появлениям', () => {
+    // ПРАВКА WP-7, ПРИЧИНА — тот же стоящий переход на `compareEntitiesForDisplay`
+    // (`Intl.Collator('ru', …)`), что и в тесте вхождений главы выше. Равные
+    // appearances (все четыре — 1) раньше разводились голым `label.localeCompare()`
+    // (`en-US`, латиница первой); под явной 'ru'-коллацией кириллица идёт
+    // ПЕРЕД латиницей. Измерено (`Intl.Collator('ru', {numeric:true,
+    // sensitivity:'variant'})`): 'Кришна' < 'BG 2.47' < 'Dharma' < 'Fireball'.
+    // Реализация на голом `localeCompare()` дала бы другой порядок — утверждение
+    // различает их, а не проходит по совпадению.
     expectSemantic(
       snapshot.nodes.map(node => ({ id: node.id, kind: node.kind, entityId: node.entityId, label: node.label, appearances: node.appearances })),
       [
         { id: 'character:krishna', kind: 'character', entityId: 'krishna', label: 'Krishna', appearances: 4 },
         { id: 'character:arjuna', kind: 'character', entityId: 'arjuna', label: 'Arjuna', appearances: 2 },
-        // Равные appearances разводит label.localeCompare:
-        // 'BG 2.47' < 'Dharma' < 'Fireball' < 'Кришна'.
+        { id: 'персонаж:krishna', kind: 'персонаж', entityId: 'krishna', label: 'Кришна', appearances: 1 },
         { id: 'sloka:bg-2-47', kind: 'sloka', entityId: 'bg-2-47', label: 'BG 2.47', appearances: 1 },
         { id: 'term:dharma', kind: 'term', entityId: 'dharma', label: 'Dharma', appearances: 1 },
-        { id: 'spell:fireball', kind: 'spell', entityId: 'fireball', label: 'Fireball', appearances: 1 },
-        { id: 'персонаж:krishna', kind: 'персонаж', entityId: 'krishna', label: 'Кришна', appearances: 1 }
+        { id: 'spell:fireball', kind: 'spell', entityId: 'fireball', label: 'Fireball', appearances: 1 }
       ],
       'узлы графа'
     );
@@ -671,6 +724,17 @@ describe('WP-9b базовая линия — Narrative Map (снимок гра
   });
 
   test('рёбра co-occurrence взвешены общими главами', () => {
+    // ПРАВКА WP-7, ПРИЧИНА — тот же стоящий переход на явный `Intl.Collator('ru',
+    // …)` (стандартное правило задачи для узлов/рёбер графа), применённый здесь
+    // к `sourceLabel`/`targetLabel`. `source`/`target` САМИ ПО СЕБЕ не движутся
+    // (их назначение — внутренняя, не отображаемая сортировка составных ключей
+    // по code point, не тронутая этой правкой) — движется только порядок
+    // элементов МАССИВА `relations`. Измерено: под 'ru' 'персонаж:krishna'
+    // (label 'Кришна') подтягивается к своему партнёру сразу после веса 2,
+    // опережая латинские метки, которые голый `localeCompare()`(`en-US`) ставил
+    // первыми. `sharedChapters` — ПОЗИЦИОННЫЙ индекс над ПРИСУТСТВУЮЩИМИ главами
+    // (`'0'`=ch1.md, `'1'`=ch2.md); формат не тронут (tech_spec TECH_SPEC WP-7
+    // §7, отклонение от черновика — см. `narrative-graph-assembler.ts`).
     expectSemantic(
       snapshot.relations.map(edge => ({
         source: edge.source,
@@ -679,21 +743,18 @@ describe('WP-9b базовая линия — Narrative Map (снимок гра
         sharedChapters: edge.sharedChapters
       })),
       [
-        // Сортировка: weight desc, затем sourceLabel.localeCompare, затем
-        // targetLabel.localeCompare. Метки: Arjuna, BG 2.47, Dharma, Fireball,
-        // Krishna, Кириллическая «Кришна» — отсюда именно этот порядок.
         { source: 'character:arjuna', target: 'character:krishna', weight: 2, sharedChapters: ['0', '1'] },
+        { source: 'character:arjuna', target: 'персонаж:krishna', weight: 1, sharedChapters: ['0'] },
         { source: 'character:arjuna', target: 'sloka:bg-2-47', weight: 1, sharedChapters: ['1'] },
         { source: 'character:arjuna', target: 'term:dharma', weight: 1, sharedChapters: ['1'] },
         { source: 'character:arjuna', target: 'spell:fireball', weight: 1, sharedChapters: ['1'] },
-        { source: 'character:arjuna', target: 'персонаж:krishna', weight: 1, sharedChapters: ['0'] },
         { source: 'sloka:bg-2-47', target: 'term:dharma', weight: 1, sharedChapters: ['1'] },
         { source: 'sloka:bg-2-47', target: 'spell:fireball', weight: 1, sharedChapters: ['1'] },
         { source: 'spell:fireball', target: 'term:dharma', weight: 1, sharedChapters: ['1'] },
+        { source: 'character:krishna', target: 'персонаж:krishna', weight: 1, sharedChapters: ['0'] },
         { source: 'character:krishna', target: 'sloka:bg-2-47', weight: 1, sharedChapters: ['1'] },
         { source: 'character:krishna', target: 'term:dharma', weight: 1, sharedChapters: ['1'] },
-        { source: 'character:krishna', target: 'spell:fireball', weight: 1, sharedChapters: ['1'] },
-        { source: 'character:krishna', target: 'персонаж:krishna', weight: 1, sharedChapters: ['0'] }
+        { source: 'character:krishna', target: 'spell:fireball', weight: 1, sharedChapters: ['1'] }
       ],
       'рёбра графа'
     );

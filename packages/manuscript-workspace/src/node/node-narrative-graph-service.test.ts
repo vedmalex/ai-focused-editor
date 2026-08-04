@@ -3,11 +3,35 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import {
+  InMemoryNarrativeIndexStore,
+  NarrativeIndexSession,
+  OWNERSHIP_REL_TYPE,
+  envelope,
+  extractManifestChapters,
+  type EntityQuery,
+  type MentionQuery,
+  type NarrativeDocumentSummary,
+  type RelationQuery
+} from '@ai-focused-editor/narrative-knowledge';
+import { scanWorkspaceFiles } from '@ai-focused-editor/narrative-knowledge/lib/node/narrative-workspace-scan';
+import { NARRATIVE_INDEX_SCHEMA_VERSION } from '@ai-focused-editor/narrative-knowledge/lib/node/narrative-index-schema';
 import type {
   NarrativeGraphSnapshot,
   NarrativeRelationEdge
 } from '../common';
 import { NodeNarrativeGraphService } from './node-narrative-graph-service';
+
+/**
+ * TASK-022 WP-7: `NodeNarrativeGraphService` no longer scans `entities/**` and
+ * `manifest.yaml` itself — it delegates to `NarrativeKnowledgeService`
+ * (tech_spec TECH_SPEC WP-7 §1/§7). The fixture below writes REAL files to disk
+ * (unchanged from before this migration) but feeds them through
+ * `NarrativeIndexSession.rebuild()` over `InMemoryNarrativeIndexStore` — the
+ * same in-memory-index technique `narrative-consumer-baseline.test.ts` uses for
+ * the three already-migrated consumers, reused rather than inventing a third
+ * approach (this file's own obstacle #3).
+ */
 
 const SCRATCH_BASE = process.env.CLAUDE_SCRATCHPAD_DIR
   || '/private/tmp/claude-501/-Users-vedmalex-work-ai-editor-3/8a15f000-cd38-4649-8fe4-b479e61f41c1/scratchpad/narrative-graph-test';
@@ -88,13 +112,63 @@ function edge(relations: NarrativeRelationEdge[], a: string, b: string): Narrati
     (item.source === a && item.target === b) || (item.source === b && item.target === a));
 }
 
+/**
+ * Minimal `NarrativeKnowledgeService` double covering exactly the five methods
+ * `NodeNarrativeGraphService` calls — the same technique
+ * `narrative-consumer-baseline.test.ts`'s `buildFixtureKnowledgeService` uses,
+ * kept local because this file's fixture (`seedWorkspace`) is independent of
+ * that one's.
+ */
+function buildFixtureKnowledgeService(rootPath: string) {
+  const store = new InMemoryNarrativeIndexStore();
+  const session = new NarrativeIndexSession({ store, schemaVersion: NARRATIVE_INDEX_SCHEMA_VERSION });
+  session.rebuild(scanWorkspaceFiles(rootPath));
+
+  return {
+    async getManifestChapters() {
+      let text: string | undefined;
+      try {
+        text = await fs.readFile(join(rootPath, 'manifest.yaml'), 'utf8');
+      } catch {
+        text = undefined;
+      }
+      return envelope(session.state(), extractManifestChapters(text));
+    },
+    async listDocuments() {
+      return envelope(
+        session.state(),
+        session.documents().map((document): NarrativeDocumentSummary => document)
+      );
+    },
+    async findEntities(_rootUri: string, query?: EntityQuery) {
+      return session.findEntities(query);
+    },
+    async getMentions(_rootUri: string, query?: MentionQuery) {
+      return session.getMentions(query);
+    },
+    async getRelations(_rootUri: string, query?: RelationQuery) {
+      return session.getRelations(query);
+    }
+  };
+}
+
+/** Wire a `NodeNarrativeGraphService` to the fixture double by field assignment
+ *  — `@inject` fields are plain instance properties, and this bypasses Inversify
+ *  entirely (the same pattern `narrative-consumer-baseline.test.ts` uses for
+ *  `EntityCardsWidget`/`ManuscriptFindEntitiesTool`). */
+function buildService(rootPath: string): NodeNarrativeGraphService {
+  const service = Object.create(NodeNarrativeGraphService.prototype) as NodeNarrativeGraphService;
+  (service as unknown as { knowledge: unknown }).knowledge = buildFixtureKnowledgeService(rootPath);
+  return service;
+}
+
 describe('NodeNarrativeGraphService', () => {
   let root: string;
   let service: NodeNarrativeGraphService;
 
   beforeEach(async () => {
     root = await makeRoot();
-    service = new NodeNarrativeGraphService();
+    service = buildService(root);
   });
 
   afterEach(async () => {
@@ -114,6 +188,7 @@ describe('NodeNarrativeGraphService', () => {
 
   test('timeline order follows manifest content order (incl. nested children)', async () => {
     await seedWorkspace(root);
+    service = buildService(root);
     const snapshot = await service.getSnapshot(root);
 
     expect(snapshot.timeline.map(chapter => chapter.path)).toEqual([
@@ -136,10 +211,13 @@ describe('NodeNarrativeGraphService', () => {
 
   test('counts per-chapter appearances and resolves labels from entity cards', async () => {
     await seedWorkspace(root);
+    service = buildService(root);
     const snapshot = await service.getSnapshot(root);
 
     const ch1 = snapshot.timeline[0];
-    // Sorted by count desc, then label: Krishna(2), Arjuna(1), Gandiva(1).
+    // Sorted by count desc, then label (all three labels are Latin-script here,
+    // so the `ru` collator tie-break agrees with plain code-point order and
+    // this assertion is unaffected by the WP-7 collator change).
     expect(ch1.entities).toEqual([
       { kind: 'character', id: 'krishna', label: 'Krishna', count: 2 },
       { kind: 'character', id: 'arjuna', label: 'Arjuna', count: 1 },
@@ -153,6 +231,7 @@ describe('NodeNarrativeGraphService', () => {
 
   test('computes co-occurrence edges weighted by shared chapters', async () => {
     await seedWorkspace(root);
+    service = buildService(root);
     const snapshot = await service.getSnapshot(root);
 
     // krishna+arjuna share ch1 and ch2 -> weight 2.
@@ -171,6 +250,7 @@ describe('NodeNarrativeGraphService', () => {
 
   test('ranks nodes by total appearances', async () => {
     await seedWorkspace(root);
+    service = buildService(root);
     const snapshot = await service.getSnapshot(root);
 
     expect(snapshot.totalEntities).toBe(4);
@@ -186,6 +266,7 @@ describe('NodeNarrativeGraphService', () => {
 
   test('parses artifact ownership chains and resolves owner labels', async () => {
     await seedWorkspace(root);
+    service = buildService(root);
     const snapshot = await service.getSnapshot(root);
 
     expect(snapshot.ownership).toHaveLength(1);
@@ -200,7 +281,27 @@ describe('NodeNarrativeGraphService', () => {
     expect(gandiva.entries[1].from).toBe('the great war');
   });
 
-  test('skips malformed ownership with a diagnostic (non-list and missing owner)', async () => {
+  /**
+   * ПРАВКА WP-7, ПРИЧИНА — ДИАГНОСТИКА СТАЛА НЕДОСТИЖИМОЙ, А НЕ ИЗМЕНИВШЕЕСЯ
+   * ПОВЕДЕНИЕ ХРАНЕНИЯ. `Ignoring ownership for X: …` / `Ignoring ownership
+   * entry N for X: …` were emitted by the pre-migration reader's OWN YAML parse
+   * of `entities/artifacts/*.yaml`. `NodeNarrativeGraphService` no longer reads
+   * that YAML — malformed ownership is now caught by
+   * `entity-card-extraction.ts`'s `collectOwnership`, which reports an
+   * `EntityCardProblem`. That problem is forwarded only through
+   * `NarrativeRebuildReport.problems.cards` (`rebuild()`'s report), which this
+   * class deliberately does not call (a full, write-guarded pass to answer a
+   * read). This is the SAME reachability gap as `getManifestChapters` closes for
+   * "missing chapter file" — recorded rather than silently dropped, following
+   * the precedent `entity-cards-widget.ts:26-34` sets for per-card diagnostics
+   * this package does not yet have a cheap query for.
+   *
+   * What survives unchanged: `collectOwnership` still drops the malformed
+   * ENTRY (or the whole non-list value) before a relation is ever built for it,
+   * so `broken` still contributes no transfer and `shield` still contributes
+   * only its one valid hop — verified by running, not assumed.
+   */
+  test('malformed ownership entries are dropped from the graph, without a diagnostic (recorded gap)', async () => {
     await seedWorkspace(root);
     await write(root, 'entities/artifacts/broken.yaml', [
       'id: broken',
@@ -217,19 +318,20 @@ describe('NodeNarrativeGraphService', () => {
       '  - note: entry without an owner',
       ''
     ].join('\n'));
+    service = buildService(root);
 
     const snapshot: NarrativeGraphSnapshot = await service.getSnapshot(root);
 
-    const messages = snapshot.diagnostics.map(diagnostic => diagnostic.message);
-    expect(messages).toContain('Ignoring ownership for broken: expected a list.');
-    expect(messages.some(message => message.includes('missing owner'))).toBe(true);
-    expect(snapshot.diagnostics.every(diagnostic =>
-      diagnostic.severity !== 'warning' || diagnostic.source === 'narrative-graph')).toBe(true);
-
-    // broken produced no transfer; shield kept only its valid hop.
+    // `broken` produced no transfer; `shield` kept only its valid hop.
     expect(snapshot.ownership.find(transfer => transfer.artifactId === 'broken')).toBeUndefined();
     const shield = snapshot.ownership.find(transfer => transfer.artifactId === 'shield');
     expect(shield?.entries.map(entry => entry.owner)).toEqual(['bhima']);
+
+    // Recorded gap: no `narrative-graph` diagnostic reports either malformation
+    // (see the test's doc comment above for why, and what would close it).
+    const ownershipWarnings = snapshot.diagnostics.filter(diagnostic =>
+      diagnostic.message.toLowerCase().includes('ownership'));
+    expect(ownershipWarnings).toEqual([]);
   });
 
   test('warns when the manifest is missing', async () => {
