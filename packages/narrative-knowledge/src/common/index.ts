@@ -77,6 +77,17 @@ export * from './entity-type-registry';
 export * from './chapter-front-matter';
 export * from './wiki-links';
 
+/**
+ * Re-exported so a consumer that needs the LABELED prose-tag counterpart to
+ * {@link collectUnlabeledWikiEntityMatches} has ONE package to depend on for
+ * both (TASK-022 WP-7, tech_spec TECH_SPEC WP-7 §1, readiness check "no
+ * independent FS scan"). `chapter-extraction.ts` already imports this
+ * directly from `@ai-focused-editor/semantic-markdown`; this re-export makes
+ * that the CANONICAL path for any consumer outside this package too, rather
+ * than a second, independent import of the same parser.
+ */
+export { parseSemanticMarkdown } from '@ai-focused-editor/semantic-markdown';
+
 // The deterministic extraction built on top of those parsers (TASK-022 WP-2).
 // Pure by construction — text in, domain values out — which is what the layer
 // rule's prohibitions (a) and (c) enforce over this whole directory.

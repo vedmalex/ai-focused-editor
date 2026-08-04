@@ -1,5 +1,5 @@
 import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import {
@@ -9,13 +9,18 @@ import {
   NarrativeMemoryConfigurator,
   NOT_BUILT_INDEX_STATE,
   envelope,
+  resolveEffectiveEntityTypes,
   type ConfigureResult,
+  type EffectiveEntityType,
   type EntityQuery,
+  type EntityTypeProblem,
   type Envelope,
   type IndexState,
+  type IndexedDocument,
   type MentionQuery,
   type NarrativeContextOptions,
   type NarrativeDocumentContext,
+  type NarrativeDocumentSummary,
   type NarrativeEntity,
   type NarrativeFileWatcher,
   type NarrativeIndexStore,
@@ -140,6 +145,38 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
 
   async getRelations(rootUri: string, query?: RelationQuery): Promise<Envelope<NarrativeRelation[]>> {
     return this.session(rootUri).getRelations(query);
+  }
+
+  /**
+   * Every document the index holds, `docId`/`generation` stripped (TASK-022
+   * WP-7). See the protocol doc for why those two fields never cross RPC.
+   */
+  async listDocuments(rootUri: string): Promise<Envelope<NarrativeDocumentSummary[]>> {
+    const session = this.session(rootUri);
+    return envelope(session.state(), session.documents().map(stripInternalDocumentFields));
+  }
+
+  /**
+   * The effective entity-type registry, read directly and without a rebuild
+   * (TASK-022 WP-7, tech_spec TECH_SPEC WP-7 §2).
+   *
+   * An unreadable `entities/types.yaml` (missing, or a workspace that is not a
+   * manuscript at all) is not an error here: `resolveEffectiveEntityTypes`
+   * already treats an absent file as "no author types", the same rule the
+   * extraction pipeline applies during a rebuild.
+   */
+  async getEntityTypeRegistry(
+    rootUri: string
+  ): Promise<Envelope<{ types: EffectiveEntityType[]; problems: EntityTypeProblem[] }>> {
+    const session = this.session(rootUri);
+    const rootPath = canonicalWorkspaceKey(rootUri);
+    let text: string | undefined;
+    try {
+      text = await fs.readFile(join(rootPath, 'entities/types.yaml'), 'utf8');
+    } catch {
+      text = undefined;
+    }
+    return envelope(session.state(), resolveEffectiveEntityTypes(text));
   }
 
   /**
@@ -343,6 +380,13 @@ function emptyRebuildReport(): NarrativeRebuildReport {
  */
 function absentStore(): NarrativeIndexStore {
   return new InMemoryNarrativeIndexStore({ readOnly: true });
+}
+
+/** Drop the two store-internal fields before a document row crosses RPC
+ *  (TASK-022 WP-7) — see {@link NarrativeDocumentSummary}. */
+function stripInternalDocumentFields(document: IndexedDocument): NarrativeDocumentSummary {
+  const { docId: _docId, generation: _generation, ...summary } = document;
+  return summary;
 }
 
 /** `file:` URI or plain path to an absolute filesystem path. */

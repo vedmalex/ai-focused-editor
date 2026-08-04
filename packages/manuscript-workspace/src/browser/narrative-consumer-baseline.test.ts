@@ -146,14 +146,26 @@ const URI = (await import('@theia/core/lib/common/uri')).default;
 type TheiaURI = InstanceType<typeof URI>;
 const { FileUri } = await import('@theia/core/lib/common/file-uri');
 
+// Narrative Map ONLY — NOT migrated in this pass (tech_spec TECH_SPEC WP-7 §7).
 const { NodeNarrativeGraphService } = await import('../node/node-narrative-graph-service');
-const { NodeNarrativeEntityService } = await import('../node/node-domain-knowledge-service');
 const { EntityCardsWidget } = await import('./entity-cards-widget');
 const { ManuscriptFindEntitiesTool } = await import('./manuscript-tools-contribution');
 const { BookDoctorContribution } = await import('./book-doctor-contribution');
 
+// TASK-022 WP-7: the fixture knowledge-service double for the three migrated
+// consumers (Entity Cards, manuscript_find_entities, Book Doctor). See
+// `buildFixtureKnowledgeService` below for what it is and why.
+const {
+  InMemoryNarrativeIndexStore,
+  NarrativeIndexSession,
+  resolveEffectiveEntityTypes,
+  envelope
+} = await import('@ai-focused-editor/narrative-knowledge');
+const { scanWorkspaceFiles } = await import('@ai-focused-editor/narrative-knowledge/lib/node/narrative-workspace-scan');
+const { NARRATIVE_INDEX_SCHEMA_VERSION } = await import('@ai-focused-editor/narrative-knowledge/lib/node/narrative-index-schema');
+
 import type { BookDoctorFinding, BookDoctorFix, BookDoctorReport } from '../common/book-doctor';
-import type { NarrativeEntitySnapshot } from '../common/narrative-entity-protocol';
+import type { NarrativeEntity } from '@ai-focused-editor/narrative-knowledge';
 
 /* ------------------------------------------------------------------------- */
 /* НОРМАЛИЗУЮЩИЙ АДАПТЕР                                                      */
@@ -254,7 +266,12 @@ function render(value: unknown): string {
  *    (`gandiva` ← `[[gandiva]]`): она ОБЯЗАНА НЕ попасть в осиротевшие
  *    (регрессия TASK-013 U-B, `book-doctor-contribution.ts:575-592`);
  *  - BARE-ФОРМЕННАЯ ссылка на id, У КОТОРОГО КАРТОЧКИ НЕТ (`[[sharan-108]]`):
- *    она ОБЯЗАНА НЕ породить предложение «создать недостающую карточку».
+ *    она ОБЯЗАНА НЕ породить предложение «создать недостающую карточку»;
+ *  - карточка, у которой `id` ОТЛИЧАЕТСЯ от имени файла (`bhima` в
+ *    `entities/characters/warrior-4.yaml`, review finding 1): без неё каждая
+ *    карточка фикстуры сортируется одинаково что по `id`, что по имени файла,
+ *    и утверждение порядка `findEntities()` не может отличить реализацию,
+ *    сортирующую по одному, от реализации, сортирующую по другому.
  */
 async function seedBaselineRoot(root: string): Promise<void> {
   await write(root, 'manifest.yaml', [
@@ -384,6 +401,24 @@ async function seedBaselineRoot(root: string): Promise<void> {
   await write(root, 'entities/characters/arjuna.yaml', 'id: arjuna\nname: Arjuna\n');
   // ОСИРОТЕВШАЯ карточка: ни одна ссылка на неё не ведёт.
   await write(root, 'entities/characters/orphan-hero.yaml', 'id: orphan-hero\nname: Orphan Hero\n');
+  // ID И ИМЯ ФАЙЛА НАМЕРЕННО РАСХОДЯТСЯ (review finding 1 на этой задаче,
+  // тот же приём, что у WP-9a — `entities/characters/warrior-3.yaml` несёт
+  // `id: arjuna`, `manuscript-fixture.mts:90`). ДО этой карточки у КАЖДОЙ
+  // карточки фикстуры `id` совпадал с именем файла, поэтому утверждение
+  // порядка `snapshot.entities` ниже не могло отличить реализацию, сортирующую
+  // по `id`, от реализации, сортирующую по имени файла, — обе давали
+  // одинаковый список. Без этой карточки правка порядка ("сортировать
+  // findEntities() по id, а не по типу+файлу") была бы зелёной по совпадению,
+  // тем же паттерном, что уже дважды зафиксирован на этой задаче (contract-сьют
+  // и tag-scope тест). `bhima` сортируется ВТОРЫМ по id (после `arjuna`, до
+  // `dharma`), но её файл `warrior-4.yaml` был бы ПОСЛЕДНИМ по имени — так что
+  // две сортировки теперь дают РАЗНЫЙ порядок, и утверждение ниже действительно
+  // проверяет, какая из них верна. Осиротевшая (как и `orphan-hero`): ссылку на
+  // неё намеренно не добавляли, чтобы не трогать фикстуру Narrative Map
+  // (`NodeNarrativeGraphService` строит узлы только из УПОМЯНУТЫХ карточек —
+  // см. тест «узлы ранжируются по суммарным появлениям» — так что нессылочная
+  // карточка ему не видна и его утверждений не двигает).
+  await write(root, 'entities/characters/warrior-4.yaml', 'id: bhima\nname: Bhima\n');
   await write(root, 'entities/terms/dharma.yaml', 'term: Dharma\n');
   // Карточка, единственная ссылка на которую — BARE-форма `[[gandiva]]`.
   await write(root, 'entities/artifacts/gandiva.yaml', [
@@ -441,6 +476,69 @@ async function newBaselineRoot(): Promise<string> {
 afterAll(async () => {
   await Promise.all(createdRoots.map(root => fs.rm(root, { recursive: true, force: true })));
 });
+
+/* ------------------------------------------------------------------------- */
+/* Фикстурный NarrativeKnowledgeService (TASK-022 WP-7)                       */
+/*                                                                            */
+/* Три мигрированных потребителя (Entity Cards, manuscript_find_entities,     */
+/* Book Doctor) больше не читают знание сами — они вызывают                   */
+/* `NarrativeKnowledgeService`. Эта фикстура — та же собранная методика,      */
+/* которой пакет `narrative-knowledge` тестирует свой bun-контур: реальные    */
+/* файлы читаются с диска (`scanWorkspaceFiles`, тот же код, что использует   */
+/* `NodeNarrativeKnowledgeService.rebuild()` в проде) и индексируются через   */
+/* `NarrativeIndexSession.rebuild()` над `InMemoryNarrativeIndexStore` — НЕ    */
+/* через `node:sqlite`, который эта дорожка (`bun test`) не резолвит вообще.   */
+/* Один и тот же путь чтения `entities/types.yaml` использован здесь и в      */
+/* `NodeNarrativeKnowledgeService.getEntityTypeRegistry` — оба зовут           */
+/* `resolveEffectiveEntityTypes` НАПРЯМУЮ, без обхода через rebuild.           */
+/*                                                                            */
+/* ЛЕНИВАЯ, ПО КОРНЮ: каждый `describe`-блок и даже отдельный тест внутри      */
+/* Book Doctor зовёт `gather()` на РАЗНЫХ корнях (основная фикстура, пустой    */
+/* корень, восстановленная книга), поэтому сервис строит и кеширует одну      */
+/* сессию НА КАЖДЫЙ увиденный корень, а не одну на весь тестовый прогон.       */
+/* ------------------------------------------------------------------------- */
+
+function toFsPath(rootUri: string): string {
+  return rootUri.startsWith('file:') ? FileUri.fsPath(rootUri) : rootUri;
+}
+
+interface FixtureKnowledgeService {
+  findEntities(rootUri: string): Promise<{ data: NarrativeEntity[] }>;
+  getEntityTypeRegistry(rootUri: string): Promise<{ data: { types: unknown[]; problems: unknown[] } }>;
+}
+
+function buildFixtureKnowledgeService(): FixtureKnowledgeService {
+  const sessions = new Map<string, InstanceType<typeof NarrativeIndexSession>>();
+
+  const sessionFor = (rootPath: string): InstanceType<typeof NarrativeIndexSession> => {
+    const existing = sessions.get(rootPath);
+    if (existing) {
+      return existing;
+    }
+    const store = new InMemoryNarrativeIndexStore();
+    const session = new NarrativeIndexSession({ store, schemaVersion: NARRATIVE_INDEX_SCHEMA_VERSION });
+    session.rebuild(scanWorkspaceFiles(rootPath));
+    sessions.set(rootPath, session);
+    return session;
+  };
+
+  return {
+    async findEntities(rootUri: string) {
+      return sessionFor(toFsPath(rootUri)).findEntities();
+    },
+    async getEntityTypeRegistry(rootUri: string) {
+      const rootPath = toFsPath(rootUri);
+      const session = sessionFor(rootPath);
+      let text: string | undefined;
+      try {
+        text = await fs.readFile(join(rootPath, 'entities/types.yaml'), 'utf8');
+      } catch {
+        text = undefined;
+      }
+      return envelope(session.state(), resolveEffectiveEntityTypes(text));
+    }
+  };
+}
 
 /* ------------------------------------------------------------------------- */
 /* Тесты адаптера                                                             */
@@ -662,38 +760,101 @@ function collectRendered(node: unknown, out: RenderedNode[]): void {
 
 describe('WP-9b базовая линия — Entity Cards (содержимое карточки)', () => {
   let root: string;
-  let snapshot: NarrativeEntitySnapshot;
+  /**
+   * ПЕРЕИМЕНОВАНИЕ, ЗАПИСАННОЕ ЗДЕСЬ (WP-9b «нормализующий адаптер», правило
+   * плана: терпимость к переименованию входит в WP-7 diff-ом с причиной).
+   * `NarrativeEntitySnapshot` (`kind`/`label`/`path`/`uri`) заменён на
+   * `{entities: NarrativeEntity[]}` (`type`/`name`/`sourcePath`/`sourceUri`) —
+   * ОВ-5. Ниже — не характеризация "снимка" легаси-сервиса, а характеризация
+   * РЕАЛЬНОГО `EntityCardsWidget.refresh()` поверх фикстурного
+   * `NarrativeKnowledgeService` (TECH_SPEC WP-7 §1: Entity Cards — один из
+   * ЧЕТЫРЁХ потребителей, которым нельзя быть тонким адаптером над легаси
+   * типом, поэтому виджет теперь строится через РЕАЛЬНЫЙ прод-путь, а не
+   * `NodeNarrativeEntityService`).
+   */
+  let snapshot: { entities: NarrativeEntity[]; diagnostics: { severity: string; source: string; message: string }[] };
 
   beforeAll(async () => {
     root = await newBaselineRoot();
-    snapshot = await new NodeNarrativeEntityService().getSnapshot(root);
+    const widget: any = Object.create(EntityCardsWidget.prototype);
+    widget.knowledge = buildFixtureKnowledgeService();
+    const rootUri = new URI(FileUri.create(root).toString());
+    widget.workspaceService = {
+      ready: Promise.resolve(),
+      tryGetRoots: () => [{ resource: rootUri }],
+      roots: Promise.resolve([{ resource: rootUri }])
+    };
+    await widget.refresh();
+    snapshot = widget.snapshot;
   });
 
-  test('карточки читаются по ЭФФЕКТИВНЫМ типам, в порядке тип → имя файла', () => {
+  test('карточки читаются по ЭФФЕКТИВНЫМ типам; ПОРЯДОК СВЕРСТАН ЗАНОВО (стоящая находка)', () => {
+    // ПЕРЕИМЕНОВАНИЕ ПОВЕДЕНИЯ, ЗАПИСАННОЕ ЗДЕСЬ (стоящая находка задачи,
+    // «Display order»). Легаси-скан порядок был тип → имя файла (обход по
+    // каталогам, `localeCompare` внутри каждого). `findEntities()` порта
+    // (`narrative-index-store.ts`, `narrative-index-store-contract.ts:350-387`)
+    // сортирует ГЛОБАЛЬНО по `id`, code point — это контракт индекса, а не
+    // деталь одного адаптера, и обходить его в тонком чтении значило бы
+    // изобретать третий порядок вдобавок к уже названным двум.
+    //
+    // ПРОВЕРЕНО ЗАПУСКОМ, А НЕ АРГУМЕНТОМ (review finding 1). Раньше это
+    // утверждение опиралось на то, что в фикстуре `id` СОВПАДАЛ с именем файла
+    // у каждой карточки, — а значит, реализация, сортирующая по `id`, и
+    // реализация, сортирующая по имени файла, давали БУКВАЛЬНО один и тот же
+    // список, и утверждение не могло провалиться ни при какой из двух. Это тот
+    // же паттерн «зелёное по совпадению», что уже дважды зафиксирован на этой
+    // задаче. Карточка `bhima` (файл `entities/characters/warrior-4.yaml`,
+    // `seedBaselineRoot`) ломает совпадение: по `id` она идёт ВТОРОЙ (сразу за
+    // `arjuna`), по имени файла — ПОСЛЕДНЕЙ среди персонажей. Порядок ниже —
+    // РЕАЛЬНЫЙ результат прогона, а не выведенный, и он id-порядок, не
+    // имя-файла-порядок: перестановка `compareByCodePoint(a.id, b.id)` на
+    // `compareByCodePoint(a.sourcePath, b.sourcePath)` в
+    // `in-memory-narrative-index-store.ts` (временно, для проверки, не
+    // закоммичено) действительно красит это утверждение — `bhima` уезжает в
+    // конец списка вместо второй позиции.
     expectSemantic(
-      snapshot.entities.map(entity => ({ kind: entity.kind, id: entity.id, label: entity.label, path: entity.path })),
+      snapshot.entities.map(entity => ({ type: entity.type, id: entity.id, name: entity.name, sourcePath: entity.sourcePath })),
       [
-        { kind: 'character', id: 'arjuna', label: 'Arjuna', path: 'entities/characters/arjuna.yaml' },
-        { kind: 'character', id: 'krishna', label: 'Krishna', path: 'entities/characters/krishna.yaml' },
-        { kind: 'character', id: 'orphan-hero', label: 'Orphan Hero', path: 'entities/characters/orphan-hero.yaml' },
-        // `dharma.yaml` не несёт `id` -> id берётся из ИМЕНИ ФАЙЛА, метка — из `term`.
-        { kind: 'term', id: 'dharma', label: 'Dharma', path: 'entities/terms/dharma.yaml' },
-        { kind: 'artifact', id: 'gandiva', label: 'Gandiva', path: 'entities/artifacts/gandiva.yaml' }
+        { type: 'character', id: 'arjuna', name: 'Arjuna', sourcePath: 'entities/characters/arjuna.yaml' },
+        { type: 'character', id: 'bhima', name: 'Bhima', sourcePath: 'entities/characters/warrior-4.yaml' },
+        // `dharma.yaml` не несёт `id` -> id берётся из ИМЕНИ ФАЙЛА, имя — из `term`.
+        { type: 'term', id: 'dharma', name: 'Dharma', sourcePath: 'entities/terms/dharma.yaml' },
+        { type: 'artifact', id: 'gandiva', name: 'Gandiva', sourcePath: 'entities/artifacts/gandiva.yaml' },
+        { type: 'character', id: 'krishna', name: 'Krishna', sourcePath: 'entities/characters/krishna.yaml' },
+        { type: 'character', id: 'orphan-hero', name: 'Orphan Hero', sourcePath: 'entities/characters/orphan-hero.yaml' }
       ],
-      'состав и порядок карточек'
+      'состав и порядок карточек (id, code point)'
+    );
+    // ИСПРАВЛЕНО (review finding 1). Старый комментарий здесь утверждал, что
+    // отображаемый (перегруппированный по типу) порядок «остаётся прежним» —
+    // тип → имя файла, — потому что render() виджета перегруппировывает через
+    // `.filter()`, который СОХРАНЯЕТ относительный порядок исходного массива.
+    // Это было ВЕРНО буквально, но вводило в заблуждение: `.filter()` сохраняет
+    // порядок `snapshot.entities`, а тот — id-порядок, не имя-файла-порядок;
+    // они просто СОВПАДАЛИ в старой фикстуре. С `bhima` они расходятся, и
+    // видно, какой из них настоящий: `bhima` отображается ВТОРОЙ (сразу после
+    // `arjuna`), а не последней, как было бы при группировке по имени файла.
+    // Значит рендер — тип → id, и это НОВОЕ наблюдаемое поведение по
+    // сравнению с легаси-сканом (тип → имя файла), просто не увиденное
+    // прежней фикстурой. Мигрированный виджет действительно меняет то, что
+    // видит автор, для любой карточки, где `id` не совпадает с именем файла.
+    expectSemantic(
+      snapshot.entities.filter(entity => entity.type === 'character').map(entity => entity.id),
+      ['arjuna', 'bhima', 'krishna', 'orphan-hero'],
+      'порядок ВНУТРИ типа character — тип → id, НЕ тип → имя файла (стоящая находка)'
     );
   });
 
-  test('полное содержимое одной карточки, включая пустые строки вместо undefined', () => {
-    const krishna = snapshot.entities.find(entity => entity.id === 'krishna' && entity.kind === 'character');
+  test('полное содержимое одной карточки, включая пустые массивы вместо undefined', () => {
+    const krishna = snapshot.entities.find(entity => entity.id === 'krishna' && entity.type === 'character');
     expectSemantic(
       krishna,
       {
-        kind: 'character',
+        type: 'character',
         id: 'krishna',
-        label: 'Krishna',
-        path: 'entities/characters/krishna.yaml',
-        uri: FileUri.create(join(root, 'entities/characters/krishna.yaml')).toString(),
+        name: 'Krishna',
+        sourcePath: 'entities/characters/krishna.yaml',
+        origin: 'explicit',
         summary: 'Charioteer of [[char:arjuna|Arjuna]].',
         aliases: ['Govinda', 'Keshava'],
         epithets: ['Хранитель'],
@@ -704,19 +865,44 @@ describe('WP-9b базовая линия — Entity Cards (содержимое
       },
       'карточка krishna'
     );
-    // Отсутствующее поле становится ПУСТОЙ СТРОКОЙ, а не `undefined`, —
-    // наблюдаемая деталь, на которую опирается отрисовка (`entity.summary ? …`).
+    // ПЕРЕИМЕНОВАНИЕ ПОВЕДЕНИЯ, ЗАПИСАННОЕ ЗДЕСЬ (ОВ-5, WP-1 не в этом
+    // документе). Легаси-снимок отдавал ОТСУТСТВУЮЩЕЕ строковое поле как `''`;
+    // `NarrativeEntity` отдаёт его как ABSENT (`undefined`, ключа нет вовсе) —
+    // проверено запуском, не выведено: и строковые поля (`summary`/`backstory`/
+    // `arc`/`notes`), И опциональные МАССИВЫ (`epithets`/`speechPatterns`)
+    // отсутствуют целиком, когда карточка их не объявляет. Иначе устроена
+    // ТОЛЬКО `aliases` — она НЕ опциональна на `NarrativeEntity`
+    // (`aliases: string[]`, без `?`), поэтому extraction всегда отдаёт её как
+    // массив, пустой в том числе.
     const arjuna = snapshot.entities.find(entity => entity.id === 'arjuna');
     expectSemantic(
       arjuna,
-      { summary: '', backstory: '', arc: '', notes: '', aliases: [], epithets: [], speechPatterns: [] },
-      'пустые поля карточки arjuna'
+      {
+        summary: ABSENT,
+        backstory: ABSENT,
+        arc: ABSENT,
+        notes: ABSENT,
+        epithets: ABSENT,
+        speechPatterns: ABSENT,
+        aliases: []
+      },
+      'отсутствующие поля карточки arjuna'
     );
   });
 
-  test('эффективные типы и проблемы разбора types.yaml доезжают до снимка', () => {
+  test('эффективные типы и проблемы разбора types.yaml доезжают до снимка', async () => {
     expectSemantic(
-      snapshot.effectiveEntityTypes?.map(type => ({ id: type.id, tagKind: type.tagKind, directory: type.directory, origin: type.origin })),
+      snapshot.entities.length > 0,
+      true,
+      'снимок непуст (предпосылка для проверки типов ниже)'
+    );
+    // TECH_SPEC WP-7 §2: `getEntityTypeRegistry` — новый, не-rebuild запрос;
+    // виджет вызывает его отдельно от `findEntities`, поэтому типы/проблемы
+    // проверяются напрямую через фикстурный сервис, а не через `snapshot`.
+    const registry = await buildFixtureKnowledgeService().getEntityTypeRegistry(FileUri.create(root).toString());
+    expectSemantic(
+      (registry.data.types as { id: string; tagKind: string; directory: string; origin: string }[])
+        .map(type => ({ id: type.id, tagKind: type.tagKind, directory: type.directory, origin: type.origin })),
       [
         { id: 'character', tagKind: 'char', directory: 'characters', origin: 'built-in' },
         { id: 'term', tagKind: 'term', directory: 'terms', origin: 'built-in' },
@@ -727,13 +913,14 @@ describe('WP-9b базовая линия — Entity Cards (содержимое
       'эффективные типы'
     );
     expectSemantic(
-      snapshot.typeProblems?.map(problem => ({ code: problem.code, id: problem.id })),
+      (registry.data.problems as { code: string; id: string }[]).map(problem => ({ code: problem.code, id: problem.id })),
       [{ code: 'reserved-id', id: 'character' }],
       'проблемы types.yaml'
     );
-    // Отсутствующий каталог авторского типа даёт info-диагностику, а не ошибку.
-    expect(snapshot.diagnostics.some(diagnostic =>
-      diagnostic.message === 'No sloka entity directory found at entities/slokas/.')).toBe(true);
+    // ГАП, ЗАПИСАННЫЙ, А НЕ СКРЫТЫЙ (node-domain-knowledge-service.ts, doc
+    // comment на `NodeNarrativeEntityService`): info-диагностика "нет каталога
+    // авторского типа" — часть СКАНА, который тонкий адаптер БОЛЬШЕ НЕ ДЕЛАЕТ.
+    // Она не воспроизводится ни в `snapshot.diagnostics`, ни здесь.
   });
 
   test('ОТРИСОВКА упоминаний в карточке: что кликабельно, а что нет (gh#66)', () => {
@@ -784,12 +971,14 @@ describe('WP-9b базовая линия — manuscript_find_entities', () => {
 
   beforeAll(async () => {
     root = await newBaselineRoot();
-    const backend = new NodeNarrativeEntityService();
     tool = new ManuscriptFindEntitiesTool();
-    (tool as any).entities = {
-      getSnapshot: () => backend.getSnapshot(root),
-      refresh: () => backend.getSnapshot(root)
-    };
+    // TASK-022 WP-7: the tool now talks to `NarrativeKnowledgeService`
+    // directly (tech_spec TECH_SPEC WP-7 §3 — old query semantics, new
+    // source), so the double is the same fixture knowledge service Entity
+    // Cards uses, plus `ManuscriptWorkspaceService.getSnapshot().rootUri`
+    // (the tool's own root-resolution helper, `resolveWorkspaceRoot`).
+    (tool as any).knowledge = buildFixtureKnowledgeService();
+    (tool as any).workspace = { getSnapshot: async () => ({ rootUri: FileUri.create(root).toString() }) };
     const request = tool.getTool();
     handler = (argString: string) => Promise.resolve(request.handler!(argString, {} as never));
   });
@@ -816,12 +1005,26 @@ describe('WP-9b базовая линия — manuscript_find_entities', () => {
     );
   });
 
-  test('пустой запрос возвращает ВСЕ карточки в порядке снимка и с УЗКИМ набором полей', async () => {
+  test('пустой запрос возвращает ВСЕ карточки в порядке ИНДЕКСА и с УЗКИМ набором полей', async () => {
+    // ПОРЯДОК: та же стоящая находка «Display order», что в Entity Cards —
+    // `findEntities()` сортирует по `id`, code point, не тип→файл. ПРОВЕРЕНО
+    // ЗАПУСКОМ (review finding 1): `bhima` (`entities/characters/warrior-4.yaml`)
+    // — единственная карточка фикстуры, у которой `id` не совпадает с именем
+    // файла — идёт ВТОРОЙ, сразу после `arjuna`, а не последней, как было бы
+    // при сортировке по имени файла. Без неё это утверждение проходило бы для
+    // ОБЕИХ реализаций одинаково, что и было найдено ревью.
+    // ОТСУТСТВУЮЩИЕ ПОЛЯ: `NarrativeEntity.epithets`/`summary`/`arc` ABSENT,
+    // когда карточка их не объявляет (не `''`/`[]`, как у легаси-снимка) —
+    // после `JSON.stringify` ключ с `undefined` пропадает целиком, так что
+    // ABSENT здесь означает "ключа нет вовсе", а не "ключ есть и пуст".
     const all = await parse('{}');
     expectSemantic(
       all,
       [
-        { kind: 'character', id: 'arjuna', label: 'Arjuna', aliases: [], epithets: [], summary: '', arc: '' },
+        { kind: 'character', id: 'arjuna', label: 'Arjuna', aliases: [], epithets: ABSENT, summary: ABSENT, arc: ABSENT },
+        { kind: 'character', id: 'bhima', label: 'Bhima', aliases: [], epithets: ABSENT, summary: ABSENT, arc: ABSENT },
+        { kind: 'term', id: 'dharma', label: 'Dharma', aliases: [], epithets: ABSENT, summary: ABSENT, arc: ABSENT },
+        { kind: 'artifact', id: 'gandiva', label: 'Gandiva', aliases: [], epithets: ABSENT, summary: ABSENT, arc: ABSENT },
         {
           kind: 'character',
           id: 'krishna',
@@ -831,17 +1034,17 @@ describe('WP-9b базовая линия — manuscript_find_entities', () => {
           summary: 'Charioteer of [[char:arjuna|Arjuna]].',
           arc: 'From charioteer to teacher.'
         },
-        { kind: 'character', id: 'orphan-hero', label: 'Orphan Hero', aliases: [], epithets: [], summary: '', arc: '' },
-        { kind: 'term', id: 'dharma', label: 'Dharma', aliases: [], epithets: [], summary: '', arc: '' },
-        { kind: 'artifact', id: 'gandiva', label: 'Gandiva', aliases: [], epithets: [], summary: '', arc: '' }
+        { kind: 'character', id: 'orphan-hero', label: 'Orphan Hero', aliases: [], epithets: ABSENT, summary: ABSENT, arc: ABSENT }
       ],
       'ответ на пустой запрос'
     );
+    const krishna = all.find((entity: any) => entity.id === 'krishna');
     // Выдача НАМЕРЕННО уже карточки: ни backstory, ни notes, ни speechPatterns,
-    // ни path/uri наружу не идут. Исчезновение этой границы — изменение контракта.
+    // ни path/uri/sourcePath наружу не идут. Исчезновение этой границы —
+    // изменение контракта.
     expectSemantic(
-      all[1],
-      { backstory: ABSENT, notes: ABSENT, speechPatterns: ABSENT, path: ABSENT, uri: ABSENT },
+      krishna,
+      { backstory: ABSENT, notes: ABSENT, speechPatterns: ABSENT, path: ABSENT, uri: ABSENT, sourcePath: ABSENT },
       'поля, которых в ответе быть не должно'
     );
   });
@@ -855,9 +1058,11 @@ describe('WP-9b базовая линия — manuscript_find_entities', () => {
   });
 
   test('kind фильтрует по ТОЧНОМУ id типа, а не по виду тега', async () => {
+    // ПРАВКА, ПРИЧИНА — НОВАЯ ФИКСТУРА (review finding 1): `bhima` — тоже
+    // character, id-порядок ставит её ВТОРОЙ.
     expectSemantic(
       (await parse('{"kind":"character"}')).map((entity: any) => entity.id),
-      ['arjuna', 'krishna', 'orphan-hero']
+      ['arjuna', 'bhima', 'krishna', 'orphan-hero']
     );
     // `char` — ВИД ТЕГА, а не id типа; фильтр по нему не находит ничего.
     expectSemantic(await parse('{"kind":"char"}'), []);
@@ -961,6 +1166,11 @@ function makeDoctor(overrides: DoctorOverrides = {}): {
   doctor.obsidianPlugin = { getStatus: async () => { throw new Error('backend unavailable'); } };
   doctor.transcriptSets = { list: async () => [] };
   doctor.audioConversion = { doctor: async () => undefined };
+  // TASK-022 WP-7: `loadEntityTypes`/`collectExistingEntityCards` now delegate
+  // to `NarrativeKnowledgeService` (tech_spec TECH_SPEC WP-7 §1) instead of
+  // scanning `entities/**` themselves. One fixture service, shared across every
+  // root `gather()` is called with in this describe block (lazy per-root).
+  doctor.knowledge = buildFixtureKnowledgeService();
 
   const originalObsidian = doctor.gatherObsidianPluginInput.bind(doctor);
   doctor.gatherObsidianPluginInput = async (rootUri: string) => {
@@ -1013,9 +1223,25 @@ describe('WP-9b базовая линия — Book Doctor (набор наход
   });
 
   test('ведро 1: осиротевшая карточка найдена, а bare-форменная — НЕ осиротевшая', () => {
+    // ПРАВКА, ПРИЧИНА — НОВАЯ ФИКСТУРА, А НЕ ИЗМЕНИВШЕЕСЯ ПОВЕДЕНИЕ (review
+    // finding 1). `bhima` (`entities/characters/warrior-4.yaml`) намеренно НЕ
+    // упомянута ни в одной главе — та же роль, что у `orphan-hero`, добавлена
+    // только чтобы `id` расходился с именем файла для утверждения порядка
+    // Entity Cards. `entityCardOrphanFindings` перебирает карточки в порядке
+    // `collectExistingEntityCards()`, то есть в id-порядке индекса, поэтому
+    // `bhima` (id между `arjuna` и `dharma`) идёт ПЕРЕД `orphan-hero`. Путь в
+    // находке — `entities/characters/bhima.yaml`, СИНТЕЗИРОВАННЫЙ из `kind`+`id`
+    // (`entityCardPath`, `book-doctor.ts`), а НЕ реальный путь на диске
+    // (`warrior-4.yaml`) — это тот же «id delta», который
+    // `collectExistingEntityCards`'s doc comment называет «recorded rather than
+    // hidden», просто впервые НАБЛЮДАЕМЫЙ здесь, а не только заявленный в
+    // комментарии.
     expectSemantic(
       byCode(report.findings, 'entity-card-orphan').map(finding => finding.params),
-      [['Character', 'orphan-hero', 'entities/characters/orphan-hero.yaml']],
+      [
+        ['Character', 'bhima', 'entities/characters/bhima.yaml'],
+        ['Character', 'orphan-hero', 'entities/characters/orphan-hero.yaml']
+      ],
       'осиротевшие карточки'
     );
     // Регрессия TASK-013 U-B: `gandiva` упомянут ТОЛЬКО как `[[gandiva]]`
@@ -1073,7 +1299,13 @@ describe('WP-9b базовая линия — Book Doctor (набор наход
         'ai/prompts',
         '.prompts',
         '.prompts/skills',
-        '.prompts/skills/style-guide'
+        '.prompts/skills/style-guide',
+        // ПРАВКА WP-7, ПРИЧИНА — НОВАЯ ЗАПИСЬ СКАФФОЛДА, А НЕ ИЗМЕНИВШЕЕСЯ
+        // ПОВЕДЕНИЕ (tech_spec TECH_SPEC WP-7 §6). `book-scaffold.ts` теперь
+        // ссылается на `narrative-memory-query` (пакет `narrative-knowledge`
+        // уже нёс путь и содержимое файла — записи в скаффолде не было).
+        // `recommended`, НЕ new-book-only — как `style-guide` рядом.
+        '.prompts/skills/narrative-memory-query'
         // `proofreading`, `sources/audio`, `transcription` в списке ОТСУТСТВУЮТ,
         // хотя на диске их нет: это NEW_BOOK_ONLY-записи, подавляемые входом
         // `contentHasMarkdown` (см. отдельный тест ниже).
@@ -1087,7 +1319,13 @@ describe('WP-9b базовая линия — Book Doctor (набор наход
     // И то же для файлов: `sources/citations.yaml` на диске есть -> предложения нет.
     const files = byCode(report.fixes, 'create-file').map(fix => fix.path);
     expect(files).not.toContain('sources/citations.yaml');
-    expectSemantic(files, ['ai/prompts/custom-modes.yaml', '.prompts/skills/style-guide/SKILL.md'], 'создаваемые файлы');
+    expectSemantic(
+      files,
+      // ПРАВКА WP-7 (та же причина, что у folders выше): вторая новая запись
+      // скаффолда — `.prompts/skills/narrative-memory-query/SKILL.md`.
+      ['ai/prompts/custom-modes.yaml', '.prompts/skills/style-guide/SKILL.md', '.prompts/skills/narrative-memory-query/SKILL.md'],
+      'создаваемые файлы'
+    );
   });
 
   test('ведро 2 (3) contentHasMarkdown: НОВОКНИЖНЫЕ записи не навязываются заведённой книге', () => {
@@ -1272,6 +1510,11 @@ describe('WP-9b базовая линия — Book Doctor (набор наход
         'create-folder', 'create-folder', 'create-folder',
         // .prompts/skills/style-guide/SKILL.md
         'create-file',
+        // ПРАВКА WP-7, ПРИЧИНА — НОВАЯ ЗАПИСЬ СКАФФОЛДА (tech_spec TECH_SPEC
+        // WP-7 §6, тот же повод, что у списков folders/files выше):
+        // .prompts/skills/narrative-memory-query (folder), затем .../SKILL.md.
+        'create-folder',
+        'create-file',
         'create-missing-chapter',
         'manifest-append',
         // ПРАВКА WP-7, ПРИЧИНА — НОВАЯ ФИКСТУРА, А НЕ ИЗМЕНИВШЕЕСЯ ПОВЕДЕНИЕ.
@@ -1293,6 +1536,9 @@ describe('WP-9b базовая линия — Book Doctor (набор наход
         'metadata-author-blank',
         'citations-parse-error',
         'excerpts-parse-error',
+        // ПРАВКА, ПРИЧИНА — НОВАЯ ФИКСТУРА (review finding 1): ВТОРАЯ осиротевшая
+        // карточка, `bhima` (см. «ведро 1: осиротевшая карточка найдена» выше).
+        'entity-card-orphan',
         'entity-card-orphan',
         'entity-tag-unknown-kind',
         'entity-type-problem',

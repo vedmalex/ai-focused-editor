@@ -27,18 +27,30 @@
 
 import type {
   EntityQuery,
+  IndexedDocument,
   MentionQuery,
   NarrativeEntity,
   NarrativeMention,
   NarrativeRelation,
   RelationQuery
 } from './graph';
+import type { EffectiveEntityType, EntityTypeProblem } from './entity-type-registry';
 import type { IndexState } from './index-state';
 import type { Envelope } from './narrative-envelope';
 import type { NarrativeContextOptions, NarrativeDocumentContext } from './narrative-context';
 import type { NarrativeRebuildReport } from './narrative-index-session';
 import type { NarrativeUpdateReport } from './narrative-index-update';
 import type { ConfigureResult, NarrativeMemoryConfigPatch } from './narrative-memory-configure';
+
+/**
+ * One document, as a consumer outside this package may see it (TASK-022 WP-7).
+ *
+ * `docId`/`generation` ARE NOT HERE, on purpose: `IndexedDocument` (the store's
+ * own row shape, `graph/narrative-index-store.ts`) says explicitly that both
+ * are internal and appear in no RPC result. This type is that same row with
+ * exactly those two fields removed — nothing else narrows, nothing renames.
+ */
+export type NarrativeDocumentSummary = Omit<IndexedDocument, 'docId' | 'generation'>;
 
 /** DI symbol of the service. Bound to the node implementation on the backend
  *  and to the RPC proxy on the frontend. */
@@ -75,6 +87,32 @@ export interface NarrativeKnowledgeService {
   findEntities(rootUri: string, query?: EntityQuery): Promise<Envelope<NarrativeEntity[]>>;
   getMentions(rootUri: string, query?: MentionQuery): Promise<Envelope<NarrativeMention[]>>;
   getRelations(rootUri: string, query?: RelationQuery): Promise<Envelope<NarrativeRelation[]>>;
+
+  /**
+   * Every document the index holds for `rootUri`, code point ascending by
+   * `relPath` (TASK-022 WP-7).
+   *
+   * Added for consumers that need a whole-workspace document listing without
+   * paying for a rebuild — the timeline a narrative map draws, in particular,
+   * which needs chapter titles and manifest order independent of any single
+   * entity or relation. `docId`/`generation` are stripped at this boundary
+   * (see {@link NarrativeDocumentSummary}); nothing else about the row changes.
+   */
+  listDocuments(rootUri: string): Promise<Envelope<NarrativeDocumentSummary[]>>;
+
+  /**
+   * The effective entity-type registry and its validation problems, read
+   * WITHOUT a rebuild (TASK-022 WP-7, tech_spec TECH_SPEC WP-7 §2).
+   *
+   * Before this method the ONLY way to see `EntityTypeProblem[]` was
+   * `rebuild()`'s report — a full, write-guarded pass. Both migrated
+   * consumers that need the registry (Entity Cards' thin adapter, Book
+   * Doctor) need it cheaply and often, so this method reads `entities/types.yaml`
+   * the same way extraction does, with no effect on the store.
+   */
+  getEntityTypeRegistry(
+    rootUri: string
+  ): Promise<Envelope<{ types: EffectiveEntityType[]; problems: EntityTypeProblem[] }>>;
 
   /**
    * Everything the index can say about one passage (tech_spec ОВ-2).

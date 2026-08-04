@@ -3,16 +3,18 @@ import { nls } from '@theia/core/lib/common/nls';
 import type { ToolProvider, ToolRequest } from '@theia/ai-core';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import URI from '@theia/core/lib/common/uri';
+import {
+  NarrativeKnowledgeService,
+  type NarrativeKnowledgeService as NarrativeKnowledgeServiceType
+} from '@ai-focused-editor/narrative-knowledge';
 import type {
   ManuscriptNode,
-  NarrativeEntityService as NarrativeEntityServiceType,
   ManuscriptWorkspaceService as ManuscriptWorkspaceServiceType
 } from '../common';
 import {
   diagramSpecToSkeleton,
   entityTypeById,
-  ManuscriptWorkspaceService,
-  NarrativeEntityService
+  ManuscriptWorkspaceService
 } from '../common';
 import {
   createSemanticEntityId,
@@ -181,12 +183,30 @@ async function confirmWrite(
  * Calling): entity lookup and chapter access, referenced from the agent's
  * prompt template via ~{tool_id}.
  */
+/**
+ * TASK-022 WP-7 (UR-007): migrated onto `NarrativeKnowledgeService` directly —
+ * per tech_spec TECH_SPEC WP-7 §1 this tool may NOT be a thin adapter over the
+ * legacy `NarrativeEntityService`/`LegacyNarrativeEntity` bridge.
+ *
+ * MATCHING SEMANTICS ARE KEPT, NOT `EntityQuery.namePrefix`'S (§3 of the same
+ * decision). `EntityQuery.namePrefix` is a case-insensitive PREFIX over `name`
+ * + `aliases` only; this tool's baseline (`narrative-consumer-baseline.test.ts`,
+ * "manuscript_find_entities") pins a case-insensitive SUBSTRING over
+ * `id`+`label`+`aliases`+`epithets` — an epithet match in particular that
+ * `namePrefix` cannot express at all. So `findEntities(rootUri, {})` is called
+ * UNFILTERED and the old substring filter runs here, client-side, exactly as
+ * it did against `entities.getSnapshot()` before this migration — only the
+ * data source moved.
+ */
 @injectable()
 export class ManuscriptFindEntitiesTool implements ToolProvider {
   static readonly ID = 'manuscript_find_entities';
 
-  @inject(NarrativeEntityService)
-  protected readonly entities!: NarrativeEntityServiceType;
+  @inject(NarrativeKnowledgeService)
+  protected readonly knowledge!: NarrativeKnowledgeServiceType;
+
+  @inject(ManuscriptWorkspaceService)
+  protected readonly workspace!: ManuscriptWorkspaceServiceType;
 
   getTool(): ToolRequest {
     return {
@@ -214,11 +234,15 @@ export class ManuscriptFindEntitiesTool implements ToolProvider {
       },
       handler: async (argString: string) => {
         const args = this.parseArgs(argString);
-        const snapshot = await this.entities.getSnapshot();
+        const root = await resolveWorkspaceRoot(this.workspace);
+        if (!root) {
+          return JSON.stringify([]);
+        }
+        const envelope = await this.knowledge.findEntities(root.toString());
         const query = (args.query ?? '').toLowerCase();
         const kind = (args.kind ?? '').toLowerCase();
-        const matches = snapshot.entities.filter(entity => {
-          if (kind && entity.kind !== kind) {
+        const matches = envelope.data.filter(entity => {
+          if (kind && entity.type !== kind) {
             return false;
           }
           if (!query) {
@@ -226,16 +250,19 @@ export class ManuscriptFindEntitiesTool implements ToolProvider {
           }
           const haystack = [
             entity.id,
-            entity.label,
+            entity.name,
             ...entity.aliases,
             ...(entity.epithets ?? [])
           ].join('\n').toLowerCase();
           return haystack.includes(query);
         });
         return JSON.stringify(matches.map(entity => ({
-          kind: entity.kind,
+          // Wire contract keys are `kind`/`label` — the tool's OWN JSON shape,
+          // unrelated to `LegacyNarrativeEntity` (that bridge is reserved for
+          // the frozen thin-adapter list, tech_spec TECH_SPEC WP-7 §1).
+          kind: entity.type,
           id: entity.id,
-          label: entity.label,
+          label: entity.name,
           aliases: entity.aliases,
           epithets: entity.epithets,
           summary: entity.summary,

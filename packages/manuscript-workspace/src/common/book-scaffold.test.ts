@@ -46,6 +46,15 @@ const EXPECTED_PATHS = [
   '.prompts/skills',
   '.prompts/skills/style-guide',
   '.prompts/skills/style-guide/SKILL.md',
+  // ПРАВКА WP-7 (TASK-022, tech_spec TECH_SPEC WP-7 §6), ПРИЧИНА — НОВАЯ
+  // ЗАПИСЬ СКАФФОЛДА, А НЕ ИЗМЕНИВШЕЕСЯ ПОВЕДЕНИЕ ОСТАЛЬНЫХ. `@ai-focused-editor/narrative-knowledge`
+  // уже нёс путь и содержимое `narrative-memory-query`'s `SKILL.md`
+  // (`NARRATIVE_MEMORY_QUERY_SKILL_PATH`/`narrativeMemoryQuerySkillFile()`),
+  // но ни одна запись `book-scaffold.ts` на него не ссылалась — WP-6 не смогла
+  // добавить её из-за этих же двух списков; Book Doctor migrating in WP-7 was
+  // the first pass to touch them again.
+  '.prompts/skills/narrative-memory-query',
+  '.prompts/skills/narrative-memory-query/SKILL.md',
   'proofreading',
   'sources/audio',
   'transcription'
@@ -147,6 +156,9 @@ describe('bookScaffoldEntries — kind/level/seed invariants', () => {
       '.prompts/skills',
       '.prompts/skills/style-guide',
       '.prompts/skills/style-guide/SKILL.md',
+      // ПРАВКА WP-7 — см. причину у `EXPECTED_PATHS` выше.
+      '.prompts/skills/narrative-memory-query',
+      '.prompts/skills/narrative-memory-query/SKILL.md',
       'proofreading',
       'sources/audio',
       'transcription'
