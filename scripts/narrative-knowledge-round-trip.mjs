@@ -204,6 +204,127 @@ export async function assertNarrativeKnowledgeRebuildReady(triggerRebuild, targe
 }
 
 // ---------------------------------------------------------------------------
+// TASK-022 #46 follow-up — the `applyDiagnostics()` three-envelope precondition
+// is really satisfiable in a live application, not just typed.
+// ---------------------------------------------------------------------------
+//
+// `narrative-memory-contribution.ts`'s `applyDiagnostics()` (added in 7b89325)
+// only publishes Problems markers when THREE envelopes —
+// `getMentions({brokenOnly:true})`, `getRelations({brokenOnly:true})`, and
+// `getDuplicateEntities()` — all report `state === 'ready'` AND the SAME
+// `generation`. If they don't, the pass is silently abandoned: no markers, no
+// error, nothing on screen. That file says of itself that no `bun` lane can
+// instantiate it at all, and `getDuplicateEntities` had never crossed the real
+// RPC boundary before this — the 14 unit tests added alongside it exercise only
+// the pure marker builders, never the service. So the precondition that gates
+// every diagnostic this package publishes — including the mentions category
+// that worked before 7b89325 — had NEVER been observed against a live backend.
+//
+// This closes that gap by driving the same three calls through the same DI
+// container walk `rebuildRoundTripReaderScript` already uses for
+// `NarrativeKnowledgeService`, AFTER the rebuild above has reached `ready` (so
+// the index is populated and the three reads have something real to agree on).
+
+/**
+ * Renderer-side reader: resolve the workspace root and `NarrativeKnowledgeService`
+ * exactly as {@link rebuildRoundTripReaderScript} does, then call the same three
+ * read methods `applyDiagnostics()` calls before it will publish anything.
+ */
+export function diagnosticsEnvelopesReaderScript() {
+  return `(async () => {
+    const container = window.theia && window.theia.container;
+    if (!container) { return { ok: false, error: 'the Theia container is not available' }; }
+    const findKey = (label) => {
+      for (const [candidate] of container._bindingDictionary._map.entries()) {
+        const candidateLabel = candidate && (candidate.description || candidate.name);
+        if (candidateLabel === label) { return candidate; }
+      }
+      return undefined;
+    };
+    try {
+      const workspaceServiceKey = findKey('WorkspaceService');
+      if (!workspaceServiceKey) { return { ok: false, error: 'WorkspaceService is not bound in this container' }; }
+      const workspaceService = container.get(workspaceServiceKey);
+      await workspaceService.ready;
+      const roots = workspaceService.tryGetRoots();
+      const root = (roots && roots[0]) || (await workspaceService.roots)[0];
+      const rootUri = root && root.resource ? root.resource.toString() : undefined;
+      if (!rootUri) { return { ok: false, error: 'no workspace root is open' }; }
+
+      const serviceKey = findKey('NarrativeKnowledgeService');
+      if (!serviceKey) { return { ok: false, error: 'NarrativeKnowledgeService is not bound in this container' }; }
+      const service = container.get(serviceKey);
+
+      const [mentions, relations, duplicates] = await Promise.all([
+        service.getMentions(rootUri, { brokenOnly: true }),
+        service.getRelations(rootUri, { brokenOnly: true }),
+        service.getDuplicateEntities(rootUri)
+      ]);
+      return { ok: true, rootUri, mentions, relations, duplicates };
+    } catch (error) {
+      return { ok: false, error: String((error && error.message) || error) };
+    }
+  })()`;
+}
+
+/**
+ * Assert the EXACT precondition `applyDiagnostics()` requires before it will
+ * publish any diagnostics: all three envelopes `ready`, and `relations` and
+ * `duplicates` reporting the SAME `generation` as `mentions` — the same anchor
+ * comparison the product code itself makes.
+ *
+ * THIS IS A CHECK, NOT A TUNED-TO-PASS ASSERTION. If the three envelopes
+ * disagree in a live run, that is a real product defect (every diagnostic this
+ * package publishes silently stops appearing), and this function reports it by
+ * NAMING which envelope failed and what `generation` each one carried — not by
+ * relaxing the condition until it goes green.
+ */
+export async function assertNarrativeKnowledgeDiagnosticsEnvelopesAgree(readEnvelopes, target) {
+  const result = await readEnvelopes();
+  if (!result || !result.ok) {
+    throw new Error(
+      `[${target}] could not read the narrative-knowledge diagnostics envelopes: ` +
+      `${result ? result.error : 'nothing returned'}`
+    );
+  }
+
+  const { mentions, relations, duplicates } = result;
+  const named = [
+    ['getMentions({brokenOnly:true})', mentions],
+    ['getRelations({brokenOnly:true})', relations],
+    ['getDuplicateEntities', duplicates]
+  ];
+  const summary = named
+    .map(([name, env]) => `${name}: state=${env?.state?.state} generation=${env?.state?.generation}`)
+    .join(' | ');
+
+  const notReady = named.filter(([, env]) => env?.state?.state !== 'ready');
+  if (notReady.length > 0) {
+    throw new Error(
+      `[${target}] narrative-knowledge applyDiagnostics() precondition FAILED — not all three envelopes are ` +
+      `'ready': ${notReady.map(([name]) => name).join(', ')}. Envelopes: ${summary}. ` +
+      'applyDiagnostics() would silently abandon this pass and publish NOTHING.'
+    );
+  }
+
+  // Mirrors applyDiagnostics()'s own comparison: mentions is the anchor, and
+  // relations/duplicates are checked against ITS generation.
+  const anchorGeneration = mentions.state.generation;
+  const mismatched = named.filter(([, env]) => env.state.generation !== anchorGeneration);
+  if (mismatched.length > 0) {
+    throw new Error(
+      `[${target}] narrative-knowledge applyDiagnostics() precondition FAILED — generations disagree ` +
+      `(anchor is getMentions({brokenOnly:true}) at generation ${anchorGeneration}): ` +
+      `${mismatched.map(([name, env]) => `${name}=${env.state.generation}`).join(', ')}. Envelopes: ${summary}. ` +
+      'applyDiagnostics() would silently abandon this pass and publish NOTHING, including the mentions category ' +
+      "that worked before 7b89325."
+    );
+  }
+
+  console.log(`PASS [${target}] narrative-knowledge diagnostics envelopes agree: ${summary}`);
+}
+
+// ---------------------------------------------------------------------------
 // TASK-022 WP-6 — the four read-only AI tools are really REGISTERED
 // ---------------------------------------------------------------------------
 

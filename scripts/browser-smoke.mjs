@@ -10,7 +10,9 @@ import {
   assertNarrativeToolsRegistered,
   toolRegistryReaderScript,
   assertNarrativeKnowledgeRebuildReady,
-  rebuildRoundTripReaderScript
+  rebuildRoundTripReaderScript,
+  assertNarrativeKnowledgeDiagnosticsEnvelopesAgree,
+  diagnosticsEnvelopesReaderScript
 } from './narrative-knowledge-round-trip.mjs';
 
 const repoRoot = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
@@ -140,6 +142,17 @@ try {
   // (the probe above only ever observes `absent`/`not-built`).
   await assertNarrativeKnowledgeRebuildReady(
     () => page.evaluate(rebuildRoundTripReaderScript()),
+    'browser'
+  );
+
+  // TASK-022 #46 follow-up: NOW that the index is `ready` and populated, prove
+  // the exact three-envelope precondition `applyDiagnostics()` requires before
+  // it will publish anything — `getMentions`/`getRelations`/`getDuplicateEntities`
+  // all `ready`, all the SAME `generation`. Never observed against a live
+  // backend before this: no `bun` lane can instantiate the contribution, and
+  // `getDuplicateEntities` never crossed the real RPC boundary in the unit tests.
+  await assertNarrativeKnowledgeDiagnosticsEnvelopesAgree(
+    () => page.evaluate(diagnosticsEnvelopesReaderScript()),
     'browser'
   );
 

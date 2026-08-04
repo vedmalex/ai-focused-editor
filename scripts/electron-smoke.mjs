@@ -14,7 +14,9 @@ import {
   toolRegistryReaderScript,
   probeReaderScript,
   assertNarrativeKnowledgeRebuildReady,
-  rebuildRoundTripReaderScript
+  rebuildRoundTripReaderScript,
+  assertNarrativeKnowledgeDiagnosticsEnvelopesAgree,
+  diagnosticsEnvelopesReaderScript
 } from './narrative-knowledge-round-trip.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -213,6 +215,21 @@ try {
   try {
     await assertNarrativeKnowledgeRebuildReady(
       () => window.evaluate(rebuildRoundTripReaderScript()),
+      'electron'
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+
+  // TASK-022 #46 follow-up: NOW that the index is `ready` and populated, prove
+  // the exact three-envelope precondition `applyDiagnostics()` requires before
+  // it will publish anything — `getMentions`/`getRelations`/`getDuplicateEntities`
+  // all `ready`, all the SAME `generation`. Same shared assertion as the browser
+  // smoke, driven through the same DI container walk `rebuildRoundTripReaderScript`
+  // already uses for the same service.
+  try {
+    await assertNarrativeKnowledgeDiagnosticsEnvelopesAgree(
+      () => window.evaluate(diagnosticsEnvelopesReaderScript()),
       'electron'
     );
   } catch (error) {
