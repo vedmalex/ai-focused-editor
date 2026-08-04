@@ -99,7 +99,13 @@ export type NarrativeIndexStoreLogRecord =
   /** The compare-and-set lost: someone else advanced the generation. */
   | { event: 'foreign-writer-detected'; databaseFile: string; expected: number; found: number }
   /** A rebuild was refused because a live foreign lock owns the file. */
-  | { event: 'rebuild-refused'; reason: 'foreign-writer'; databaseFile: string };
+  | { event: 'rebuild-refused'; reason: 'foreign-writer'; databaseFile: string }
+  /** A step-down from a foreign writer's lock was REVERSED: the neighbour's
+   *  row was gone or stale, so this instance took the writer role back on its
+   *  own — the recovery `narrative-memory-contribution.ts`'s tooltip promises
+   *  ("the lock expires, no action needed") and that the store previously did
+   *  not perform (ISS-357). */
+  | { event: 'writer-reclaimed'; databaseFile: string };
 
 export type NarrativeIndexStoreLogger = (record: NarrativeIndexStoreLogRecord) => void;
 
@@ -331,6 +337,7 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
   private readonly now: () => number;
   private readonly bootId: string;
   private readonly lockStaleAfterMs: number;
+  private readonly heartbeatIntervalMs: number;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
   private generation = 0;
@@ -338,6 +345,12 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
   private corrupted = false;
   private foreignWriter = false;
   private closed = false;
+  /**
+   * When {@link tryReclaimWriterRole} last attempted the EXPENSIVE half of a
+   * reclaim (opening a second connection for write). `undefined` means never
+   * — so the very first attempt after stepping down is never throttled.
+   */
+  private lastReclaimAttemptAt: number | undefined;
 
   constructor(options: SqliteNarrativeIndexStoreOptions) {
     this.databaseFile = resolvePath(options.databaseFile);
@@ -346,13 +359,13 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
     this.now = options.now ?? (() => Date.now());
     this.bootId = options.bootId ?? randomUUID();
     this.lockStaleAfterMs = options.lockStaleAfterMs ?? WRITER_LOCK_STALE_AFTER_MS;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? WRITER_HEARTBEAT_INTERVAL_MS;
 
     this.db = this.openOrRebuild();
     this.claimWriterLock();
 
-    const interval = options.heartbeatIntervalMs ?? WRITER_HEARTBEAT_INTERVAL_MS;
-    if (interval > 0 && !this.readOnly) {
-      this.heartbeatTimer = setInterval(() => this.heartbeat(), interval);
+    if (this.heartbeatIntervalMs > 0 && !this.readOnly) {
+      this.heartbeatTimer = setInterval(() => this.heartbeat(), this.heartbeatIntervalMs);
       // Never keep the backend alive for a heartbeat.
       this.heartbeatTimer.unref?.();
     }
@@ -575,7 +588,19 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
 
   // ---- lifecycle --------------------------------------------------------
 
+  /**
+   * ISS-357: the read-only step-down caused by a foreign writer is
+   * REVERSIBLE, because its cause — another live process — is temporary by
+   * nature. `lifecycle()` is the path that feeds the status bar's 5s poll
+   * ({@link NARRATIVE_MEMORY_POLL_INTERVAL_MS} in
+   * `narrative-memory-contribution.ts`) and every read RPC's envelope
+   * (`narrative-index-session.ts`'s `state()`), so trying the reclaim here —
+   * rather than only from an explicit user action — is what makes the yellow
+   * status bar clear itself with "nothing to do", exactly as the tooltip
+   * promises.
+   */
   lifecycle(): NarrativeIndexStoreLifecycle {
+    this.tryReclaimWriterRole();
     return {
       generation: this.generation,
       readOnly: this.readOnly,
@@ -630,20 +655,155 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
   resetForRebuild(): void {
     this.assertOpen();
     // Checked AT CALL TIME, never from a cached state: the lock may have
-    // expired while a human was looking at the status bar.
-    if (isRebuildBlockedByForeignWriter(this.databaseFile, { now: this.now(), bootId: this.bootId })) {
+    // expired while a human was looking at the status bar. `staleAfterMs` is
+    // passed through explicitly so this live check uses the SAME liveness
+    // window this instance was configured with, rather than silently falling
+    // back to the module default when a test (or a future caller) injects a
+    // shorter one.
+    if (
+      isRebuildBlockedByForeignWriter(this.databaseFile, {
+        now: this.now(),
+        bootId: this.bootId,
+        staleAfterMs: this.lockStaleAfterMs
+      })
+    ) {
       this.log({ event: 'rebuild-refused', reason: 'foreign-writer', databaseFile: this.databaseFile });
       throw new NarrativeIndexStoreError(
         'rebuild-refused',
         'the narrative index is owned by another live process; rebuilding would delete its work'
       );
     }
+    // ISS-357: the check above just proved the lock is free or stale — do not
+    // throw the very next line over a `readOnly` flag that same fact makes
+    // stale. Try to reclaim the writer role before consulting it.
+    this.tryReclaimWriterRole();
     if (this.readOnly) {
       throw new NarrativeIndexStoreError('read-only', 'this narrative index instance may not write');
     }
     this.db.close();
     this.db = this.buildFresh('absent');
     this.claimWriterLock();
+  }
+
+  /**
+   * Try to take the writer role back after having stepped down to read-only
+   * because a foreign lock was live at the time (ISS-357).
+   *
+   * WHY THIS IS SAFE TO CALL FROM A STATUS POLL. The neighbour's lock is
+   * DISTINGUISHED BY IDENTITY, not merely absence-of-conflict:
+   *   - a row that does not exist, or a row that is foreign AND older than
+   *     {@link lockStaleAfterMs} → reclaimable, exactly the two cases the
+   *     bug report requires (a polite close deletes the row; a crash leaves
+   *     it there with a heartbeat that stops moving);
+   *   - a row that is foreign and fresh → left alone, full stop — this is the
+   *     one guarantee the whole mechanism exists for;
+   *   - a row that is OUR OWN → also left alone. This is deliberately
+   *     out of scope: it is the state `transaction()`'s compare-and-set
+   *     leaves behind after this SAME instance lost a race with another
+   *     writer that ignored the lock. Auto-healing that case here would
+   *     silently undo the safety net the CAS exists to provide (two writers
+   *     both believing themselves ready), so it is left to a fresh instance,
+   *     not this method.
+   *
+   * COST. The identity check above is one indexed `SELECT` against the
+   * connection this instance already has open — cheap enough to run on every
+   * poll and every read RPC (both reach here through `lifecycle()`). Only
+   * when that check finds the lock reclaimable does this method do anything
+   * expensive (open a second connection, `BEGIN IMMEDIATE`), and that
+   * expensive half is throttled to at most once per
+   * {@link heartbeatIntervalMs} via `lastReclaimAttemptAt` — otherwise a
+   * writable open that keeps failing (e.g. a read-only mount) would attempt
+   * to reopen the file on every single poll.
+   *
+   * RACE BETWEEN TWO RECLAIMERS. Both may see the row as reclaimable from
+   * the cheap check. Only one can hold `BEGIN IMMEDIATE` on the file at a
+   * time, so they serialise there; the LOSER's transaction re-runs the same
+   * identity check with a fresh read and finds the winner's row, then rolls
+   * back and leaves its OWN connection completely untouched — no half-open
+   * write handle, still reading through the same connection it had before
+   * calling this method.
+   */
+  private tryReclaimWriterRole(): void {
+    if (!this.foreignWriter || this.closed) {
+      return;
+    }
+    const checkedAt = this.now();
+    if (!isLockRowReclaimable(this.db, this.bootId, checkedAt, this.lockStaleAfterMs)) {
+      return;
+    }
+    // A SEPARATE read of the clock for the throttle decision (rather than
+    // reusing `checkedAt`) marks the moment this instance actually COMMITS to
+    // the expensive half — the gap between the two is real: the row was
+    // reclaimable a moment ago, but nothing stops another instance's claim
+    // landing in between, which is exactly what the in-transaction re-check
+    // below exists to catch.
+    const attemptStartedAt = this.now();
+    if (
+      this.lastReclaimAttemptAt !== undefined &&
+      attemptStartedAt - this.lastReclaimAttemptAt < this.heartbeatIntervalMs
+    ) {
+      return;
+    }
+    this.lastReclaimAttemptAt = attemptStartedAt;
+
+    // Open a SECOND, independent connection and claim there FIRST — the
+    // connection currently serving reads is not touched until the claim is
+    // durably committed, so a failure at any point below (a read-only mount,
+    // a lost race) leaves this instance exactly as it was.
+    let writableDb: DatabaseSync;
+    try {
+      writableDb = this.openFile({ readOnly: false });
+    } catch {
+      return;
+    }
+    try {
+      writableDb.exec('BEGIN IMMEDIATE');
+    } catch {
+      writableDb.close();
+      return;
+    }
+    const claimedAt = this.now();
+    try {
+      // Re-checked INSIDE the transaction, against a connection that just
+      // took SQLite's write lock: this is what makes two racing reclaimers
+      // resolve to exactly one winner rather than both writing their own
+      // identity in turn.
+      if (!isLockRowReclaimable(writableDb, this.bootId, claimedAt, this.lockStaleAfterMs)) {
+        writableDb.exec('ROLLBACK');
+        writableDb.close();
+        return;
+      }
+      const insert = writableDb.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
+      insert.run(META_KEYS.writerPid, String(process.pid));
+      insert.run(META_KEYS.writerBootId, this.bootId);
+      insert.run(META_KEYS.writerStartedAt, String(claimedAt));
+      insert.run(META_KEYS.writerHeartbeatAt, String(claimedAt));
+      writableDb.exec('COMMIT');
+    } catch {
+      try {
+        writableDb.exec('ROLLBACK');
+      } catch {
+        // Not inside a transaction any more (COMMIT/ROLLBACK already ran, or
+        // never started) — nothing left to undo.
+      }
+      writableDb.close();
+      return;
+    }
+
+    // The claim is durable. Only now retire the old connection, and re-read
+    // `generation` from the file rather than keep what this instance last
+    // believed: the neighbour may have written while this instance was a
+    // read-only observer.
+    this.db.close();
+    this.db = writableDb;
+    this.generation = Number(this.readMeta(this.db, META_KEYS.generation) ?? '0');
+    this.readOnly = false;
+    this.foreignWriter = false;
+    this.log({ event: 'writer-reclaimed', databaseFile: this.databaseFile });
+    if (this.heartbeatTimer === undefined && this.heartbeatIntervalMs > 0) {
+      this.heartbeatTimer = setInterval(() => this.heartbeat(), this.heartbeatIntervalMs);
+      this.heartbeatTimer.unref?.();
+    }
   }
 
   close(): void {
@@ -1309,6 +1469,48 @@ function readForeignWriterLock(
     return undefined;
   }
   return { bootId, pid: Number(read(META_KEYS.writerPid) ?? '0'), heartbeatAt };
+}
+
+/**
+ * Whether the writer-lock row in `meta` may be CLAIMED by `ownBootId` right
+ * now (ISS-357's {@link SqliteNarrativeIndexStore.tryReclaimWriterRole}).
+ *
+ * DELIBERATELY NOT THE SAME QUESTION AS {@link readForeignWriterLock}. That
+ * function answers "is someone else alive right now" and returns `undefined`
+ * both when the row is genuinely absent AND when the row is this caller's
+ * OWN — the two are indistinguishable to a function that only needs to know
+ * whether to step down. A caller deciding whether to RECLAIM the role cannot
+ * conflate those: a row that already belongs to us is what `transaction()`'s
+ * lost compare-and-set leaves behind, and treating that as "free to claim"
+ * would silently reclaim a role this same instance was just told to give up
+ * — the exact failure the CAS exists to detect. So this function returns
+ * `true` only for "no row at all" and "someone else's row, and stale"; a
+ * live foreign row and this instance's OWN row both answer `false`.
+ *
+ * EXPORTED for its own direct test coverage of all four states — the same
+ * reason {@link isRebuildBlockedByForeignWriter} is exported rather than
+ * private: the state this decides is reached from inside a `BEGIN IMMEDIATE`
+ * transaction as well as from a plain read, and asserting all four outcomes
+ * against the transaction path specifically would need a second live
+ * process for no better reason than restating what this function alone
+ * already determines.
+ */
+export function isLockRowReclaimable(db: DatabaseSync, ownBootId: string, now: number, staleAfterMs: number): boolean {
+  const read = (key: string): string | undefined => {
+    const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value?: string } | undefined;
+    return row?.value;
+  };
+  const bootId = read(META_KEYS.writerBootId);
+  if (bootId === undefined) {
+    return true;
+  }
+  if (bootId === ownBootId) {
+    // Our own row: a CAS-loss step-down, not a foreign lock. Out of scope —
+    // see the doc comment above.
+    return false;
+  }
+  const heartbeatAt = Number(read(META_KEYS.writerHeartbeatAt) ?? '0');
+  return !Number.isFinite(heartbeatAt) || now - heartbeatAt > staleAfterMs;
 }
 
 /**
