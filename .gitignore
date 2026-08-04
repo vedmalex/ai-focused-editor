@@ -36,3 +36,4 @@ packages/manuscript-workspace/docs-inventory.generated.json
 # derived from content/**; committing it invites "edited the .md, forgot to
 # regenerate" drift.
 packages/manuscript-workspace/src/browser/docs/docs-content.generated.ts
+.test-reports/

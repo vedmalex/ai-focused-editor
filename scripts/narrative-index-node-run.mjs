@@ -34,7 +34,7 @@
 //                                       spawn one explicitly.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -57,6 +57,18 @@ if (!existsSync(builtEntry)) {
   process.exit(1);
 }
 
+// JUnit alongside the human-readable run, never instead of it (REQ-014).
+//
+// `node --test` accepts reporters in pairs, so `spec` keeps going to the
+// terminal while `junit` writes the machine-readable artifact. The XML is what
+// carries PER-CASE durations: a summary line reports only the total, and on this
+// repository that difference was load-bearing — a flake diagnosed as "the tree
+// grew" turned out to be process-spawn cost, and only the per-case times showed
+// it (the suspect case was 0.69 s against a 5000 ms limit while all 43 others sat
+// at ~0.155 s each).
+const junitOut = join(repoRoot, '.test-reports', 'narrative-index.junit.xml');
+mkdirSync(dirname(junitOut), { recursive: true });
+
 const result = spawnSync(
   process.execPath,
   [
@@ -64,6 +76,10 @@ const result = spawnSync(
     '--disable-warning=ExperimentalWarning',
     '--test',
     '--experimental-test-isolation=none',
+    '--test-reporter=spec',
+    '--test-reporter-destination=stdout',
+    '--test-reporter=junit',
+    `--test-reporter-destination=${junitOut}`,
     'packages/narrative-knowledge/test/node/*.test.mts'
   ],
   { cwd: repoRoot, stdio: 'inherit' }
