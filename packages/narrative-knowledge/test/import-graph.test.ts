@@ -24,9 +24,25 @@ import {
 const packageRoot = join(import.meta.dir, '..');
 const sourceRoot = join(packageRoot, 'src');
 
-/** Mirrors the package `tsconfig.json` `exclude` so the check and the compiler
- *  see the same production surface. */
+/**
+ * Mirrors the package `tsconfig.json` `exclude` so the check and the compiler
+ * see the same production surface.
+ *
+ * `.json` COUNTS, and TASK-022 WP-5 is what forced the question. The package's
+ * own ru bundle is imported the way `ai-connect-theia` imports its three —
+ * `import bundle from './ru/narrative-memory.json'`, under `resolveJsonModule`
+ * — and that is a RELATIVE import like any other. Leaving JSON out of the known
+ * set made the edge UNRESOLVABLE, which the "every relative import resolves"
+ * check reported as an invisible hole in the graph. It was right to: an edge
+ * the analyser cannot follow is an edge no prohibition is evaluated over, and
+ * silencing it by exempting `.json` specifiers would have created exactly the
+ * blind spot that check exists to deny. A resource file has no imports of its
+ * own, so admitting it adds a leaf to the graph and nothing else.
+ */
 function isProductionSource(path: string): boolean {
+  if (path.endsWith('.json')) {
+    return true;
+  }
   return path.endsWith('.ts') && !path.endsWith('.test.ts') && !path.endsWith('.d.ts');
 }
 

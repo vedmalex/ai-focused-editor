@@ -24,6 +24,7 @@
  * the backend would be reporting a foreign writer that is itself.
  */
 
+import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +33,7 @@ import type { NarrativeIndexStore } from '../common';
 import { NarrativeMemoryConfigResolver } from './narrative-memory-config-resolver';
 import {
   SqliteNarrativeIndexStore,
+  isRebuildBlockedByForeignWriter,
   type NarrativeIndexStoreLogger,
   type SqliteNarrativeIndexStoreOptions
 } from './sqlite-narrative-index-store';
@@ -54,6 +56,16 @@ interface Entry {
   rootPath: string;
   databaseFile: string;
   store: NarrativeIndexStore;
+  /**
+   * The boot id THIS registry handed that store.
+   *
+   * Recorded rather than left to the store to invent, because the ownership
+   * question of ОВ-4 has to be answerable ABOUT a store from OUTSIDE it — a
+   * lock written by our own instance is not foreign, and without the id here
+   * every check would call it foreign and refuse a rebuild the user is
+   * entitled to.
+   */
+  bootId: string;
 }
 
 /**
@@ -116,18 +128,52 @@ export class NarrativeIndexStoreRegistry {
     }
     const config = this.resolver.resolve(rootPath);
     const databaseFile = this.databaseFileFor(rootPath);
+    // Decided HERE rather than inside the store's constructor default, so the
+    // registry knows which lock rows are its own — see `Entry.bootId`.
+    const bootId = this.options.bootId ?? randomUUID();
     const store = this.createStore({
       databaseFile,
       workspaceRoot: rootPath,
       log: this.options.log,
       now: this.options.now,
-      bootId: this.options.bootId,
+      bootId,
       heartbeatIntervalMs: this.options.heartbeatIntervalMs,
       lockStaleAfterMs: this.options.lockStaleAfterMs
     });
-    this.open.set(rootPath, { rootPath, databaseFile, store });
+    this.open.set(rootPath, { rootPath, databaseFile, store, bootId });
     this.evictBeyond(Math.max(1, config.maxOpenWorkspaces));
     return store;
+  }
+
+  /**
+   * Whether a manual Rebuild of `rootUriOrPath` must be refused RIGHT NOW
+   * because another live process owns the database (tech_spec ОВ-4, ISS-321).
+   *
+   * ASKED OF THE FILE, NOT OF A STORE, and that is the hard case: the user is
+   * most likely to press Rebuild exactly when opening failed and the status bar
+   * shows an error, i.e. when there is no store instance to ask. `existsSync`
+   * on a database that was never created answers "not owned", which is correct
+   * — nothing to protect.
+   *
+   * NOT CACHED. A lock expires 30 seconds after its last heartbeat, and that
+   * can happen while the user is looking at the status bar. Caching would turn
+   * a temporary refusal into a permanent one until something else moved.
+   */
+  rebuildBlockedByForeignWriter(rootUriOrPath: string): boolean {
+    const rootPath = canonicalWorkspaceKey(rootUriOrPath);
+    const entry = this.open.get(rootPath);
+    // With no open store, ANY lock in the file is foreign by definition — a
+    // fresh id can never collide with one already written. With an open store,
+    // its own id is what stops us calling our own lock foreign.
+    const bootId = entry?.bootId ?? this.options.bootId ?? randomUUID();
+    const databaseFile = entry?.databaseFile ?? this.databaseFileFor(rootPath);
+    return isRebuildBlockedByForeignWriter(databaseFile, {
+      now: (this.options.now ?? Date.now)(),
+      bootId,
+      ...(this.options.lockStaleAfterMs !== undefined
+        ? { staleAfterMs: this.options.lockStaleAfterMs }
+        : {})
+    });
   }
 
   /** Whether a root currently has an open store. */

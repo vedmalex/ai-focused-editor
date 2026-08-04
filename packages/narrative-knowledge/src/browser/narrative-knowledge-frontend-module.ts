@@ -1,4 +1,6 @@
 import { ContainerModule } from '@theia/core/shared/inversify';
+import { CommandContribution } from '@theia/core/lib/common/command';
+import { PreferenceContribution } from '@theia/core/lib/common/preferences';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { ServiceConnectionProvider } from '@theia/core/lib/browser/messaging/service-connection-provider';
 import {
@@ -6,26 +8,30 @@ import {
   NarrativeKnowledgeServicePath
 } from '../common';
 import { NarrativeKnowledgeRoundTripProbe } from './narrative-knowledge-round-trip-probe';
+import { NarrativeMemoryContribution } from './narrative-memory-contribution';
+import { NarrativeMemoryPreferenceContribution } from './narrative-memory-preferences';
 
 /**
- * Frontend module (TASK-022 WP-0).
- *
- * Binds the RPC proxy for {@link NarrativeKnowledgeService} and the round-trip
- * probe. Everything else this package will contribute is listed below as an
- * explicit, dated stub rather than left to be discovered: an unlisted
- * contribution point is one a later WP has to rediscover from the plan.
+ * Frontend module (TASK-022 WP-0, completed for the user-facing surfaces by
+ * WP-5).
  *
  * REGISTRATION STUBS — what binds here, and in which WP:
  *
- *   WP-5  CommandContribution        — Rebuild Index, Show Index Status
- *   WP-5  StatusBarContribution      — index state indicator
- *   WP-5  PreferenceContribution     — the `narrativeMemory.*` keys (AD-5)
- *   WP-5  (diagnostics publisher)    — broken references as markers
+ *   WP-5  CommandContribution        — Rebuild Index, Show Index Status  [DONE]
+ *   WP-5  StatusBarContribution      — index state indicator             [DONE]
+ *   WP-5  PreferenceContribution     — the `narrativeMemory.*` keys      [DONE]
+ *   WP-5  (diagnostics publisher)    — broken references as markers      [DONE]
  *   WP-6  ToolProvider               — read-only AI tools over the index
  *
- * None of them is bound yet, on purpose: an empty binding is indistinguishable
- * from a working one at runtime, and this package's gates are meant to fail
- * loudly rather than pass by vacuity.
+ * The status bar, the commands and the diagnostics publisher are ONE class
+ * rather than three. They are not three concerns: all three are functions of
+ * the same two answers (`getIndexStatus` and `getRebuildAvailability`), they
+ * must change together — the plan's table has one row per state with a column
+ * for each surface, not three independent tables — and splitting them would
+ * mean three independent pollers asking the backend the same question three
+ * times and, worse, being able to disagree with each other about the answer.
+ * What IS split out is everything that decides anything: the presentation rule
+ * lives in `src/common`, where it is testable under `bun`.
  */
 export default new ContainerModule(bind => {
   bind(NarrativeKnowledgeService).toDynamicValue(ctx =>
@@ -34,4 +40,10 @@ export default new ContainerModule(bind => {
 
   bind(NarrativeKnowledgeRoundTripProbe).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(NarrativeKnowledgeRoundTripProbe);
+
+  bind(PreferenceContribution).toConstantValue(NarrativeMemoryPreferenceContribution);
+
+  bind(NarrativeMemoryContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(NarrativeMemoryContribution);
+  bind(CommandContribution).toService(NarrativeMemoryContribution);
 });

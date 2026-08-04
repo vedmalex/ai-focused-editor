@@ -1073,17 +1073,28 @@ describe('control numbers on the REAL tree (§F.2/§F.9)', () => {
     inventory = await extract(REPO_ROOT);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test('commands >= 165 and preferences === 22 (§C.2/§C.3)', () => {
+  test('commands >= 165 and preferences === 27 (§C.2/§C.3)', () => {
     expect(inventory.commands.length).toBeGreaterThanOrEqual(165);
-    expect(inventory.preferences).toHaveLength(22);
+    // 22 → 27 in TASK-022 WP-5: the five `narrativeMemory.*` keys of AD-5,
+    // contributed by `packages/narrative-knowledge/src/browser/narrative-memory-preferences.ts`.
+    // The count stays EXACT rather than becoming a floor. Its job is to notice
+    // that the extractor's reach changed, and a floor would notice growth while
+    // staying silent about the failure that actually matters — a schema the
+    // walk stops seeing, which is what `docs:drift` then goes green about.
+    expect(inventory.preferences).toHaveLength(27);
   });
 
-  test('all three packages contribute, and both namespaces are present (П2)', () => {
+  test('all four packages contribute, and both namespaces are present (П2)', () => {
     const packages = new Set(inventory.commands.map(command => command.file.split('/')[1]));
+    // `narrative-knowledge` joined in TASK-022 WP-5. WP-0 put it in
+    // `INVENTORY_SOURCE_ROOTS` ahead of time — a package inherits no
+    // repository-wide gate for free — but it declared no command until now, so
+    // this list held at three while the root was already four.
     expect([...packages].sort()).toEqual([
       'ai-connect-theia',
       'document-preview-theia',
-      'manuscript-workspace'
+      'manuscript-workspace',
+      'narrative-knowledge'
     ]);
     expect(inventory.commands.some(command => command.id.startsWith('ai-connect.'))).toBe(true);
   });

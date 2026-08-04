@@ -16,6 +16,8 @@
     "@ai-focused-editor/semantic-markdown": "workspace:*",
     "@theia/core": "1.73.1",
     "@theia/filesystem": "1.73.1",
+    "@theia/markers": "1.73.1",
+    "@theia/workspace": "1.73.1",
     "ajv": "8.20.0",
     "yaml": "2.9.0"
   },

@@ -1951,7 +1951,13 @@ describe('control numbers on the REAL tree (§1.7, F-D8-5)', () => {
     expect(result.stderr).toBe('');
     expect(result.exitCode).toBe(0);
     expect(Number(metric(result.report, 'Inventory ids \\(commands\\)'))).toBeGreaterThanOrEqual(165);
-    expect(metric(result.report, 'Inventory keys \\(preferences\\)')).toBe('22');
+    // 22 → 27 in TASK-022 WP-5 (the five `narrativeMemory.*` keys of AD-5).
+    expect(metric(result.report, 'Inventory keys \\(preferences\\)')).toBe('27');
+    // AND STILL ZERO UNCOVERED, which is the half of this case that carries
+    // weight: five new keys and two new commands entered the census, and the
+    // reference page shipped in the same work package covers all seven. A
+    // growth in the first number with a growth in this one would be
+    // undocumented surface.
     expect(metric(result.report, 'Uncovered')).toBe('0');
   });
 

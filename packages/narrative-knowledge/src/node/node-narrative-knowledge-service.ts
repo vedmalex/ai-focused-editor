@@ -25,6 +25,7 @@ import {
   type NarrativeRebuildReport,
   type NarrativeRelation,
   type NarrativeUpdateReport,
+  type RebuildAvailability,
   type RelationQuery
 } from '../common';
 import { NARRATIVE_INDEX_SCHEMA_VERSION } from './narrative-index-schema';
@@ -198,6 +199,31 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
       patch,
       rootUri === undefined ? undefined : canonicalWorkspaceKey(rootUri)
     );
+  }
+
+  /**
+   * Whether a manual Rebuild would be refused right now (WP-5, ОВ-4).
+   *
+   * NO STORE IS OPENED TO ANSWER IT. Opening one would be the wrong thing in
+   * the exact situation the question is asked in — the user pressing Rebuild
+   * under an error in the status bar — because opening claims the writer lock,
+   * and claiming a lock is the write we are trying to establish is forbidden.
+   * The registry reads the lock rows out of the file directly.
+   *
+   * A WORKSPACE WITHOUT A MANIFEST ANSWERS "available". Not because a rebuild
+   * would do anything there, but because THIS question is only about ownership;
+   * `absent`/`no-manuscript` is already in `IndexState`, and the frontend hides
+   * both commands on it. Answering "unavailable" here would give one condition
+   * two homes and let them disagree.
+   */
+  async getRebuildAvailability(rootUri: string): Promise<RebuildAvailability> {
+    const rootPath = canonicalWorkspaceKey(rootUri);
+    if (!hasManuscriptManifest(rootPath)) {
+      return { available: true };
+    }
+    return this.registry.rebuildBlockedByForeignWriter(rootPath)
+      ? { available: false, reason: 'foreign-writer' }
+      : { available: true };
   }
 
   /**

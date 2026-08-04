@@ -20,6 +20,13 @@ export * from './index-failure';
 export * from './narrative-memory-config';
 export * from './narrative-knowledge-protocol';
 
+// What the user-facing surfaces SHOW, decided as a pure function of what the
+// index reports (WP-5). Theia-free so every row of the six-state table, the
+// ownership-based Rebuild refusal and the diagnostics rule are assertable in
+// the ordinary `bun` lane rather than behind a DOM bootstrap.
+export * from './narrative-memory-presentation';
+export * from './narrative-memory-preference-contract';
+
 // The schema layer, and the seam to the pre-rename entity shape. Both sit here
 // rather than in `graph/` — one needs `ajv`, the other needs the entity-type
 // registry, and the core may import neither.

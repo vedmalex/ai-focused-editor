@@ -124,4 +124,34 @@ export interface NarrativeKnowledgeService {
    * quietly away from it — the divergence this whole epic exists to remove.
    */
   configure(patch: NarrativeMemoryConfigPatch, rootUri?: string): Promise<ConfigureResult>;
+
+  /**
+   * Whether a manual Rebuild would be refused right now, and why (WP-5, ОВ-4).
+   *
+   * A SEPARATE QUESTION FROM `getIndexStatus()`, ASKED SEPARATELY. tech_spec
+   * ОВ-4 restates the refusal BY OWNERSHIP rather than by state — "Rebuild Index
+   * ОТКЛОНЯЕТСЯ всегда, пока в `meta` виден ЖИВОЙ чужой замок писателя,
+   * НЕЗАВИСИМО от того, какое состояние это породило" — after the state-keyed
+   * formulation contradicted itself once. Folding the answer into `IndexState`
+   * would put the contradiction back, because a `failed` index whose foreign
+   * lock is still beating and a `failed` index whose lock expired are the SAME
+   * state and must get different answers. So does a `stale/foreign-writer`
+   * index whose owner has since exited.
+   *
+   * ANSWERED AT CALL TIME, from the database file, never from a cached state:
+   * the lock may have expired while a human was reading the status bar. The
+   * frontend uses it for the enabled/disabled affordance and asks again before
+   * actually rebuilding; the authoritative refusal still lives in the store.
+   */
+  getRebuildAvailability(rootUri: string): Promise<RebuildAvailability>;
+}
+
+/** Why a manual Rebuild is refused. Ownership is the only reason there is —
+ *  every other cause of "you cannot rebuild now" is visible in `IndexState`. */
+export type RebuildRefusalReason = 'foreign-writer';
+
+export interface RebuildAvailability {
+  readonly available: boolean;
+  /** Present exactly when `available` is false. */
+  readonly reason?: RebuildRefusalReason;
 }
