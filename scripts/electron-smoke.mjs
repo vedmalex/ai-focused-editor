@@ -12,7 +12,9 @@ import {
   assertNarrativeKnowledgeRoundTrip,
   assertNarrativeToolsRegistered,
   toolRegistryReaderScript,
-  probeReaderScript
+  probeReaderScript,
+  assertNarrativeKnowledgeRebuildReady,
+  rebuildRoundTripReaderScript
 } from './narrative-knowledge-round-trip.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -203,6 +205,20 @@ try {
     fail(error instanceof Error ? error.message : String(error));
   }
 
+  // TASK-022 ISS-354 AC-6: prove the index actually BUILDS and POPULATES in
+  // this target too — the round-trip probe above only ever observes
+  // `absent`/`not-built`. Same shared function as the browser smoke, driven
+  // through the same DI container walk `toolRegistryReaderScript` already
+  // uses for a different binding.
+  try {
+    await assertNarrativeKnowledgeRebuildReady(
+      () => window.evaluate(rebuildRoundTripReaderScript()),
+      'electron'
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+
   // TASK-022 WP-3 / R-2: does `node:sqlite` actually work in the Electron main
   // process, and WHICH SQLite is under it?
   //
@@ -216,33 +232,65 @@ try {
   // disagree about which SQLite Electron carries (3.51.2 vs a locally measured
   // 3.50.4 on Node 24.9), and a probe that only asserted would leave that
   // disagreement unresolved for whoever reads the output next.
+  // `await import('node:sqlite')` DOES NOT WORK HERE: Playwright's
+  // `ElectronApplication.evaluate` compiles and runs the callback through a
+  // context that has no `importModuleDynamically` hook wired up, so a dynamic
+  // `import()` fails with `TypeError: A dynamic import callback was not
+  // specified` before the probe body ever runs — a Playwright bridge
+  // limitation, not a statement about the product. `require()` has the same
+  // problem from a different angle: this evaluate context is not inside any
+  // particular CommonJS module, so a bare `require` identifier, `globalThis
+  // .require` and `process.mainModule.require` were all empirically tried and
+  // NONE were reachable here. `process.getBuiltinModule(id)` (Node >= 22.3,
+  // and Electron 39 carries Node 22.22.1) sidesteps both: it is a plain method
+  // on the `process` global — already proven reachable two lines below via
+  // `process.versions` — and needs neither a module scope nor an import hook.
   try {
     const engine = await app.evaluate(async () => {
-      const sqlite = await import('node:sqlite');
-      const db = new sqlite.DatabaseSync(':memory:');
-      db.exec('CREATE TABLE probe (n INTEGER) STRICT');
-      let strictWorks = false;
-      try {
-        db.exec("INSERT INTO probe (n) VALUES ('not-a-number')");
-      } catch {
-        strictWorks = true;
-      }
-      db.close();
-      return {
+      const versions = {
         node: process.versions.node,
         sqlite: process.versions.sqlite,
-        electron: process.versions.electron,
-        strictWorks
+        electron: process.versions.electron
       };
+
+      if (typeof process.getBuiltinModule !== 'function') {
+        return {
+          ...versions,
+          resolvedVia: null,
+          strictWorks: false,
+          probeError: 'process.getBuiltinModule is not available in this Node/Electron build'
+        };
+      }
+
+      try {
+        const sqlite = process.getBuiltinModule('node:sqlite');
+        const db = new sqlite.DatabaseSync(':memory:');
+        db.exec('CREATE TABLE probe (n INTEGER) STRICT');
+        let strictWorks = false;
+        try {
+          db.exec("INSERT INTO probe (n) VALUES ('not-a-number')");
+        } catch {
+          strictWorks = true;
+        }
+        db.close();
+        return { ...versions, resolvedVia: 'process.getBuiltinModule', strictWorks };
+      } catch (error) {
+        return {
+          ...versions,
+          resolvedVia: 'process.getBuiltinModule',
+          strictWorks: false,
+          probeError: String((error && error.message) || error)
+        };
+      }
     });
     console.log(
       `[narrative-index] electron main: electron=${engine.electron} node=${engine.node} ` +
-        `sqlite=${engine.sqlite}`
+        `sqlite=${engine.sqlite} require-via=${engine.resolvedVia}`
     );
     if (!engine.strictWorks) {
-      fail('node:sqlite in the electron main process does not enforce STRICT tables');
+      fail(`node:sqlite in the electron main process does not enforce STRICT tables${engine.probeError ? ` (${engine.probeError})` : ''}`);
     } else {
-      pass(`node:sqlite works in electron main (sqlite ${engine.sqlite}, STRICT enforced)`);
+      pass(`node:sqlite works in electron main (sqlite ${engine.sqlite}, STRICT enforced, require via ${engine.resolvedVia})`);
     }
   } catch (error) {
     fail(`node:sqlite unusable in the electron main process: ${error instanceof Error ? error.message : String(error)}`);

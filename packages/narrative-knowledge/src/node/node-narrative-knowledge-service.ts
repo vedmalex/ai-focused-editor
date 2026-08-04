@@ -12,6 +12,7 @@ import {
   extractManifestChapters,
   resolveEffectiveEntityTypes,
   type ConfigureResult,
+  type DuplicateEntityRecord,
   type EffectiveEntityType,
   type EntityQuery,
   type EntityTypeProblem,
@@ -147,6 +148,16 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
 
   async getRelations(rootUri: string, query?: RelationQuery): Promise<Envelope<NarrativeRelation[]>> {
     return this.session(rootUri).getRelations(query);
+  }
+
+  /**
+   * Every duplicated entity id, read directly from the store (TASK-022 WP-5,
+   * ISS-353). See the protocol doc — this is a plain delegation, exactly like
+   * {@link getMentions} and {@link getRelations} above it, and no cheaper
+   * shape is possible: the session already holds the method.
+   */
+  async getDuplicateEntities(rootUri: string): Promise<Envelope<DuplicateEntityRecord[]>> {
+    return this.session(rootUri).getDuplicateEntities();
   }
 
   /**

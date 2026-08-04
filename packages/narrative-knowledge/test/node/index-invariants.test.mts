@@ -299,6 +299,96 @@ test('invariant 1 — equivalence also holds on a workspace with NO manifest', a
 });
 
 // ===========================================================================
+// AC-1 (issue #46) / ISS-352 — ORDER STABILITY, not merely composition
+// ===========================================================================
+
+test(
+  'AC-1 (ISS-352) — findEntities() and getMentions() come back in the SAME ORDER from two ' +
+    'independent full rebuilds of the same tree',
+  () => {
+    // `fingerprint()` above (:115-159) is the comparator every invariant-1 test
+    // uses, and for THAT purpose it deliberately re-sorts `entities`/`mentions`
+    // by `JSON.stringify` before diffing (:116-117) — invariant 1 is about an
+    // incremental sequence reaching the same CONTENT as a rebuild, and a
+    // derived-layer fold is allowed to land its rows in a different order than
+    // a fresh walk without being wrong. That is the right call for invariant 1,
+    // but it means NOTHING at this level pins the ORDER a caller of
+    // `findEntities()` / `getMentions()` actually observes — and AC-1
+    // (issue #46) is a claim about exactly that: "a stable list of entities and
+    // mentions" is a claim about reproducible ORDER, not merely reproducible
+    // membership. An implementation whose full rebuild returns the same set of
+    // entities/mentions in a DIFFERENT order every time — e.g. iterating a
+    // `Map` built from something less deterministic than a sorted walk — would
+    // pass every `fingerprint()`-based assertion in this file while failing
+    // AC-1 outright, and nothing here would say so.
+    //
+    // NO FIELD NEEDS STRIPPING HERE, unlike `fingerprint()`'s `documents`
+    // section (whose exclusion of `docId`/`generation` is explained at
+    // :105-113). `docId` and `generation` are real columns on `document` /
+    // real fields on `IndexedDocument` (`toDocument`,
+    // `sqlite-narrative-index-store.ts:239-248`), but `findEntities()` and
+    // `getMentions()` return the PORT-LEVEL `NarrativeEntity` / `NarrativeMention`
+    // shapes (`graph/narrative-entity.ts`, `graph/narrative-mention.ts`), and
+    // NEITHER type carries a rowid or a generation counter at all: `toMention`
+    // (`sqlite-narrative-index-store.ts:290-296`) assembles the object field by
+    // field and never assigns `doc_id`/`mention_id` onto it, and an entity's
+    // stored payload is `JSON.stringify` of the very `NarrativeEntity` object
+    // the caller constructed — which has no such field either. So a bare
+    // `assert.deepEqual` on the array, ORDER INCLUDED, is the correct
+    // comparison here, not an approximation forced to ignore technical noise:
+    // there is no technical field left for two independent rebuilds to
+    // legitimately disagree on.
+    const first = fullRebuildOf('ac1-order-a', hardManuscript());
+    const second = fullRebuildOf('ac1-order-b', hardManuscript());
+
+    assert.deepEqual(
+      first.findEntities(),
+      second.findEntities(),
+      'AC-1: findEntities() must return entities in the SAME order on every rebuild of an identical tree. ' +
+        'Order is a structural guarantee today (`ORDER BY e.entity_id`, sqlite-narrative-index-store.ts) ' +
+        'but was never pinned by a test at this level — a pass discriminating only on composition would let ' +
+        'an order-unstable rebuild through'
+    );
+    assert.deepEqual(
+      first.getMentions(),
+      second.getMentions(),
+      'AC-1: getMentions() must return mentions in the SAME order on every rebuild of an identical tree ' +
+        '(`ORDER BY m.mention_id`, sqlite-narrative-index-store.ts), for the same reason'
+    );
+  }
+);
+
+test(
+  'AC-1 order-stability REJECTING — the assertion above really pins order, not merely re-deriving ' +
+    'fingerprint()',
+  () => {
+    // The smallest possible order-only perturbation that fingerprint() would
+    // NOT catch: the same two rebuilds, but one side's arrays are reversed
+    // before comparison. If the assertion above could not tell reversed from
+    // forward, it would be dead weight duplicating fingerprint() rather than
+    // adding the order guarantee it claims to add.
+    const first = fullRebuildOf('ac1-order-r-a', hardManuscript());
+    const second = fullRebuildOf('ac1-order-r-b', hardManuscript());
+
+    assert.ok(
+      first.findEntities().length > 1,
+      'the fixture must carry more than one entity for a reversal to be observable at all'
+    );
+    assert.notDeepEqual(
+      first.findEntities(),
+      [...second.findEntities()].reverse(),
+      'a comparator blind to order would make the AC-1 assertion pass against a reversed list, which is ' +
+        'exactly the failure mode a same-composition-different-order implementation would produce'
+    );
+    assert.notDeepEqual(
+      first.getMentions(),
+      [...second.getMentions()].reverse(),
+      'same check for mentions'
+    );
+  }
+);
+
+// ===========================================================================
 // Invariant 2 — LOCALITY (tech_spec ОВ-1 tooth A5)
 // ===========================================================================
 
@@ -655,6 +745,76 @@ test('invariant 4 FINDING (characterizing) — `sourceUri` does NOT follow a pai
       'by the next rebuild rather than permanent'
   );
 });
+
+/**
+ * CHARACTERIZING, NOT ASSERTING — the same discipline as the `sourceUri`
+ * finding just above, and the same failure shape seen from a second angle
+ * (ISS-355).
+ *
+ * `entity.evidence` is a SECOND denormalized pointer at the card's own path,
+ * independent of `sourcePath` — set once at extraction time to
+ * `wholeFileEvidence(document.path)` (`entity-card-extraction.ts:328`) and
+ * never touched again after that. `moveDocument` repairs `sourcePath` inside
+ * the same JSON payload (`sqlite-narrative-index-store.ts:1084-1092`,
+ * `in-memory-narrative-index-store.ts:515-519`), but in BOTH adapters the loop
+ * that walks the moved document's owned entities only ever writes
+ * `entity.sourcePath = to` — `entity.evidence.path` is left exactly as it was.
+ *
+ * AC-3 (issue #46) does not reach this: its letter is about MENTION and
+ * RELATION evidence, and `NarrativeEntity.evidence` is optional by design for
+ * an unrelated reason (`graph/narrative-entity.ts:48-53` — the legacy
+ * transport shape cannot carry one). And every real navigation consumer reads
+ * the REPAIRED `sourcePath`, never `evidence.path`, so this is not user-visible
+ * today. But nothing at the STORE level pinned the staleness before this test
+ * — if that workaround is ever removed, only one browser-level test would
+ * catch it. This is pinned rather than fixed, exactly as ISS-355 records it,
+ * so the next reader does not mistake the tooth for an endorsement: if a
+ * future work package repairs this, THIS ASSERTION is the one that must be
+ * updated — deliberately.
+ */
+test(
+  'ISS-355 FINDING (characterizing) — entity.evidence.path does NOT follow a paired move; sourcePath does',
+  async () => {
+    const built = await build('iss355-evidence');
+    const before = must(built.store.getEntity('arjuna'), 'arjuna before the move');
+    const originalEvidencePath = must(
+      before.evidence,
+      'arjuna must carry whole-file evidence from card extraction'
+    ).path;
+    assert.equal(
+      originalEvidencePath,
+      ARJUNA_CARD,
+      'the evidence starts out pointing at the card\'s own path, same as sourcePath'
+    );
+
+    built.source.move(ARJUNA_CARD, 'entities/characters/renamed-hero.yaml');
+    await built.maintainer.applyChanges([
+      { path: ARJUNA_CARD, type: 'deleted' },
+      { path: 'entities/characters/renamed-hero.yaml', type: 'added' }
+    ]);
+
+    const after = must(built.store.getEntity('arjuna'), 'arjuna after the move');
+    assert.equal(
+      after.sourcePath,
+      'entities/characters/renamed-hero.yaml',
+      'sourcePath IS repaired by the move — this is the field every real navigation consumer reads'
+    );
+    assert.equal(
+      must(after.evidence, 'arjuna after the move still carries evidence').path,
+      ARJUNA_CARD,
+      'CURRENT BEHAVIOUR, pinned so it cannot change unnoticed (ISS-355): evidence.path still names the ' +
+        'OLD path while sourcePath names the new one. Not a letter-of-AC-3 violation — entity.evidence is ' +
+        'optional and AC-3 is about mention/relation evidence — but a real staleness at the store level ' +
+        'that today only real navigation code (which reads sourcePath, not evidence.path) papers over'
+    );
+    assert.notEqual(
+      after.evidence?.path,
+      after.sourcePath,
+      'the two denormalized copies of the same fact genuinely disagree after a move — what makes this a ' +
+        'finding and not a restatement of the assertion above'
+    );
+  }
+);
 
 // ===========================================================================
 // The fixture itself has to be what it claims to be

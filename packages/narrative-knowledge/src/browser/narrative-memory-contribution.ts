@@ -27,7 +27,10 @@ import {
 import { NarrativeMemoryCommands } from './narrative-memory-commands';
 import {
   NARRATIVE_MEMORY_MARKER_OWNER,
-  narrativeMarkerBatches
+  mergeMarkerBatches,
+  narrativeDuplicateEntityMarkerBatches,
+  narrativeMarkerBatches,
+  narrativeRelationMarkerBatches
 } from './narrative-memory-markers';
 import {
   indexStatusReportLines,
@@ -252,19 +255,40 @@ export class NarrativeMemoryContribution
     if (this.publishedGeneration === state.generation) {
       return;
     }
-    let broken;
+    let mentions;
+    let relations;
+    let duplicates;
     try {
-      broken = await this.service.getMentions(rootUri, { brokenOnly: true });
+      [mentions, relations, duplicates] = await Promise.all([
+        this.service.getMentions(rootUri, { brokenOnly: true }),
+        this.service.getRelations(rootUri, { brokenOnly: true }),
+        this.service.getDuplicateEntities(rootUri)
+      ]);
     } catch {
       return;
     }
-    // The state may have moved between the two calls. Publishing markers
-    // computed under one generation while claiming another would make the cache
-    // key a lie, so the envelope's own state decides.
-    if (broken.state.state !== 'ready') {
+    // THREE ENVELOPES NOW, NOT ONE, and all three have to agree before
+    // anything is published. The state may have moved between any of the
+    // three calls — publishing markers computed under one generation while
+    // claiming another would make the cache key a lie, exactly the reasoning
+    // that already governs `publishedGeneration` for a single envelope, now
+    // applied to all three: every envelope must report `ready`, AND all three
+    // must report the SAME generation, or this pass is abandoned and the next
+    // poll tries again.
+    if (
+      mentions.state.state !== 'ready' ||
+      relations.state.state !== 'ready' ||
+      duplicates.state.state !== 'ready' ||
+      relations.state.generation !== mentions.state.generation ||
+      duplicates.state.generation !== mentions.state.generation
+    ) {
       return;
     }
-    const batches = narrativeMarkerBatches(rootUri, broken.data);
+    const batches = mergeMarkerBatches(
+      narrativeMarkerBatches(rootUri, mentions.data),
+      narrativeRelationMarkerBatches(rootUri, relations.data),
+      narrativeDuplicateEntityMarkerBatches(rootUri, duplicates.data)
+    );
     const nextUris = new Set(batches.map(batch => batch.uri));
     for (const uri of this.publishedUris) {
       if (!nextUris.has(uri)) {
@@ -282,7 +306,7 @@ export class NarrativeMemoryContribution
     for (const uri of nextUris) {
       this.publishedUris.add(uri);
     }
-    this.publishedGeneration = broken.state.generation;
+    this.publishedGeneration = mentions.state.generation;
   }
 
   protected withdrawMarkers(): void {

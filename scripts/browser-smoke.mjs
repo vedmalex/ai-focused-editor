@@ -8,7 +8,9 @@ import {
   assertNarrativeKnowledgeRoundTrip,
   probeReaderScript,
   assertNarrativeToolsRegistered,
-  toolRegistryReaderScript
+  toolRegistryReaderScript,
+  assertNarrativeKnowledgeRebuildReady,
+  rebuildRoundTripReaderScript
 } from './narrative-knowledge-round-trip.mjs';
 
 const repoRoot = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
@@ -130,6 +132,14 @@ try {
   // instantiate, so this is the only place a missing binding is visible at all.
   await assertNarrativeToolsRegistered(
     () => page.evaluate(toolRegistryReaderScript()),
+    'browser'
+  );
+
+  // TASK-022 ISS-354 AC-6: prove the index actually BUILDS and POPULATES in
+  // this target, not only that the RPC channel answers with the right shape
+  // (the probe above only ever observes `absent`/`not-built`).
+  await assertNarrativeKnowledgeRebuildReady(
+    () => page.evaluate(rebuildRoundTripReaderScript()),
     'browser'
   );
 

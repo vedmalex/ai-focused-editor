@@ -26,6 +26,7 @@
  */
 
 import type {
+  DuplicateEntityRecord,
   EntityQuery,
   IndexedDocument,
   MentionQuery,
@@ -88,6 +89,24 @@ export interface NarrativeKnowledgeService {
   findEntities(rootUri: string, query?: EntityQuery): Promise<Envelope<NarrativeEntity[]>>;
   getMentions(rootUri: string, query?: MentionQuery): Promise<Envelope<NarrativeMention[]>>;
   getRelations(rootUri: string, query?: RelationQuery): Promise<Envelope<NarrativeRelation[]>>;
+
+  /**
+   * Every entity id currently claimed by more than one card (TASK-022 WP-5,
+   * ISS-353).
+   *
+   * READ DIRECTLY FROM THE STORE, NOT FROM A REBUILD REPORT — and cheaper than
+   * the pattern this mirrors ({@link getEntityTypeRegistry}), which re-reads a
+   * YAML file from disk. `NarrativeIndexSession.getDuplicateEntities` already
+   * exists and answers from the index the way {@link getMentions} and
+   * {@link getRelations} do; before this method the ONLY way to see a
+   * `DuplicateEntityRecord` was `rebuild()`'s report, which collapses every
+   * collision into a bare count (`NarrativeRebuildReport.duplicateEntities`) —
+   * enough to say a collision exists, never enough to say WHERE. This method is
+   * a one-line delegation to the session, added so a consumer that needs the
+   * per-collision detail is not forced to pay for a full, write-guarded rebuild
+   * to get it.
+   */
+  getDuplicateEntities(rootUri: string): Promise<Envelope<DuplicateEntityRecord[]>>;
 
   /**
    * Every document the index holds for `rootUri`, code point ascending by

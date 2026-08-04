@@ -65,9 +65,25 @@ Run the level that matches your change; a PR states which levels ran.
 | Unit tests | `bun test packages` | always |
 | Typecheck | `bunx tsc -p packages/manuscript-workspace --noEmit` | always |
 | Build | `bun run build` | always |
-| Full verify | `bun run verify:full` | before merging UI/backend changes (adds electron + browser smokes) |
+| Full verify | `bun run verify` | before merging any change (builds both targets, runs the browser AND electron smokes) |
 | UI flow pack | `bun run test:ui:flows` | changes touching menus, tree, editors, i18n |
 | Excalidraw smoke | `node scripts/excalidraw-smoke.mjs` | canvas/diagram changes |
+
+`verify` builds `apps/electron` and runs `test:electron` (the Electron runtime
+smoke) unconditionally — it is not a separate opt-in tier. `verify:full` is
+kept only as a backward-compatible alias (`= verify`); prefer `verify`.
+
+This changed with TASK-022/ISS-354: `build:electron` was already the
+expensive part of `verify` (minutes), and `test:electron` is comparatively
+cheap on top of an already-built bundle (~1 minute locally: launch, wait for
+the workbench, run the assertions, close). Making it opt-in bought speed for
+the "always" tier at a real cost — `packages/narrative-knowledge/src/node/
+narrative-knowledge-backend-module.ts` shipped two DI wiring defects that took
+the *entire* backend module down (no RPC, no localization, no index) while
+`verify` stayed green four work packages in a row, because nothing in the
+default tier ever launches the app the wiring defects broke. The electron
+smoke is the only lane that instantiates that `ContainerModule`, so a
+DI-breaking change is invisible without it.
 
 A green agent or CI report is necessary, not sufficient: for UI-visible
 changes, verify the running app (a temporary Playwright probe against

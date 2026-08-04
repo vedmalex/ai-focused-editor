@@ -31,8 +31,8 @@
     "test:electron": "node scripts/electron-smoke.mjs",
     "test:ui": "node scripts/browser-smoke.mjs",
     "test:ui:flows": "bash scripts/ui-flows/run-flow-checks.sh",
-    "verify": "bun run check:control-bytes && bun run build:packages && bun run test && bun run typecheck:narrative-knowledge && bun run typecheck:obsidian && bun run --cwd packages/manuscript-workspace docs:drift && bun run build && bun run build:electron && bun run test:ui",
-    "verify:full": "bun run verify && bun run test:electron",
+    "verify": "bun run check:control-bytes && bun run build:packages && bun run test && bun run typecheck:narrative-knowledge && bun run typecheck:obsidian && bun run --cwd packages/manuscript-workspace docs:drift && bun run build && bun run build:electron && bun run test:ui && bun run test:electron",
+    "verify:full": "bun run verify",
     "watch": "bun run --cwd packages/manuscript-workspace watch"
   },
   "devDependencies": {

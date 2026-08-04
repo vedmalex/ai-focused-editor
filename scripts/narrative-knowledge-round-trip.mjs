@@ -73,6 +73,137 @@ export function probeReaderScript(globalName = NARRATIVE_KNOWLEDGE_PROBE_GLOBAL)
 }
 
 // ---------------------------------------------------------------------------
+// TASK-022 ISS-354 AC-6 — the round-trip must prove a BUILT, POPULATED index,
+// not just that the RPC channel answers with the right shape.
+// ---------------------------------------------------------------------------
+//
+// The start-up probe above only ever observes `absent`/`not-built`: nothing
+// in either smoke run ever asked for a rebuild, so "feature works" was proven
+// only under bare `node` (the package's own tests), never through either
+// runtime target. This closes that gap by driving the SAME RPC service the
+// UI's "Rebuild Index" command drives, through the Theia DI container that is
+// already reachable from both runners (`toolRegistryReaderScript` above does
+// the same container walk for a different binding).
+//
+// examples/sample-book IS the fixture manuscript: it already ships a
+// `manifest.yaml`, chapters and entity cards (see `examples/sample-book/`),
+// so no second fixture is needed — both smokes already point their target at
+// it.
+
+/**
+ * Renderer-side reader: resolve the open workspace root, ask whether a
+ * rebuild is even allowed right now, read the state BEFORE, then rebuild and
+ * return both the before-state and the resulting envelope.
+ *
+ * THE AVAILABILITY CHECK IS NOT OPTIONAL. `rebuild()` REJECTS outright when a
+ * live foreign writer owns the database (protocol: `NarrativeKnowledgeService
+ * .rebuild`), and `verify:full` runs the browser smoke and the electron smoke
+ * back to back against the SAME workspace directory. Without this check a
+ * leftover lock turns into an opaque RPC rejection that reads as a product
+ * failure instead of the environment issue it is.
+ *
+ * THE BEFORE-STATE IS READ TOO, on purpose: `examples/sample-book/.theia/` is
+ * gitignored, not deleted between runs, so a leftover database can already
+ * report `ready` before this script ever calls `rebuild()`. A check that only
+ * asserted the AFTER state would be green even if the rebuild call were
+ * silently skipped. Comparing `generation` before vs after is the part that
+ * actually proves THIS call did the work — see
+ * {@link assertNarrativeKnowledgeRebuildReady}.
+ */
+export function rebuildRoundTripReaderScript() {
+  return `(async () => {
+    const container = window.theia && window.theia.container;
+    if (!container) { return { ok: false, error: 'the Theia container is not available' }; }
+    const findKey = (label) => {
+      for (const [candidate] of container._bindingDictionary._map.entries()) {
+        const candidateLabel = candidate && (candidate.description || candidate.name);
+        if (candidateLabel === label) { return candidate; }
+      }
+      return undefined;
+    };
+    try {
+      const workspaceServiceKey = findKey('WorkspaceService');
+      if (!workspaceServiceKey) { return { ok: false, error: 'WorkspaceService is not bound in this container' }; }
+      const workspaceService = container.get(workspaceServiceKey);
+      await workspaceService.ready;
+      const roots = workspaceService.tryGetRoots();
+      const root = (roots && roots[0]) || (await workspaceService.roots)[0];
+      const rootUri = root && root.resource ? root.resource.toString() : undefined;
+      if (!rootUri) { return { ok: false, error: 'no workspace root is open' }; }
+
+      const serviceKey = findKey('NarrativeKnowledgeService');
+      if (!serviceKey) { return { ok: false, error: 'NarrativeKnowledgeService is not bound in this container' }; }
+      const service = container.get(serviceKey);
+
+      const availability = await service.getRebuildAvailability(rootUri);
+      if (!availability.available) {
+        return { ok: false, rootUri, error: \`rebuild refused (reason: \${availability.reason})\` };
+      }
+
+      const before = await service.getIndexStatus(rootUri);
+      const envelope = await service.rebuild(rootUri);
+      return { ok: true, rootUri, before, envelope };
+    } catch (error) {
+      return { ok: false, error: String((error && error.message) || error) };
+    }
+  })()`;
+}
+
+/**
+ * Assert that a real rebuild ran and produced a populated, `ready` index.
+ *
+ * Three requirements, all necessary because any one alone can be gamed by a
+ * no-op:
+ *   - `state === 'ready'`             — the RPC call completed and committed;
+ *   - `generation` STRICTLY ADVANCED  — this call, not a stale leftover
+ *                                       database, is what produced the state
+ *                                       (see the reader script's doc comment);
+ *   - the report's `documentsIndexed` and `entities` are BOTH `> 0` — the
+ *     fixture manuscript's files were actually read and extracted, not just
+ *     that the RPC round-tripped an empty result.
+ */
+export async function assertNarrativeKnowledgeRebuildReady(triggerRebuild, target) {
+  const result = await triggerRebuild();
+  if (!result || !result.ok) {
+    throw new Error(
+      `[${target}] narrative-knowledge rebuild could not run: ${result ? result.error : 'nothing returned'}`
+    );
+  }
+
+  const { rootUri, before, envelope } = result;
+  const state = envelope?.state;
+  const report = envelope?.data;
+  const beforeGeneration = typeof before?.generation === 'number' ? before.generation : -1;
+
+  if (!state || state.state !== 'ready') {
+    throw new Error(
+      `[${target}] narrative-knowledge rebuild of ${rootUri} did not reach 'ready': ${JSON.stringify(state)}`
+    );
+  }
+  if (!(state.generation > beforeGeneration)) {
+    throw new Error(
+      `[${target}] narrative-knowledge rebuild generation did not advance ` +
+      `(before=${beforeGeneration}, after=${state.generation}) — the rebuild call may not have actually run`
+    );
+  }
+  if (!report || typeof report.documentsIndexed !== 'number' || report.documentsIndexed <= 0) {
+    throw new Error(
+      `[${target}] narrative-knowledge rebuild of ${rootUri} indexed no documents: ${JSON.stringify(report)}`
+    );
+  }
+  if (typeof report.entities !== 'number' || report.entities <= 0) {
+    throw new Error(
+      `[${target}] narrative-knowledge rebuild of ${rootUri} extracted no entities: ${JSON.stringify(report)}`
+    );
+  }
+
+  console.log(
+    `PASS [${target}] narrative-knowledge rebuild reached ready: generation ${beforeGeneration}->${state.generation}, ` +
+    `documents=${report.documentsIndexed} entities=${report.entities} mentions=${report.mentions}`
+  );
+}
+
+// ---------------------------------------------------------------------------
 // TASK-022 WP-6 — the four read-only AI tools are really REGISTERED
 // ---------------------------------------------------------------------------
 

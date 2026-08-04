@@ -277,6 +277,9 @@ export const NARRATIVE_MEMORY_PHRASES: readonly NarrativeMemoryPhrase[] = [
 export const NARRATIVE_MEMORY_TEMPLATED_PHRASES: readonly NarrativeMemoryPhrase[] = [
   phrase('diagnostic-broken-mention', 'No entity named "{0}" is defined in this manuscript.'),
   phrase('diagnostic-broken-mention-whole-file', 'No entity named "{0}" is defined in this manuscript. The reference has no position, so this marker points at the start of the file.'),
+  phrase('diagnostic-broken-relation', 'The "{0}" relation names an entity "{1}" that is not defined in this manuscript.'),
+  phrase('diagnostic-broken-relation-whole-file', 'The "{0}" relation names an entity "{1}" that is not defined in this manuscript. The reference has no position, so this marker points at the start of the file.'),
+  phrase('diagnostic-duplicate-entity', 'Entity id "{0}" is defined by more than one card. The definition in effect is in "{1}". This card\'s definition is not used until the id is made unique.'),
   phrase('configure-rejected', 'Setting "{0}" was refused: {1}'),
   phrase('configure-deferred', 'Setting "{0}" will take effect at the next backend start.')
 ];
