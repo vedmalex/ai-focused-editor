@@ -34,6 +34,7 @@ import type { IndexFailureCode, IndexFailureReason } from './index-failure';
 import { INDEX_FAILURE_CODES, indexFailureLocalizationKey } from './index-failure';
 import type { IndexStaleReason, IndexState } from './index-state';
 import { INDEX_STALE_REASONS } from './index-state';
+import type { NarrativeUpdateReport } from './narrative-index-update';
 
 // ---------------------------------------------------------------------------
 // Localization keys
@@ -141,7 +142,20 @@ export const NARRATIVE_MEMORY_COMMAND_PHRASES: readonly NarrativeMemoryPhrase[] 
   phrase('report-path', 'File'),
   phrase('report-incident', 'Incident id'),
   phrase('report-copy-incident', 'Copy incident id'),
-  phrase('report-rebuild-blocked', 'Rebuild is unavailable: another process owns the index.')
+  phrase('report-rebuild-blocked', 'Rebuild is unavailable: another process owns the index.'),
+
+  // "Check for Changes Now" (TASK-022 UR-036/UR-037/UR-038). The visible-progress
+  // requirement is a THREE-part vocabulary — "checking", then one of the two
+  // ordinary outcomes — plus a FOURTH, independent phrase (arity 1, so it lives
+  // in the templated list below) for unreadable files, and its own two refusal
+  // phrases so a foreign lock reads as "could not check", never as the
+  // Rebuild-specific "would delete its work" (this command never deletes
+  // anything — it only reads, and writes at most an incremental sweep).
+  phrase('check-checking', 'Checking for changes…'),
+  phrase('check-updated', 'Index updated'),
+  phrase('check-no-changes', 'No changes found'),
+  phrase('check-blocked-foreign-writer', 'The narrative index is owned by another process. Changes could not be checked.'),
+  phrase('check-failed', 'Changes could not be checked. Details are in the backend log.')
 ];
 
 /** Command labels and the settings-page descriptions of the five AD-5 keys. */
@@ -149,6 +163,7 @@ export const NARRATIVE_MEMORY_SETTINGS_PHRASES: readonly NarrativeMemoryPhrase[]
   phrase('command-category', 'Narrative Memory'),
   phrase('command-rebuild', 'Rebuild Index'),
   phrase('command-show-status', 'Show Index Status'),
+  phrase('command-check-now', 'Check for Changes Now'),
   phrase('pref-diagnostics-enabled', 'Publish unresolved narrative references as problems. Takes effect immediately.'),
   // The `databasePath` description is REQUIRED to say this (AD-5): the file is
   // already open and re-aiming it at runtime would drop the writer lock.
@@ -281,7 +296,10 @@ export const NARRATIVE_MEMORY_TEMPLATED_PHRASES: readonly NarrativeMemoryPhrase[
   phrase('diagnostic-broken-relation-whole-file', 'The "{0}" relation names an entity "{1}" that is not defined in this manuscript. The reference has no position, so this marker points at the start of the file.'),
   phrase('diagnostic-duplicate-entity', 'Entity id "{0}" is defined by more than one card. The definition in effect is in "{1}". This card\'s definition is not used until the id is made unique.'),
   phrase('configure-rejected', 'Setting "{0}" was refused: {1}'),
-  phrase('configure-deferred', 'Setting "{0}" will take effect at the next backend start.')
+  phrase('configure-deferred', 'Setting "{0}" will take effect at the next backend start.'),
+  // UR-038's fourth outcome. Arity 1 (a count, never a path — see
+  // {@link checkForChangesOutcome}'s own note on why the path stays out).
+  phrase('check-unreadable', 'Checked, but {0} file(s) could not be read')
 ];
 
 // ---------------------------------------------------------------------------
@@ -356,6 +374,15 @@ export interface NarrativeMemoryPresentation {
   readonly statusBar: NarrativeStatusBarPresentation | undefined;
   readonly rebuildCommand: NarrativeCommandPresentation;
   readonly showStatusCommand: NarrativeCommandPresentation;
+  /**
+   * "Check for Changes Now" (UR-036 part 1). UNLIKE {@link rebuildCommand},
+   * ownership never disables it — a sweep that finds nothing to write never
+   * opens a transaction, so it succeeds read-only exactly like every other
+   * read method (protocol doc, `checkForChanges`). It stays offered whenever
+   * `rebuildCommand`/`showStatusCommand` would be: there is no manuscript-less
+   * row where this one alone would make sense.
+   */
+  readonly checkNowCommand: NarrativeCommandPresentation;
   readonly diagnostics: NarrativeDiagnosticsPresentation;
 }
 
@@ -368,6 +395,7 @@ function noManuscript(): NarrativeMemoryPresentation {
     statusBar: undefined,
     rebuildCommand: HIDDEN,
     showStatusCommand: HIDDEN,
+    checkNowCommand: HIDDEN,
     diagnostics: { publishNew: false, retainExisting: false }
   };
 }
@@ -487,6 +515,9 @@ export function narrativeMemoryPresentation(
     statusBar: statusBarFor(state),
     rebuildCommand,
     showStatusCommand: AVAILABLE,
+    // ALWAYS AVAILABLE, INCLUDING UNDER A FOREIGN LOCK — see the field's own
+    // doc. `rebuildBlockedByForeignWriter` deliberately plays NO part here.
+    checkNowCommand: AVAILABLE,
     diagnostics: {
       publishNew: diagnosticsEnabled && state.state === 'ready',
       retainExisting
@@ -539,6 +570,88 @@ export function narrativeIndexStatusReport(
     ...(state.state === 'failed' ? { failure: state.reason } : {}),
     rebuildBlockedByForeignWriter,
     noManuscript: noManuscriptHere
+  };
+}
+
+// ---------------------------------------------------------------------------
+// "Check for Changes Now" (TASK-022 UR-036 part 1, UR-037, UR-038)
+// ---------------------------------------------------------------------------
+
+/**
+ * What one `checkForChanges` pass is reported as, decided PURELY from its
+ * {@link NarrativeUpdateReport} — no widget, no RPC, testable under `bun`.
+ *
+ * TWO INDEPENDENT FACTS, NOT ONE ENUM. UR-038 is explicit that a pass which
+ * both wrote something AND met an unreadable file must show BOTH, "а не
+ * выбирается «более важный»" — folding them into a single tri/four-state enum
+ * would force a caller to pick one branch and lose the other. `resultKind`
+ * answers "did anything change"; `unreadableCount` answers "how much of the
+ * workspace could this pass not even read", and the two combine freely.
+ */
+export interface CheckForChangesOutcome {
+  /**
+   * `'updated'` when the pass wrote anything — including a `mode: 'rebuild'`
+   * escalation, whose own per-document lists are reported empty BY
+   * CONSTRUCTION (`NarrativeIndexMaintainer.asUpdateEnvelope`) even though real
+   * work happened, which is why `mode` is checked FIRST and not inferred from
+   * the empty lists alone.
+   */
+  readonly resultKind: 'updated' | 'no-changes';
+  /**
+   * How many files this pass could not read. `0` means UR-038's fourth phrase
+   * is omitted entirely — it is not shown as "0 files", it is not shown.
+   */
+  readonly unreadableCount: number;
+}
+
+/**
+ * Classify a completed sweep (UR-037's "обновлено" / "изменений не найдено",
+ * UR-038's independent fourth fact).
+ */
+export function checkForChangesOutcome(report: NarrativeUpdateReport): CheckForChangesOutcome {
+  const wroteSomething =
+    report.mode === 'rebuild' ||
+    report.documentsReindexed.length > 0 ||
+    report.documentsRemoved.length > 0 ||
+    report.documentsMoved.length > 0;
+  return {
+    resultKind: wroteSomething ? 'updated' : 'no-changes',
+    unreadableCount: report.unreadableDocuments.length
+  };
+}
+
+/** Which phrase key explains a FAILED `checkForChanges` call (ISS-361). */
+export interface CheckForChangesFailurePresentation {
+  readonly messageKey: string;
+}
+
+/**
+ * Classify a `checkForChanges` call that REJECTED, given a fresh, AT-THE-MOMENT
+ * `getRebuildAvailability` read (ISS-361).
+ *
+ * WHY THE AVAILABILITY CHECK RUNS AFTER THE FAILURE, NOT BEFORE. UR-036 part 1
+ * requires the command to stay callable under a foreign lock — a sweep that
+ * finds nothing to write succeeds read-only, exactly like every other read
+ * method. Gating the CALL itself on `getRebuildAvailability` (the way
+ * `rebuildCommand`'s `isEnabled` gates Rebuild) would refuse that legitimate
+ * read-only success outright, which UR-036 forbids. So the availability read
+ * happens only to EXPLAIN a failure that already occurred, at the moment it
+ * occurred — the same "asked again, at the moment of the call" discipline
+ * `rebuild()`'s own doc comment states, applied one step later because
+ * `checkForChanges` cannot refuse ahead of time the way Rebuild does.
+ *
+ * ОВ-8 keeps `Error.message`/`Error.stack` on the backend side of the RPC
+ * boundary, so the caught error itself carries no distinguishable reason by
+ * the time it reaches a frontend — this is why a SEPARATE call is needed at
+ * all, rather than reading a code off the exception.
+ */
+export function checkForChangesFailurePresentation(
+  availability: { readonly available: boolean }
+): CheckForChangesFailurePresentation {
+  return {
+    messageKey: availability.available
+      ? `${NARRATIVE_MEMORY_NLS_PREFIX}/check-failed`
+      : `${NARRATIVE_MEMORY_NLS_PREFIX}/check-blocked-foreign-writer`
   };
 }
 

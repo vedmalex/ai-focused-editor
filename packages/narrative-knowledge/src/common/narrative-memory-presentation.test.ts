@@ -244,6 +244,26 @@ describe('WP-5 — Rebuild is refused BY OWNERSHIP, not by state (ОВ-4 / ISS-3
   });
 });
 
+describe('WP-5 (UR-036 part 1) — "Check for Changes Now" stays available UNDER a foreign lock, unlike Rebuild', () => {
+  test('a live foreign lock does not disable it — a sweep with nothing to write succeeds read-only', () => {
+    for (const state of [READY, STALE, FAILED, NOT_BUILT]) {
+      expect(show(state, { blocked: true }).checkNowCommand).toEqual({ visible: true, enabled: true });
+    }
+  });
+
+  test('still hidden where there is no manuscript at all, exactly like the other two commands', () => {
+    expect(show(NO_MANUSCRIPT, { blocked: true }).checkNowCommand.visible).toBe(false);
+  });
+
+  test('NOT disabled while the index is rebuilding, unlike Rebuild itself', () => {
+    // `NarrativeIndexMaintainer.sweep()` queues behind whatever pass is
+    // already running (the same guard `rebuildNow()` uses), so a click here is
+    // safe, if redundant, while a rebuild is in flight — no reason to greet it
+    // with a greyed-out command the way Rebuild's OWN `rebuildCommandFor` does.
+    expect(show(REBUILDING, { blocked: false }).checkNowCommand).toEqual({ visible: true, enabled: true });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Show Index Status
 // ---------------------------------------------------------------------------

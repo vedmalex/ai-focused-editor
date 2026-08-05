@@ -187,6 +187,33 @@ export interface NarrativeKnowledgeService {
   updateDocument(uri: string): Promise<Envelope<NarrativeUpdateReport>>;
 
   /**
+   * "Check for Changes Now" (TASK-022 UR-036 part 1, UR-037): a cheap,
+   * ON-DEMAND sweep over the whole workspace, for the reader who wants a
+   * predictable "check now" lever rather than trusting the watcher alone.
+   *
+   * NOT `rebuild()` UNDER A DIFFERENT NAME. `rebuild()` drops the index and
+   * re-extracts every file from nothing; this reuses the SAME `prefiltered`
+   * sweep the fallback timer already runs (`NarrativeIndexMaintainer.sweep`),
+   * which `stat()`s everything and reads only what the `(size, mtime)`
+   * prefilter says might have moved. `rootUri`, not `uri`, because a sweep is
+   * whole-workspace by nature — there is no single document to name.
+   *
+   * MUST STAY CALLABLE UNDER A FOREIGN LOCK. tech_spec ОВ-4 refuses `rebuild()`
+   * outright whenever another live process owns the writer role, because a
+   * rebuild's first act is to drop the store; a sweep that finds nothing to
+   * write never opens a transaction at all (ОВ-4's "пустой проход бесплатен"),
+   * so it succeeds read-only exactly like every other read method here. It
+   * REJECTS only if the sweep actually finds a change and the write is refused
+   * — the same ownership refusal `rebuild()` reports, surfaced here instead of
+   * hidden, because a caller that asked to check and got silence would not
+   * know whether nothing changed or nothing could be written.
+   *
+   * GOES THROUGH THE SAME GUARD as the watcher, `updateDocument` and the
+   * explicit rebuild — one queue, one writer at a time, no exception.
+   */
+  checkForChanges(rootUri: string): Promise<Envelope<NarrativeUpdateReport>>;
+
+  /**
    * Change the live configuration (tech_spec ОВ-9б).
    *
    * RETURNS A RESULT, NEVER `void`. Without it a settings UI can prove it CALLED

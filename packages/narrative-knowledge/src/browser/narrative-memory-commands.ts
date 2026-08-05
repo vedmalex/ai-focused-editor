@@ -2,7 +2,7 @@ import { Command } from '@theia/core/lib/common/command';
 import { NARRATIVE_MEMORY_NLS_PREFIX } from '../common';
 
 /**
- * The two commands of WP-5.
+ * The commands of WP-5, plus "Check for Changes Now" (TASK-022 UR-036/UR-037).
  *
  * THE IDS ARE IN THE `ai-focused-editor.` NAMESPACE, and that is not cosmetic:
  * `extract-feature-inventory.mjs` filters every harvested `id:` literal through
@@ -12,9 +12,9 @@ import { NARRATIVE_MEMORY_NLS_PREFIX } from '../common';
  * set that omits both commands — green because it is looking away, which is
  * exactly the gate-vacuity failure plan R-9 is about.
  *
- * BOTH ARE `toLocalizedCommand`, so the palette shows Russian. The keys resolve
- * through this package's own bundle (WP-5), not the manuscript workspace's —
- * prohibition (f) forbids importing that package at all.
+ * ALL THREE ARE `toLocalizedCommand`, so the palette shows Russian. The keys
+ * resolve through this package's own bundle (WP-5), not the manuscript
+ * workspace's — prohibition (f) forbids importing that package at all.
  */
 export namespace NarrativeMemoryCommands {
   export const REBUILD_INDEX: Command = Command.toLocalizedCommand(
@@ -34,6 +34,21 @@ export namespace NarrativeMemoryCommands {
       label: 'Show Index Status'
     },
     `${NARRATIVE_MEMORY_NLS_PREFIX}/command-show-status`,
+    `${NARRATIVE_MEMORY_NLS_PREFIX}/command-category`
+  );
+
+  /**
+   * The cheap, on-demand sweep (UR-036 part 1) — NOT a synonym for
+   * `REBUILD_INDEX`. See {@link NarrativeKnowledgeService.checkForChanges}'s
+   * doc comment for why the two commands stay separate.
+   */
+  export const CHECK_FOR_CHANGES: Command = Command.toLocalizedCommand(
+    {
+      id: 'ai-focused-editor.narrativeMemory.checkNow',
+      category: 'Narrative Memory',
+      label: 'Check for Changes Now'
+    },
+    `${NARRATIVE_MEMORY_NLS_PREFIX}/command-check-now`,
     `${NARRATIVE_MEMORY_NLS_PREFIX}/command-category`
   );
 }

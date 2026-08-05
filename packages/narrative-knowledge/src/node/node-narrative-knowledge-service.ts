@@ -266,6 +266,32 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
   }
 
   /**
+   * "Check for Changes Now" (TASK-022 UR-036 part 1). A cheap on-demand sweep,
+   * NOT a rebuild — see the protocol doc for why the two are not the same
+   * command under two names.
+   *
+   * `this.session(rootUri)` IS CALLED FIRST, exactly as {@link rebuild} does it
+   * and for the identical reason: `session()` is the ONLY place that decides
+   * whether this root is a manuscript at all, and it is what starts the
+   * maintainer for one (ISS-359's fix). Calling `this.maintainer(rootPath)`
+   * directly, skipping this, would build a maintainer — a live watcher, a
+   * debounce timer, a sweep timer — for a workspace `session()` would have
+   * refused one to, because it holds no `manifest.yaml`. That is precisely the
+   * "a photo folder gets neither a database nor a live filesystem watcher"
+   * invariant `session()`'s own doc comment states; a naive one-line delegation
+   * straight to `this.maintainer()` would silently break it for every
+   * non-manuscript root this method is ever called on.
+   */
+  async checkForChanges(rootUri: string): Promise<Envelope<NarrativeUpdateReport>> {
+    const rootPath = canonicalWorkspaceKey(rootUri);
+    const session = this.session(rootUri);
+    if (!hasManuscriptManifest(rootPath)) {
+      return envelope(session.state(), emptyUpdateReport());
+    }
+    return this.maintainer(rootPath).sweep('prefiltered', 'explicit');
+  }
+
+  /**
    * Change the live configuration (tech_spec ОВ-9б).
    *
    * THE ROOT IS CANONICALIZED FIRST, and skipping that would break the feature

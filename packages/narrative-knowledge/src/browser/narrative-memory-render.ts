@@ -2,6 +2,7 @@ import { nls } from '@theia/core/lib/common/nls';
 import {
   NARRATIVE_MEMORY_NLS_PREFIX,
   NARRATIVE_MEMORY_PHRASES,
+  type CheckForChangesOutcome,
   type NarrativeIndexStatusReport,
   type NarrativeStatusBarPresentation
 } from '../common';
@@ -126,6 +127,40 @@ export function indexStatusReportLines(report: NarrativeIndexStatusReport): stri
   }
   if (report.rebuildBlockedByForeignWriter) {
     lines.push(localizeKey(`${NARRATIVE_MEMORY_NLS_PREFIX}/report-rebuild-blocked`));
+  }
+  return lines;
+}
+
+/**
+ * The lines a "Check for Changes Now" result is shown as (UR-037, UR-038).
+ *
+ * TWO LINES, NOT ONE, EXACTLY WHEN BOTH FACTS ARE TRUE. UR-038 forbids
+ * choosing "the more important" fact when a pass both wrote something and met
+ * an unreadable file — `checkForChangesOutcome`'s own doc explains why the two
+ * are independent; this is where that independence becomes two lines instead
+ * of a single merged sentence.
+ *
+ * THE UNREADABLE LINE IS A LITERAL `nls.localize` CALL SITE, deliberately NOT
+ * routed through {@link localizeKey}. `check-unreadable` carries a `{0}` — the
+ * repository's placeholder-arity guard can only see the substitution when both
+ * the key and the default are literal arguments at the call site, which is
+ * exactly the split `NARRATIVE_MEMORY_TEMPLATED_PHRASES`'s own doc comment
+ * requires of every arity>0 phrase in this package.
+ */
+export function checkForChangesOutcomeLines(outcome: CheckForChangesOutcome): string[] {
+  const lines = [
+    localizeKey(
+      `${NARRATIVE_MEMORY_NLS_PREFIX}/${outcome.resultKind === 'updated' ? 'check-updated' : 'check-no-changes'}`
+    )
+  ];
+  if (outcome.unreadableCount > 0) {
+    lines.push(
+      nls.localize(
+        'ai-focused-editor/narrative-memory/check-unreadable',
+        'Checked, but {0} file(s) could not be read',
+        outcome.unreadableCount
+      )
+    );
   }
   return lines;
 }

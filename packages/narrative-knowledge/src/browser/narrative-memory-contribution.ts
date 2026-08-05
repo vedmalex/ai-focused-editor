@@ -16,6 +16,8 @@ import {
   NARRATIVE_MEMORY_NLS_PREFIX,
   NarrativeKnowledgeService,
   NOT_BUILT_INDEX_STATE,
+  checkForChangesFailurePresentation,
+  checkForChangesOutcome,
   isNarrativeMemoryPreference,
   narrativeIndexStatusReport,
   narrativeMemoryPatchFromPreferences,
@@ -33,7 +35,9 @@ import {
   narrativeRelationMarkerBatches
 } from './narrative-memory-markers';
 import {
+  checkForChangesOutcomeLines,
   indexStatusReportLines,
+  localizeNarrativeMemoryKey,
   statusBarText,
   statusBarTooltip
 } from './narrative-memory-render';
@@ -148,6 +152,17 @@ export class NarrativeMemoryContribution
 
   protected timer: ReturnType<typeof setInterval> | undefined;
 
+  /**
+   * Local, UI-only flag driving the "Проверяю изменения…" status-bar text
+   * (UR-037). NOT part of {@link presentation} — the five-second poll would
+   * almost never catch a `checkForChanges` pass in flight (it typically runs
+   * in the tens of milliseconds), so the "in progress" affordance has to come
+   * from the command handler that KNOWS it started a call, not from the next
+   * scheduled `refresh()`. Cleared in the handler's `finally`, so it cannot
+   * stick if the call throws.
+   */
+  protected checkingNow = false;
+
   onStart(): void {
     void this.pushPreferences();
     void this.refresh();
@@ -191,6 +206,15 @@ export class NarrativeMemoryContribution
       execute: () => this.showStatus(),
       isEnabled: () => this.presentation.showStatusCommand.enabled,
       isVisible: () => this.presentation.showStatusCommand.visible
+    });
+    commands.registerCommand(NarrativeMemoryCommands.CHECK_FOR_CHANGES, {
+      execute: () => this.checkForChanges(),
+      // `checkNowCommand.enabled` is unconditionally true whenever the command
+      // is offered at all (UR-036 part 1 — ownership never disables it); the
+      // local `checkingNow` guard is what stops a second click from queuing a
+      // redundant pass behind the one already running.
+      isEnabled: () => this.presentation.checkNowCommand.enabled && !this.checkingNow,
+      isVisible: () => this.presentation.checkNowCommand.visible
     });
   }
 
@@ -247,11 +271,20 @@ export class NarrativeMemoryContribution
       this.statusBar.removeElement(STATUS_BAR_ID);
       return;
     }
+    // UR-037's progress affordance, LOCAL AND IMMEDIATE — never waits for the
+    // next poll (see `checkingNow`'s own doc). SUPPRESSED WHILE THE INDEX IS
+    // ALREADY `rebuilding`: that state already reads "строится", and UR-037's
+    // own "следствие" forbids a second, disagreeing vocabulary for the same
+    // fact — showing "Проверяю…" over a rebuild in flight would claim this
+    // click started work that is, in truth, someone else's pass.
+    const checking = this.checkingNow && model.phraseKey !== `${NARRATIVE_MEMORY_NLS_PREFIX}/status-rebuilding`;
     await this.statusBar.setElement(STATUS_BAR_ID, {
-      text: statusBarText(model),
+      text: checking ? `$(sync~spin) ${localizeNarrativeMemoryKey(`${NARRATIVE_MEMORY_NLS_PREFIX}/check-checking`)}` : statusBarText(model),
       alignment: StatusBarAlignment.RIGHT,
       priority: 110,
-      tooltip: statusBarTooltip(model),
+      tooltip: checking
+        ? localizeNarrativeMemoryKey(`${NARRATIVE_MEMORY_NLS_PREFIX}/check-checking`)
+        : statusBarTooltip(model),
       // The one click leads to the surface that can explain the state; Rebuild
       // is reached from there or from the palette. Making the click REBUILD
       // would put a destructive action one stray click away from a status bar.
@@ -382,6 +415,50 @@ export class NarrativeMemoryContribution
     await this.refresh();
   }
 
+  /**
+   * "Check for Changes Now" (UR-036 part 1, UR-037, UR-038, ISS-361).
+   *
+   * NO PRE-CALL OWNERSHIP GATE, unlike {@link rebuild}. UR-036 requires this
+   * command to stay available under a foreign lock — a sweep with nothing to
+   * write succeeds read-only, so refusing the CALL ahead of time on the
+   * strength of `getRebuildAvailability` would refuse a legitimate success.
+   * The availability check instead runs INSIDE the `catch`, only to explain a
+   * failure that already happened — {@link checkForChangesFailurePresentation}'s
+   * own doc spells out why that order, not the reverse, is correct here.
+   */
+  protected async checkForChanges(): Promise<void> {
+    const rootUri = await this.rootUri();
+    if (rootUri === undefined) {
+      return;
+    }
+    this.checkingNow = true;
+    await this.renderStatusBar();
+    try {
+      const result = await this.service.checkForChanges(rootUri);
+      const outcome = checkForChangesOutcome(result.data);
+      this.messageService.info(checkForChangesOutcomeLines(outcome).join('\n'));
+    } catch {
+      // ОВ-8: the thrown error carries nothing distinguishable across the RPC
+      // boundary, so a SECOND call is what tells "another process owns the
+      // index" apart from any other backend failure (ISS-361) — never a read
+      // of the caught error itself.
+      let availability: { available: boolean };
+      try {
+        availability = await this.service.getRebuildAvailability(rootUri);
+      } catch {
+        // The backend that just failed to check may also fail to answer this;
+        // treat it as unattributable rather than throwing a second time out of
+        // a command handler.
+        availability = { available: true };
+      }
+      const { messageKey } = checkForChangesFailurePresentation(availability);
+      this.messageService.warn(localizeNarrativeMemoryKey(messageKey));
+    } finally {
+      this.checkingNow = false;
+    }
+    await this.refresh();
+  }
+
   protected async showStatus(): Promise<void> {
     const rootUri = await this.rootUri();
     if (rootUri === undefined) {
@@ -398,9 +475,19 @@ export class NarrativeMemoryContribution
     const copy = report.failure
       ? nls.localize(`${NARRATIVE_MEMORY_NLS_PREFIX}/report-copy-incident`, 'Copy incident id')
       : undefined;
-    const chosen = await (copy === undefined
-      ? this.messageService.info(body)
-      : this.messageService.info(body, copy));
+    // "Check for Changes Now" IS OFFERED FROM THIS DIALOG TOO (UR-037 entry
+    // point (a) — the status-bar click opens exactly this dialog). It is
+    // offered on every branch, including a broken index: a sweep is a cheap,
+    // read-leaning probe, and refusing to even attempt one here would be a
+    // stronger claim than `checkNowCommand`'s own presentation makes anywhere
+    // else.
+    const checkNow = localizeNarrativeMemoryKey(`${NARRATIVE_MEMORY_NLS_PREFIX}/command-check-now`);
+    const actions = [checkNow, ...(copy === undefined ? [] : [copy])];
+    const chosen = await this.messageService.info(body, ...actions);
+    if (chosen === checkNow) {
+      await this.checkForChanges();
+      return;
+    }
     if (chosen === copy && report.failure !== undefined) {
       // The id is copied VERBATIM, never through a localized sentence: it is
       // going into a bug report next to a backend log line that prints the same
