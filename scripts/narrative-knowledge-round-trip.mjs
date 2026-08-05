@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
+import { cp, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 // Shared round-trip assertion for the narrative-knowledge RPC service
 // (TASK-022 WP-0).
@@ -24,6 +26,86 @@ import { join } from 'node:path';
 // race.
 
 export const NARRATIVE_KNOWLEDGE_PROBE_GLOBAL = '__afeNarrativeKnowledgeRoundTrip';
+
+// ---------------------------------------------------------------------------
+// TASK-022 ISS-365 — both smoke runners must drive an ISOLATED COPY of the
+// fixture manuscript, never `examples/sample-book` itself.
+// ---------------------------------------------------------------------------
+//
+// Both smokes used to point Theia straight at `examples/sample-book`, a
+// directory INSIDE this repository. Three consequences, all observed:
+//   - `bun run verify` cannot pass while the author has the sample book open
+//     in a real editor: `rebuild()` rejects with `foreign-writer` because a
+//     live writer already owns the narrative-knowledge database lock (see
+//     `rebuildRoundTripReaderScript`'s availability check below);
+//   - every run leaves `examples/sample-book/.theia/narrative-index.db`
+//     (`-shm`/`-wal`) behind, dirtying the working tree;
+//   - `assertNarrativeKnowledgeWatcherSelfUpdates` edits
+//     `content/chapter-01.md` IN THE REPOSITORY (restored in its own
+//     `finally`, but a mid-run crash would leave that edit in the author's
+//     tree).
+//
+// The fix is a throwaway copy per run, created with `fs.mkdtemp` and removed
+// afterward. `.theia/` is excluded from the copy ON PURPOSE: right now it
+// holds a live writer-lock row from whatever editor has the real
+// `examples/sample-book` open, and copying it would reproduce the exact
+// `foreign-writer` failure this closes instead of fixing it.
+//
+// THE REALPATH CALL IS NOT OPTIONAL. On macOS, `mkdtemp` returns a path under
+// `/var/folders/...`, itself a symlink to `/private/var/...`. The
+// narrative-knowledge maintainer stores `workspace_root` in its `meta` table
+// from the URI Theia hands it, and the parcel file watcher resolves the paths
+// it observes through its own (dereferenced) view of the filesystem; if the
+// two disagree about which side of the symlink is canonical, the watcher's
+// own edits stop matching the maintainer's expected root and
+// `assertNarrativeKnowledgeWatcherSelfUpdates` goes red for an environment
+// reason that has nothing to do with the product. Resolving once, here, at
+// creation, keeps both sides on the same path for the rest of the run.
+
+function isExcludedFromSampleWorkspaceCopy(source, sourceRoot) {
+  const rel = relative(sourceRoot, source);
+  return rel === '.theia' || rel.startsWith(`.theia${sep}`);
+}
+
+/**
+ * Create a disposable, isolated copy of the fixture manuscript for one smoke
+ * run. Returns the realpath-resolved temp directory (`workspaceDir`, for
+ * cleanup) and the exact path to hand to Theia/Electron as the workspace
+ * root (`sampleRoot`).
+ *
+ * `.theia/` is deliberately excluded from the copy — see the section comment
+ * above.
+ */
+export async function createIsolatedSampleWorkspace(sourceSampleRoot) {
+  const rawWorkspaceDir = await mkdtemp(join(tmpdir(), 'afe-sample-book-'));
+  // Dereference NOW — see the section comment above, this is load-bearing,
+  // not defensive.
+  const workspaceDir = await realpath(rawWorkspaceDir);
+  const sampleRoot = join(workspaceDir, 'sample-book');
+  await cp(sourceSampleRoot, sampleRoot, {
+    recursive: true,
+    filter: source => !isExcludedFromSampleWorkspaceCopy(source, sourceSampleRoot)
+  });
+  return { workspaceDir, sampleRoot };
+}
+
+/**
+ * Remove a workspace created by {@link createIsolatedSampleWorkspace}.
+ *
+ * Best-effort: a cleanup failure is logged, never thrown — the whole point of
+ * calling this from a `finally` is to not obscure the smoke run's real
+ * result with a teardown problem.
+ */
+export async function removeIsolatedSampleWorkspace(workspaceDir) {
+  if (!workspaceDir) {
+    return;
+  }
+  try {
+    await rm(workspaceDir, { recursive: true, force: true });
+  } catch (error) {
+    console.warn(`WARN could not remove temporary smoke workspace ${workspaceDir}: ${String(error)}`);
+  }
+}
 
 /**
  * Poll `readProbeResult` until the probe has recorded an outcome, then assert

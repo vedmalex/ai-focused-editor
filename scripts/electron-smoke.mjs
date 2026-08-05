@@ -18,13 +18,15 @@ import {
   assertNarrativeKnowledgeDiagnosticsEnvelopesAgree,
   diagnosticsEnvelopesReaderScript,
   assertNarrativeKnowledgeWatcherSelfUpdates,
-  watcherStatusSnapshotReaderScript
+  watcherStatusSnapshotReaderScript,
+  createIsolatedSampleWorkspace,
+  removeIsolatedSampleWorkspace
 } from './narrative-knowledge-round-trip.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const appDir = join(repoRoot, 'apps/electron');
 const mainJs = join(appDir, 'lib/backend/electron-main.js');
-const workspace = join(repoRoot, 'examples/sample-book');
+const sampleBookSource = join(repoRoot, 'examples/sample-book');
 
 // A previous interrupted run can leave an instance holding the single-instance
 // lock, which makes a fresh launch exit(0) immediately — clear it first and
@@ -56,6 +58,11 @@ if (!existsSync(mainJs)) {
   console.error(`Electron bundle not found: ${mainJs}\nRun \`bun run build:electron\` first.`);
   process.exit(1);
 }
+
+// TASK-022 ISS-365: drive an isolated, disposable copy of the fixture
+// manuscript, never examples/sample-book itself — see
+// createIsolatedSampleWorkspace's doc comment in narrative-knowledge-round-trip.mjs.
+const { workspaceDir: smokeWorkspaceDir, sampleRoot: workspace } = await createIsolatedSampleWorkspace(sampleBookSource);
 
 const errors = [];
 const consoleErrors = [];
@@ -330,6 +337,7 @@ try {
   }
 } finally {
   await app.close().catch(() => undefined);
+  await removeIsolatedSampleWorkspace(smokeWorkspaceDir);
 }
 
 if (errors.length > 0) {

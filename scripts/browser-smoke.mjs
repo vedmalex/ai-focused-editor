@@ -14,12 +14,18 @@ import {
   assertNarrativeKnowledgeDiagnosticsEnvelopesAgree,
   diagnosticsEnvelopesReaderScript,
   assertNarrativeKnowledgeWatcherSelfUpdates,
-  watcherStatusSnapshotReaderScript
+  watcherStatusSnapshotReaderScript,
+  createIsolatedSampleWorkspace,
+  removeIsolatedSampleWorkspace
 } from './narrative-knowledge-round-trip.mjs';
 
 const repoRoot = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
 const appDir = join(repoRoot, 'apps/browser');
-const sampleRoot = join(repoRoot, 'examples/sample-book');
+const sampleBookSource = join(repoRoot, 'examples/sample-book');
+// TASK-022 ISS-365: drive an isolated, disposable copy of the fixture
+// manuscript, never examples/sample-book itself — see
+// createIsolatedSampleWorkspace's doc comment for why.
+const { workspaceDir: smokeWorkspaceDir, sampleRoot } = await createIsolatedSampleWorkspace(sampleBookSource);
 const port = Number(process.env.AFE_SMOKE_PORT || await getFreePort());
 const url = `http://127.0.0.1:${port}`;
 
@@ -186,6 +192,7 @@ try {
     once(server, 'exit'),
     new Promise(resolve => setTimeout(resolve, 5_000))
   ]);
+  await removeIsolatedSampleWorkspace(smokeWorkspaceDir);
 }
 
 async function getFreePort() {
