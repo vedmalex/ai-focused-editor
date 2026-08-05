@@ -41,7 +41,7 @@ export class NarrativeMapWidget extends ReactWidget {
     this.id = NarrativeMapWidget.ID;
     this.title.label = nls.localize('ai-focused-editor/entities/map-title', NarrativeMapWidget.LABEL);
     this.title.caption = nls.localize('ai-focused-editor/entities/map-caption', 'AI Focused Editor narrative timeline and relationship map');
-    this.title.iconClass = 'fa fa-project-diagram';
+    this.title.iconClass = 'fa fa-share-alt';
     this.title.closable = true;
     this.addClass('afe-narrative-map');
     void this.refresh();
