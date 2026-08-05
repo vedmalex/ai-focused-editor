@@ -4,11 +4,13 @@ import {
   MenuModelRegistry
 } from '@theia/core/lib/common';
 import { nls } from '@theia/core/lib/common/nls';
-import { injectable } from '@theia/core/shared/inversify';
+import { inject, injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
+import { StorageService } from '@theia/core/lib/browser/storage-service';
 import type { FrontendApplication, FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { NarrativeMapWidget } from './narrative-map-widget';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
+import { ensurePanelMigrated } from './layout-panel-migration';
 
 export namespace NarrativeMapCommands {
   export const OPEN: Command = Command.toLocalizedCommand(
@@ -31,6 +33,9 @@ export namespace NarrativeMapCommands {
 @injectable()
 export class NarrativeMapViewContribution extends AbstractViewContribution<NarrativeMapWidget>
   implements FrontendApplicationContribution {
+  @inject(StorageService)
+  protected readonly storageService!: StorageService;
+
   constructor() {
     super({
       widgetId: NarrativeMapWidget.ID,
@@ -56,6 +61,30 @@ export class NarrativeMapViewContribution extends AbstractViewContribution<Narra
    */
   async initializeLayout(_app: FrontendApplication): Promise<void> {
     await this.openView({ activate: false, reveal: false });
+  }
+
+  /**
+   * UR-040: a workbook whose shell layout was saved by a version of the app
+   * that predates this panel restores that OLD layout successfully (it's a
+   * structurally valid, just older, `ApplicationShell.LayoutData`), so
+   * `initializeLayout` above never runs for it — `restoreLayout()` already
+   * returned `true`. Without this hook such a workspace would never see the
+   * panel again: not on reload, not on a backend restart, not across a
+   * bundle rebuild, forever, because "restore succeeded" short-circuits the
+   * fresh-layout path permanently. `onDidInitializeLayout` fires
+   * unconditionally after EITHER path (see `FrontendApplication.start()`),
+   * which is what makes it the right hook for a one-time backfill. See
+   * `ensurePanelMigrated`'s doc comment for why this is gated by a
+   * persisted per-workspace marker rather than a live "is it attached?"
+   * check: it must run at most once ever, so a panel the author closes
+   * afterwards stays closed.
+   */
+  async onDidInitializeLayout(_app: FrontendApplication): Promise<void> {
+    await ensurePanelMigrated(
+      this.storageService,
+      'ai-focused-editor.narrativeMap.layoutMigrationVersion',
+      () => this.openView({ activate: false, reveal: false })
+    );
   }
 
   override registerCommands(commands: CommandRegistry): void {
