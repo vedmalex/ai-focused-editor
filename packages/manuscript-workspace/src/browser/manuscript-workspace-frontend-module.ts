@@ -200,6 +200,13 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
   bind(FrontendApplicationContribution).toService(ManuscriptTreeViewContribution);
   bind(TabBarToolbarContribution).toService(ManuscriptTreeViewContribution);
   bindViewContribution(bind, EntityCardsViewContribution);
+  // UR-039: without this, `EntityCardsViewContribution.initializeLayout` is
+  // never invoked — `FrontendApplication.createDefaultLayout()` only calls
+  // `initializeLayout` on instances bound as `FrontendApplicationContribution`,
+  // and `bindViewContribution` does not add that binding on its own (see
+  // `ManuscriptTreeViewContribution`/`NarrativeMapViewContribution`, which
+  // both bind it explicitly for the same reason).
+  bind(FrontendApplicationContribution).toService(EntityCardsViewContribution);
   // The remaining two "Check for Changes Now" entry points not owned by the
   // command's own package (TASK-022 UR-036 part 1, UR-037): the toolbar icon
   // on Entity Cards and Narrative Map, and the main-menu item.

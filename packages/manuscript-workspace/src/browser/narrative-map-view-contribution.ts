@@ -6,6 +6,7 @@ import {
 import { nls } from '@theia/core/lib/common/nls';
 import { injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
+import type { FrontendApplication, FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { NarrativeMapWidget } from './narrative-map-widget';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 
@@ -28,7 +29,8 @@ export namespace NarrativeMapCommands {
 }
 
 @injectable()
-export class NarrativeMapViewContribution extends AbstractViewContribution<NarrativeMapWidget> {
+export class NarrativeMapViewContribution extends AbstractViewContribution<NarrativeMapWidget>
+  implements FrontendApplicationContribution {
   constructor() {
     super({
       widgetId: NarrativeMapWidget.ID,
@@ -39,6 +41,21 @@ export class NarrativeMapViewContribution extends AbstractViewContribution<Narra
       },
       toggleCommandId: NarrativeMapCommands.OPEN.id
     });
+  }
+
+  /**
+   * UR-039: on a fresh shell layout (no saved layout to restore — Theia only
+   * calls this when `restoreLayout()` found nothing, see
+   * `FrontendApplication.createDefaultLayout()`), attach the widget to the
+   * right panel so its icon is visible from the first launch, same as
+   * `ManuscriptTreeViewContribution`/`@theia/outline-view` do for their
+   * panels. `activate: false, reveal: false` on purpose: the panel must be
+   * PRESENT, not opened — opening it unconditionally here would also
+   * overwrite a user's deliberately-closed saved layout, except this path
+   * never runs when a saved layout exists in the first place.
+   */
+  async initializeLayout(_app: FrontendApplication): Promise<void> {
+    await this.openView({ activate: false, reveal: false });
   }
 
   override registerCommands(commands: CommandRegistry): void {

@@ -101,6 +101,33 @@ try {
     timeout: 20_000
   });
 
+  // UR-039: the Narrative Map and Entity Cards panels must be visible as
+  // icons in the right side panel from the FIRST launch, without the user
+  // having to search for and run their open command — this is what
+  // `NarrativeMapViewContribution.initializeLayout` /
+  // `EntityCardsViewContribution.initializeLayout` now provide (mirroring
+  // `ManuscriptTreeViewContribution` and `@theia/outline-view`, which already
+  // did this for the left/right panels the author DID find on first launch).
+  //
+  // This check runs BEFORE any `entities.refreshCards`/open command below —
+  // deliberately, since the whole point is to observe presence that Theia's
+  // OWN startup layout produced, not presence this script caused by opening
+  // the view itself. A command-driven smoke (execute the open command, then
+  // check the widget exists) is exactly the "green by construction" shape
+  // that missed this defect in the field: it never asks whether the widget
+  // was DISCOVERABLE, only whether it CAN be opened.
+  await assertViewIconsPresentOnStartup(
+    () => page.evaluate(viewIconPresenceReaderScript([
+      'ai-focused-editor.narrative-map',
+      'ai-focused-editor.entity-cards'
+    ])),
+    'browser',
+    [
+      { id: 'ai-focused-editor.narrative-map', label: 'Narrative Map' },
+      { id: 'ai-focused-editor.entity-cards', label: 'Knowledge Cards' }
+    ]
+  );
+
   await assertCommandsRegistered(page, [
     'ai-focused-editor.workspace.validate',
     'ai-focused-editor.manuscriptTree.refresh',
@@ -222,6 +249,113 @@ async function waitForServer(targetUrl, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
   throw lastError instanceof Error ? lastError : new Error(`Timed out waiting for ${targetUrl}`);
+}
+
+/**
+ * Renderer-side reader (TASK-022 UR-039): report, for each widget id, whether
+ * it is already attached to the shell and where — WITHOUT touching the
+ * widget's open/toggle command. `WidgetManager.tryGetWidget` returns a widget
+ * only if one was already created; `ApplicationShell.getAreaFor`/
+ * `getTabBarFor` report where an ALREADY-ATTACHED widget lives. Neither call
+ * creates or opens anything, so a `present`/`isAttached` result here can only
+ * be explained by Theia's own startup layout (`initializeLayout`), never by
+ * this reader.
+ *
+ * Same binding-lookup shape as the other readers in
+ * `narrative-knowledge-round-trip.mjs` (`candidate.description || candidate.name`),
+ * repeated here rather than imported: this check is about shell/view state,
+ * not the narrative-knowledge index that file is scoped to.
+ */
+function viewIconPresenceReaderScript(widgetIds) {
+  return `(() => {
+    const container = window.theia && window.theia.container;
+    if (!container) { return { ok: false, error: 'the Theia container is not available' }; }
+    const findKey = (label) => {
+      for (const [candidate] of container._bindingDictionary._map.entries()) {
+        const candidateLabel = candidate && (candidate.description || candidate.name);
+        if (candidateLabel === label) { return candidate; }
+      }
+      return undefined;
+    };
+    try {
+      const shellKey = findKey('ApplicationShell');
+      const widgetManagerKey = findKey('WidgetManager');
+      if (!shellKey) { return { ok: false, error: 'ApplicationShell is not bound in this container' }; }
+      if (!widgetManagerKey) { return { ok: false, error: 'WidgetManager is not bound in this container' }; }
+      const shell = container.get(shellKey);
+      const widgetManager = container.get(widgetManagerKey);
+      const ids = ${JSON.stringify(widgetIds)};
+      const results = ids.map(id => {
+        const widget = widgetManager.tryGetWidget(id);
+        if (!widget) {
+          return { id, present: false };
+        }
+        const area = shell.getAreaFor(widget);
+        const tabBar = shell.getTabBarFor(widget);
+        return {
+          id,
+          present: true,
+          isAttached: !!widget.isAttached,
+          area: area || null,
+          inTabBar: !!tabBar,
+          isCurrentInTabBar: !!(tabBar && tabBar.currentTitle === widget.title),
+          isShellActive: shell.activeWidget === widget,
+          iconClass: widget.title.iconClass || ''
+        };
+      });
+      return { ok: true, results };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  })()`;
+}
+
+/**
+ * Assert each `expectedWidgets` entry is attached to the RIGHT panel at
+ * startup, but neither active nor the current tab — i.e. present as an icon,
+ * not opened. Three distinct failure messages on purpose, same reasoning as
+ * `assertNarrativeToolsRegistered`: "not present at all" (no
+ * `initializeLayout`, or the widget/view-contribution binding is missing —
+ * this is exactly the `EntityCardsViewContribution` gap UR-039 found, where
+ * the class had no `FrontendApplicationContribution` binding at all), "present
+ * but not in the right panel" (wrong `defaultWidgetOptions.area`, or attached
+ * without ever reaching `addWidget`), and "present but already open"
+ * (violates the `activate: false, reveal: false` requirement — the panel
+ * must not steal focus or force itself open on every launch).
+ */
+async function assertViewIconsPresentOnStartup(readSnapshot, target, expectedWidgets) {
+  const snapshot = await readSnapshot();
+  if (!snapshot || !snapshot.ok) {
+    throw new Error(
+      `[${target}] could not read shell/view state: ${snapshot ? snapshot.error : 'nothing returned'}`
+    );
+  }
+  const byId = new Map(snapshot.results.map(result => [result.id, result]));
+  for (const { id, label } of expectedWidgets) {
+    const result = byId.get(id);
+    if (!result || !result.present) {
+      throw new Error(
+        `[${target}] "${label}" (${id}) is NOT present in the shell at startup — no command was executed ` +
+        'to open it, so it should have been attached by initializeLayout(). It has no icon in the side ' +
+        'panel on first launch.'
+      );
+    }
+    if (!result.isAttached || result.area !== 'right' || !result.inTabBar) {
+      throw new Error(
+        `[${target}] "${label}" (${id}) exists but is not attached to the right panel at startup ` +
+        `(isAttached=${result.isAttached}, area=${JSON.stringify(result.area)}, inTabBar=${result.inTabBar}).`
+      );
+    }
+    if (result.isShellActive || result.isCurrentInTabBar) {
+      throw new Error(
+        `[${target}] "${label}" (${id}) is ACTIVE/revealed at startup — it must be present as an icon only ` +
+        '(activate: false, reveal: false), not opened.'
+      );
+    }
+  }
+  console.log(
+    `PASS [${target}] startup side-panel icons present without opening: ${expectedWidgets.map(w => w.label).join(', ')}`
+  );
 }
 
 async function assertCommandsRegistered(page, commandIds) {
