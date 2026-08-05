@@ -26,7 +26,23 @@
  * ASCII-only kind pattern. The two disagree on Cyrillic kinds — see gh#66.
  * The divergence is deliberately preserved here rather than silently repaired:
  * this relocation changes no behaviour.
+ *
+ * TASK-022/UR-035 (ISS-358): the module now imports ONE thing —
+ * `computeCodeSpanRanges`/`isOffsetInCodeSpan` from
+ * `@ai-focused-editor/semantic-markdown` (already a `dependencies` entry for
+ * this package; `chapter-extraction.ts` already imports `parseSemanticMarkdown`
+ * from it directly) — so that "is this `[[...]]` candidate inside inline code
+ * or a fenced code block" is answered by the EXACT SAME walk
+ * `parseSemanticMarkdown` uses, rather than a second, independently-written
+ * code detector that could silently disagree with it. This does not reopen
+ * the import-graph boundary the module comment above still describes: the
+ * six prohibitions in `test/import-graph.ts` gate `node:*`/Theia-browser/
+ * AI-client/the browser workspace package's deep sources out of `src/common`,
+ * and gate `src/common/graph/`'s neighbours separately — a pure,
+ * dependency-free sibling `common` package is untouched by any of them.
  */
+
+import { computeCodeSpanRanges, isOffsetInCodeSpan } from '@ai-focused-editor/semantic-markdown';
 
 /** Offset range of a `[[...]]` token in the source text (0-based, end exclusive). */
 export interface WikiLinkOffsetRange {
@@ -104,9 +120,17 @@ const WIKI_LINK_TOKEN_PATTERN = /\[\[([^[\]\n]*)\]\]/g;
  */
 export function parseWikiLinks(text: string): WikiLinkMatch[] {
   const matches: WikiLinkMatch[] = [];
+  const codeRanges = computeCodeSpanRanges(text);
   WIKI_LINK_TOKEN_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = WIKI_LINK_TOKEN_PATTERN.exec(text)) !== null) {
+    // TASK-022/UR-035 (ISS-358): a `[[...]]` candidate starting inside inline
+    // code or a fenced code block is a syntax EXAMPLE, not a live reference —
+    // see `computeCodeSpanRanges`'s doc comment. Skipped, never mutated, so a
+    // surviving match's `range` stays byte-identical to the un-guarded scan.
+    if (isOffsetInCodeSpan(match.index, codeRanges)) {
+      continue;
+    }
     const raw = match[0];
     const range: WikiLinkOffsetRange = { start: match.index, end: match.index + raw.length };
     matches.push(classifyWikiLinkToken(match[1], raw, range));
