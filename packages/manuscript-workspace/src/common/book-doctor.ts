@@ -32,6 +32,8 @@ import {
 } from './manifest-reconstruction';
 import {
   BASE_ENTITY_TYPES,
+  CARD_MENTION_REL_TYPE,
+  OWNERSHIP_REL_TYPE,
   type EntityTypeDescriptor,
   type EntityTypeProblem
 } from '@ai-focused-editor/narrative-knowledge';
@@ -224,6 +226,53 @@ export interface EntityCardRef {
   id: string;
 }
 
+/**
+ * A narrative-knowledge relation, narrowed to what {@link entityCardOrphanFindings}
+ * needs (ISS-369): the id the relation REFERENCES (`targetId`) and its opaque
+ * `relType`. Sourced from `NarrativeKnowledgeService.getRelations` — the browser
+ * passes every relation it reads (any `relType`); which ones actually count as a
+ * reference is this module's decision, made in
+ * {@link ENTITY_CARD_REFERENCE_REL_TYPES}, not the caller's.
+ */
+export interface EntityCardReferenceRelation {
+  /** The entity id the relation names as its target — the referenced card's id. */
+  targetId: string;
+  /** Opaque relation-type discriminator, e.g. `ownership` or `mentions`. */
+  relType: string;
+}
+
+/**
+ * `relType`s that make a relation's `targetId` count as a reference for
+ * {@link entityCardOrphanFindings} (ISS-369).
+ *
+ * `ownership` (an artifact card's `ownership: [{owner: …}]` list) and `mentions`
+ * (a `[[kind:id]]` reference inside ANOTHER entity card's free text,
+ * `entity-mentions.ts`) are both real authorial links to a card that the
+ * manuscript-text tag scan (`EntityTagOccurrence`, `entities/` is excluded from
+ * that walk) can never see — that blindness is the defect: a card can be the
+ * ONLY typed connection an artifact has to its owner and still get reported as
+ * unreferenced.
+ *
+ * `co-occurrence` (TASK-022 `derived-relations.ts`) is deliberately NOT in this
+ * set. It is a DERIVED fold over already-RESOLVED mentions — both ends must
+ * already be genuinely tagged/mentioned for the edge to exist at all
+ * (`foldCoOccurrenceRelations`'s rule 1) — so it can never un-orphan a card the
+ * tag scan would not already exonerate; including it would be inert, not wrong,
+ * but every inclusion here is meant to be load-bearing, not merely harmless.
+ *
+ * Front-matter references and prose `[[kind:id|label]]`/`[[id]]` tags are not
+ * relations at all — they already reach `EntityTagOccurrence` through the
+ * browser's own full-text scan (`foldEntityTags`, which reads the whole chapter
+ * file including its front-matter fence) and need no relation-based path here.
+ * `[@cite:id]` citations and `sources/excerpts.jsonl` quotes reference a
+ * DIFFERENT id space (bibliography entries, not entity cards) and are out of
+ * scope for this check entirely.
+ */
+const ENTITY_CARD_REFERENCE_REL_TYPES: ReadonlySet<string> = new Set([
+  OWNERSHIP_REL_TYPE,
+  CARD_MENTION_REL_TYPE
+]);
+
 /** Fully-resolved inputs for {@link assembleBookDoctorReport}. */
 export interface BookDoctorInput {
   /** Canonical scaffold entries, from `bookScaffoldEntries()`. */
@@ -274,6 +323,16 @@ export interface BookDoctorInput {
    * is absent, empty, or fully valid.
    */
   entityTypeProblems?: readonly EntityTypeProblem[];
+  /**
+   * Relations from the narrative-knowledge index (`getRelations`), narrowed to
+   * `{targetId, relType}` (ISS-369). Feeds {@link entityCardOrphanFindings} so a
+   * card referenced only via a typed relation — an artifact's `ownership.owner`,
+   * or a mention inside ANOTHER card's free text — is not falsely reported as
+   * unreferenced. Empty/absent when no relations were gathered (a caller that
+   * passes none behaves exactly as before ISS-369 — no card is exonerated by a
+   * relation it never received).
+   */
+  entityReferenceRelations?: EntityCardReferenceRelation[];
   /**
    * Obsidian-companion-plugin status (bundled/installed versions + `.obsidian/`
    * presence), gathered from the backend. When present, drives the install/update
@@ -737,25 +796,37 @@ export function entityCardMissingFixes(
 }
 
 /**
- * Entity check B — `entity-card-orphan` (INFORMATIONAL): a card on disk that no
- * tag references. A card is referenced when some occurrence shares its id AND
- * either names no kind (a bare `[[id]]` matches any kind) or names a tag kind
- * that resolves to the card's entity kind. Report-only — cards may be
+ * Entity check B — `entity-card-orphan` (INFORMATIONAL): a card on disk that
+ * nothing references. A card is referenced when EITHER (a) some manuscript-text
+ * occurrence shares its id AND either names no kind (a bare `[[id]]` matches any
+ * kind) or names a tag kind that resolves to the card's entity kind, OR (b) some
+ * relation in `relations` names the card's id as its `targetId` under a `relType`
+ * in {@link ENTITY_CARD_REFERENCE_REL_TYPES} (ISS-369: an artifact's
+ * `ownership.owner`, or a mention inside another card's free text — links the
+ * text-tag scan structurally cannot see, since it skips `entities/`). Relation
+ * matching is BY ID ALONE, with no kind cross-check — unlike (a), a relation
+ * carries no kind for its ends, and entity ids are already required to be
+ * globally unique (`getDuplicateEntities`), so an id match is exactly as
+ * reliable as the kind-checked occurrence path. Report-only — cards may be
  * intentional groundwork, so the doctor never deletes them.
  */
 export function entityCardOrphanFindings(
   occurrences: EntityTagOccurrence[],
   existingCards: EntityCardRef[],
-  effectiveTypes: readonly EntityTypeDescriptor[] = BASE_ENTITY_TYPES
+  effectiveTypes: readonly EntityTypeDescriptor[] = BASE_ENTITY_TYPES,
+  relations: readonly EntityCardReferenceRelation[] = []
 ): BookDoctorFinding[] {
   const findings: BookDoctorFinding[] = [];
   for (const card of existingCards) {
-    const referenced = occurrences.some(
+    const referencedByTag = occurrences.some(
       occurrence =>
         occurrence.id === card.id &&
         (occurrence.kind === undefined || effectiveTagKindToKind(effectiveTypes, occurrence.kind) === card.kind)
     );
-    if (referenced) {
+    const referencedByRelation = relations.some(
+      relation => relation.targetId === card.id && ENTITY_CARD_REFERENCE_REL_TYPES.has(relation.relType)
+    );
+    if (referencedByTag || referencedByRelation) {
       continue;
     }
     const descriptor = typeById(effectiveTypes, card.kind);
@@ -1338,7 +1409,10 @@ export function assembleBookDoctorReport(input: BookDoctorInput): BookDoctorRepo
       findings.push(finding);
     }
   }
-  findings.push(...entityCardOrphanFindings(occurrences, existingCards, effectiveTypes));
+  const entityReferenceRelations = input.entityReferenceRelations ?? [];
+  findings.push(
+    ...entityCardOrphanFindings(occurrences, existingCards, effectiveTypes, entityReferenceRelations)
+  );
   findings.push(...entityUnknownKindFindings(occurrences, effectiveTypes));
   findings.push(...entityTypeProblemFindings(input.entityTypeProblems ?? []));
   if (aiSettings.finding) {

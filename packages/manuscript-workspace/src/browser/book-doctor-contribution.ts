@@ -45,6 +45,7 @@ import {
   type BookDoctorFinding,
   type BookDoctorFix,
   type BookDoctorReport,
+  type EntityCardReferenceRelation,
   type EntityCardRef,
   type EntityTagOccurrence,
   type ObsidianPluginCheckInput,
@@ -285,6 +286,11 @@ export class BookDoctorContribution
     const { types: effectiveEntityTypes, problems: entityTypeProblems } =
       await this.loadEntityTypes(root);
     const existingEntityCards = await this.collectExistingEntityCards(root);
+    // Typed relations (ownership, card-to-card mentions, …) the entity-tag scan
+    // above cannot see — `entityCardOrphanFindings` uses these so a card whose
+    // ONLY link is e.g. an artifact's `ownership.owner` is not falsely reported
+    // as unreferenced (ISS-369).
+    const entityReferenceRelations = await this.collectEntityReferenceRelations(root);
     const contentHasMarkdown = manuscriptCandidates.some(candidate =>
       normalizeManifestPath(candidate.path).startsWith('content/')
     );
@@ -349,6 +355,7 @@ export class BookDoctorContribution
       existingEntityCards,
       effectiveEntityTypes,
       entityTypeProblems,
+      entityReferenceRelations,
       obsidianPlugin,
       workspaceSettings,
       transcription,
@@ -650,6 +657,20 @@ export class BookDoctorContribution
   protected async collectExistingEntityCards(root: URI): Promise<EntityCardRef[]> {
     const envelope = await this.knowledge.findEntities(root.toString());
     return envelope.data.map(entity => ({ kind: entity.type, id: entity.id }));
+  }
+
+  /**
+   * Every relation the narrative-knowledge index holds for `rootUri`, narrowed
+   * to `{targetId, relType}` (ISS-369). Unfiltered — this reads EVERY `relType`
+   * (`ownership`, `mentions`, `co-occurrence`, any future one); which of them
+   * actually count as a reference for the orphan check is
+   * `entityCardOrphanFindings`'s decision (`ENTITY_CARD_REFERENCE_REL_TYPES` in
+   * `book-doctor.ts`), not this feeder's. Mirrors {@link collectExistingEntityCards}
+   * and {@link loadEntityTypes}: read the already-built index, no rebuild.
+   */
+  protected async collectEntityReferenceRelations(root: URI): Promise<EntityCardReferenceRelation[]> {
+    const envelope = await this.knowledge.getRelations(root.toString());
+    return envelope.data.map(relation => ({ targetId: relation.targetId, relType: relation.relType }));
   }
 
   protected async readManifestRows(uri: URI): Promise<ManifestRow[]> {
