@@ -8,6 +8,8 @@ import { _electron as electron } from 'playwright';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import {
   assertNarrativeKnowledgeRoundTrip,
   assertNarrativeToolsRegistered,
@@ -79,11 +81,25 @@ function pass(message) {
 // Launch with one retry: even after the stale-instance sweep the first boot
 // occasionally loses its window to a lock/teardown race when the smoke runs
 // right after other Playwright/Theia activity.
-async function launchWithRetry() {
+async function launchWithRetry(electronUserDataDir) {
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt++) {
     const candidate = await electron.launch({
-      args: [mainJs, workspace],
+      // TASK-022 ISS-367: an isolated --electronUserData keeps this test
+      // instance's own profile (window state, keytar-backed secrets, etc.)
+      // from mixing with a concurrently-running live desktop editor's
+      // profile. This is PURELY a profile-hygiene measure — it does NOT
+      // provide single-instance isolation. On macOS, requestSingleInstanceLock
+      // (apps/electron/src-gen/backend/electron-main.js) is not scoped by
+      // userData path at all: both this flag and the raw Chromium
+      // --user-data-dir switch were tried (in both argv positions) against a
+      // live editor and the lock was still lost every time — see ISS-367.
+      // The actual fix is apps/electron/package.json's
+      // theia.backend.config.singleInstance: false, which removes the lock
+      // check entirely (see that file for why this is safe: per-instance
+      // data safety is enforced at the narrative-index writer-lock level,
+      // ISS-357/ISS-365, not at the Electron app-instance level).
+      args: [mainJs, workspace, `--electronUserData=${electronUserDataDir}`],
       cwd: appDir,
       env: { ...process.env, NODE_ENV: 'production' },
       timeout: 120000
@@ -115,7 +131,27 @@ async function launchWithRetry() {
   throw lastError;
 }
 
-const { app, window } = await launchWithRetry();
+// TASK-022 ISS-367: an isolated electron userData dir, purely for profile
+// hygiene against a concurrently-running live desktop editor — see the
+// comment on launchWithRetry's electron.launch() call for what this does and
+// (more importantly) does NOT provide.
+const electronUserDataDir = await mkdtemp(join(tmpdir(), 'afe-electron-smoke-userdata-'));
+
+try {
+  await runElectronSmoke(electronUserDataDir);
+} finally {
+  await removeIsolatedSampleWorkspace(smokeWorkspaceDir);
+  await rm(electronUserDataDir, { recursive: true, force: true }).catch(() => undefined);
+}
+
+if (errors.length > 0) {
+  console.error(`Electron smoke FAILED (${errors.length} problem(s)).`);
+  process.exit(1);
+}
+console.log('Electron smoke passed.');
+
+async function runElectronSmoke(electronUserDataDir) {
+const { app, window } = await launchWithRetry(electronUserDataDir);
 
 try {
   window.on('console', message => {
@@ -337,11 +373,5 @@ try {
   }
 } finally {
   await app.close().catch(() => undefined);
-  await removeIsolatedSampleWorkspace(smokeWorkspaceDir);
 }
-
-if (errors.length > 0) {
-  console.error(`Electron smoke FAILED (${errors.length} problem(s)).`);
-  process.exit(1);
 }
-console.log('Electron smoke passed.');

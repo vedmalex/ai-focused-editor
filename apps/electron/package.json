@@ -75,6 +75,11 @@
   },
   "theia": {
     "target": "electron",
+    "backend": {
+      "config": {
+        "singleInstance": false
+      }
+    },
     "frontend": {
       "config": {
         "applicationName": "AI Focused Editor",
