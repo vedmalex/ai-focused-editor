@@ -19,6 +19,7 @@ export * from './index-state';
 export * from './index-failure';
 export * from './narrative-memory-config';
 export * from './narrative-knowledge-protocol';
+export * from './narrative-index-change-watcher';
 
 // What the user-facing surfaces SHOW, decided as a pure function of what the
 // index reports (WP-5). Theia-free so every row of the six-state table, the

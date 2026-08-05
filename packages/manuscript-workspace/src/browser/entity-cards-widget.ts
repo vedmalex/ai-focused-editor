@@ -14,8 +14,11 @@ import {
 import React from '@theia/core/shared/react';
 import {
   compareEntitiesForDisplay,
+  NarrativeIndexChangeWatcher,
   NarrativeKnowledgeService,
   type NarrativeEntity,
+  type NarrativeIndexChangedEvent,
+  type NarrativeIndexChangeWatcher as NarrativeIndexChangeWatcherType,
   type NarrativeKnowledgeService as NarrativeKnowledgeServiceType
 } from '@ai-focused-editor/narrative-knowledge';
 import {
@@ -46,6 +49,9 @@ export class EntityCardsWidget extends ReactWidget {
   @inject(NarrativeKnowledgeService)
   protected readonly knowledge!: NarrativeKnowledgeServiceType;
 
+  @inject(NarrativeIndexChangeWatcher)
+  protected readonly indexChangeWatcher!: NarrativeIndexChangeWatcherType;
+
   @inject(WorkspaceService)
   protected readonly workspaceService!: WorkspaceService;
 
@@ -59,6 +65,11 @@ export class EntityCardsWidget extends ReactWidget {
    *  navigable URI from `entity.sourcePath` (TECH_SPEC WP-7 §4: `sourceUri` is
    *  stale after a rename in both store adapters, so it is never read here). */
   protected rootUri: URI | undefined;
+  /** Set when an index-changed push arrives while this widget is closed or
+   *  scrolled out of view (TASK-022 UR-043): a hidden panel must not pull
+   *  data for nothing, but it must still catch up the moment it is shown
+   *  again, rather than going on showing whatever it last rendered. */
+  protected pendingRefresh = false;
 
   @postConstruct()
   protected init(): void {
@@ -68,7 +79,44 @@ export class EntityCardsWidget extends ReactWidget {
     this.title.iconClass = 'fa fa-address-card';
     this.title.closable = true;
     this.addClass('afe-entity-cards-widget');
+    // UR-043: redraw on the backend's own push instead of only on the
+    // "Refresh" button and the initial load below. `this.toDispose` is the
+    // SAME `DisposableCollection` `BaseWidget.dispose()` already drains, so
+    // this subscription is released exactly when ISS-359 found one was not —
+    // no second disposal path to forget.
+    this.toDispose.push(this.indexChangeWatcher.onDidIndexChange(event => this.onIndexChanged(event)));
+    this.toDispose.push(this.onDidChangeVisibility(visible => {
+      if (visible && this.pendingRefresh) {
+        this.pendingRefresh = false;
+        void this.refresh();
+      }
+    }));
     void this.refresh();
+  }
+
+  /**
+   * React to the backend's debounced "generation advanced" push (TASK-022
+   * UR-043).
+   *
+   * FILTERED BY PLAIN STRING EQUALITY against `this.rootUri`, THE SAME
+   * `file:` STRING {@link refresh} ALREADY PASSES THE BACKEND — no
+   * canonicalisation needed on this side of the RPC boundary (see
+   * `NodeNarrativeKnowledgeService`'s own doc for why the backend hands back
+   * exactly this string rather than the canonical path it uses internally).
+   * Before the first successful `refresh()`, `this.rootUri` is `undefined`
+   * and every push is ignored — there is nothing yet to compare it against,
+   * and the pending `refresh()` already in flight will pick up the change on
+   * its own once it resolves.
+   */
+  protected onIndexChanged(event: NarrativeIndexChangedEvent): void {
+    if (this.rootUri === undefined || event.rootUri !== this.rootUri.toString()) {
+      return;
+    }
+    if (this.isVisible) {
+      void this.refresh();
+    } else {
+      this.pendingRefresh = true;
+    }
   }
 
   async refresh(): Promise<void> {

@@ -7,7 +7,8 @@ import { FileSystemWatcherService } from '@theia/filesystem/lib/common/filesyste
 import { FileSystemWatcherServiceDispatcher } from '@theia/filesystem/lib/node/filesystem-watcher-dispatcher';
 import {
   NarrativeKnowledgeService,
-  NarrativeKnowledgeServicePath
+  NarrativeKnowledgeServicePath,
+  type NarrativeKnowledgeServiceClient
 } from '../common';
 import { NodeNarrativeKnowledgeService } from './node-narrative-knowledge-service';
 import { NarrativeMemoryConfigResolver } from './narrative-memory-config-resolver';
@@ -130,10 +131,27 @@ export default new ContainerModule(bind => {
   bind(BackendApplicationContribution).toDynamicValue(ctx => ({
     onStop: () => ctx.container.get(NodeNarrativeKnowledgeService).dispose()
   }));
+  // UR-043. The TARGET returned here is still the ONE singleton service every
+  // connection has always shared — that part is unchanged. What is new is the
+  // per-connection CLIENT parameter `RpcConnectionHandler` already hands this
+  // factory on every incoming connection: subscribing to the service's
+  // `onIndexChanged` Event HERE, once per connection, and pushing to THAT
+  // connection's own `client` is what turns one shared backend signal into a
+  // push every open window receives — `setClient` could not do this (see
+  // `NodeNarrativeKnowledgeService.onIndexChanged`'s own doc: it REPLACES the
+  // one client it remembers, which is wrong the moment UR-041 allows more
+  // than one window against the same backend). `client.onDidCloseConnection`
+  // disposing the subscription is the other half of UR-043's own boundary —
+  // a live subscription outlasting its connection is exactly the shape of
+  // leak ISS-359 already found once in this package
+  // (`TheiaNarrativeFileWatcher.dispose()` with no caller).
   bind(ConnectionHandler).toDynamicValue(ctx =>
-    new RpcConnectionHandler(NarrativeKnowledgeServicePath, () =>
-      ctx.container.get(NarrativeKnowledgeService)
-    )
+    new RpcConnectionHandler<NarrativeKnowledgeServiceClient>(NarrativeKnowledgeServicePath, client => {
+      const service = ctx.container.get<NodeNarrativeKnowledgeService>(NodeNarrativeKnowledgeService);
+      const subscription = service.onIndexChanged(event => client.onIndexChanged(event));
+      client.onDidCloseConnection(() => subscription.dispose());
+      return service;
+    })
   ).inSingletonScope();
 
   // The package's own Russian bundle (WP-5). WP-1 wrote the file and the tooth

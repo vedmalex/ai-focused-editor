@@ -5,9 +5,11 @@ import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { ServiceConnectionProvider } from '@theia/core/lib/browser/messaging/service-connection-provider';
 import { bindToolProvider } from '@theia/ai-core/lib/common/tool-invocation-registry';
 import {
+  NarrativeIndexChangeWatcher,
   NarrativeKnowledgeService,
   NarrativeKnowledgeServicePath
 } from '../common';
+import { BrowserNarrativeIndexChangeWatcher } from './narrative-index-change-watcher';
 import { NarrativeKnowledgeRoundTripProbe } from './narrative-knowledge-round-trip-probe';
 import { NarrativeMemoryContribution } from './narrative-memory-contribution';
 import { NarrativeMemoryPreferenceContribution } from './narrative-memory-preferences';
@@ -41,8 +43,21 @@ import {
  * lives in `src/common`, where it is testable under `bun`.
  */
 export default new ContainerModule(bind => {
+  // UR-043. Bound BEFORE the proxy below, and resolved from `ctx.container`
+  // there rather than injected as a constructor parameter of some third
+  // class: `BrowserNarrativeIndexChangeWatcher` has no dependency on the
+  // proxy itself, so there is no cycle, and `createProxy`'s `target`
+  // parameter is positional — it has to be an already-built object, not
+  // something DI hands the proxy factory later.
+  bind(BrowserNarrativeIndexChangeWatcher).toSelf().inSingletonScope();
+  bind(NarrativeIndexChangeWatcher).toService(BrowserNarrativeIndexChangeWatcher);
+
   bind(NarrativeKnowledgeService).toDynamicValue(ctx =>
-    ServiceConnectionProvider.createProxy(ctx.container, NarrativeKnowledgeServicePath)
+    ServiceConnectionProvider.createProxy(
+      ctx.container,
+      NarrativeKnowledgeServicePath,
+      ctx.container.get(BrowserNarrativeIndexChangeWatcher)
+    )
   ).inSingletonScope();
 
   bind(NarrativeKnowledgeRoundTripProbe).toSelf().inSingletonScope();

@@ -664,3 +664,148 @@ export async function assertNarrativeKnowledgeWatcherSelfUpdates(readSnapshot, t
     writeFileSync(filePath, originalBytes, 'utf8');
   }
 }
+
+// ---------------------------------------------------------------------------
+// TASK-022 UR-043: Narrative Map / Entity Cards must redraw THEMSELVES from
+// the backend's `onIndexChanged` push — not only from the "Refresh" button,
+// and not from a poll. Everything above proves the INDEX self-updates
+// (`assertNarrativeKnowledgeWatcherSelfUpdates`) or answers correctly when
+// ASKED (every other assertion in this file); none of them opens a live
+// widget and watches its RENDERED TEXT change with no command executed after
+// the on-disk edit. That is precisely the gap UR-043 names: the index caught
+// up on its own well before this fix, the PANEL did not.
+// ---------------------------------------------------------------------------
+
+/** The fixture entity card this tooth edits and restores — chosen because
+ *  `assertNarrativeKnowledgeRebuildReady`/the watcher tooth above already run
+ *  against the same isolated workspace copy, so this file is guaranteed to
+ *  exist and be indexed by the time this check runs. */
+const ENTITY_CARD_PUSH_TARGET_RELPATH = 'entities/characters/arjuna.yaml';
+
+/**
+ * Renderer-side reader: the open `EntityCardsWidget`'s rendered text, read
+ * straight off its DOM node (`widget.node.innerText`) — NOT off the RPC
+ * service. Reading through the service would prove only that the INDEX
+ * updated, exactly what {@link assertNarrativeKnowledgeWatcherSelfUpdates}
+ * already proves; reading the WIDGET'S OWN rendered output is what makes this
+ * check able to fail for a reason that one cannot: a live `onIndexChanged`
+ * push with a widget that never subscribed, or subscribed and never disposed
+ * correctly, still leaves the index itself perfectly ready and fresh.
+ */
+export function entityCardsWidgetTextReaderScript(widgetId = 'ai-focused-editor.entity-cards') {
+  return `(async () => {
+    const container = window.theia && window.theia.container;
+    if (!container) { return { ok: false, error: 'the Theia container is not available' }; }
+    const findKey = (label) => {
+      for (const [candidate] of container._bindingDictionary._map.entries()) {
+        const candidateLabel = candidate && (candidate.description || candidate.name);
+        if (candidateLabel === label) { return candidate; }
+      }
+      return undefined;
+    };
+    try {
+      const workspaceServiceKey = findKey('WorkspaceService');
+      if (!workspaceServiceKey) { return { ok: false, error: 'WorkspaceService is not bound in this container' }; }
+      const workspaceService = container.get(workspaceServiceKey);
+      await workspaceService.ready;
+      const roots = workspaceService.tryGetRoots();
+      const root = (roots && roots[0]) || (await workspaceService.roots)[0];
+      const rootUri = root && root.resource ? root.resource.toString() : undefined;
+      if (!rootUri) { return { ok: false, error: 'no workspace root is open' }; }
+
+      const widgetManagerKey = findKey('WidgetManager');
+      if (!widgetManagerKey) { return { ok: false, error: 'WidgetManager is not bound in this container' }; }
+      const widgetManager = container.get(widgetManagerKey);
+      const widget = widgetManager.tryGetWidget(${JSON.stringify(widgetId)});
+      if (!widget) { return { ok: false, error: 'the widget is not open (tryGetWidget returned nothing)' }; }
+      return { ok: true, rootUri, text: widget.node.innerText };
+    } catch (error) {
+      return { ok: false, error: String((error && error.message) || error) };
+    }
+  })()`;
+}
+
+/**
+ * Prove a live, OPEN widget redraws ITSELF from a real on-disk card edit —
+ * no `refresh()`/"Refresh" command, no `rebuild()`, anywhere in this
+ * function — within a bounded wait (TASK-022 UR-043).
+ *
+ * THE BREAKING CASE THIS IS BUILT TO CATCH. Remove the `onIndexChanged` wiring
+ * from `NarrativeIndexMaintainer`/`NodeNarrativeKnowledgeService`, or drop the
+ * `client.onDidCloseConnection(() => subscription.dispose())` line in
+ * `narrative-knowledge-backend-module.ts` so no connection is ever actually
+ * subscribed, or delete `EntityCardsWidget`'s own
+ * `this.toDispose.push(this.indexChangeWatcher.onDidIndexChange(...))` call —
+ * any one of the three leaves the index itself perfectly `ready` and fresh
+ * (every earlier assertion in this file stays green) while THIS check times
+ * out, because the widget goes on showing the pre-edit name until a human
+ * clicks "Refresh".
+ *
+ * WHY THE EDIT IS THE ENTITY'S `name:` FIELD, NOT A RENAME OF THE FILE ITSELF.
+ * UR-043's own text bundles two symptoms under "переименование" — a stale
+ * CARD and, SEPARATELY, a stale FILENAME in the manuscript tree — and is
+ * explicit that the second may be a different cause not to be folded in
+ * without proof. Editing `name:` in place isolates exactly the first: the
+ * card's displayed name is a pure function of this field, so this check
+ * cannot pass or fail for a filename-tree reason it was never built to test.
+ *
+ * THE FIXTURE IS ALWAYS RESTORED, INCLUDING ON THE FAILURE/TIMEOUT PATH — same
+ * discipline as {@link assertNarrativeKnowledgeWatcherSelfUpdates} and for the
+ * identical reason (this isolated workspace copy, ISS-365, is still shared
+ * with whatever check runs after this one).
+ */
+export async function assertEntityCardsWidgetSelfUpdatesOnPush(readWidgetText, target, timeoutMs = 30_000) {
+  const baseline = await readWidgetText();
+  if (!baseline || !baseline.ok) {
+    throw new Error(
+      `[${target}] could not read the Entity Cards widget: ${baseline ? baseline.error : 'nothing returned'}`
+    );
+  }
+  if (!baseline.text.includes('Arjuna')) {
+    throw new Error(
+      `[${target}] the open Entity Cards widget does not show "Arjuna" yet — this check must run AFTER ` +
+      'the widget has loaded its first snapshot (see assertNarrativeKnowledgeRebuildReady/the widget\'s own ' +
+      'initial refresh()).'
+    );
+  }
+
+  const filePath = join(fileURLToPath(baseline.rootUri), ENTITY_CARD_PUSH_TARGET_RELPATH);
+  const originalBytes = readFileSync(filePath, 'utf8');
+  const pushMarker = `Arjuna (UR-043 push tooth ${Date.now()})`;
+  try {
+    if (!originalBytes.includes('name: Arjuna\n')) {
+      throw new Error(
+        `[${target}] ${ENTITY_CARD_PUSH_TARGET_RELPATH} does not contain the expected "name: Arjuna" line — ` +
+        'the fixture card changed shape and this check needs updating alongside it.'
+      );
+    }
+    writeFileSync(filePath, originalBytes.replace('name: Arjuna\n', `name: ${pushMarker}\n`), 'utf8');
+
+    const deadline = Date.now() + timeoutMs;
+    let lastSeenText = baseline.text;
+    while (Date.now() < deadline) {
+      const snapshot = await readWidgetText();
+      if (snapshot && snapshot.ok) {
+        lastSeenText = snapshot.text;
+        if (snapshot.text.includes(pushMarker)) {
+          console.log(
+            `PASS [${target}] Entity Cards widget self-updated from a live push: on-disk card edit reached ` +
+            'the open panel with no refresh() call and no Refresh command executed'
+          );
+          return;
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    throw new Error(
+      `[${target}] the open Entity Cards widget did NOT show "${pushMarker}" after an on-disk edit to ` +
+      `${ENTITY_CARD_PUSH_TARGET_RELPATH} within ${timeoutMs}ms, and no refresh()/Refresh command was ` +
+      `invoked anywhere in this check. Last observed widget text did not contain the marker (length ` +
+      `${lastSeenText.length}). The onIndexChanged push most likely never reached this widget.`
+    );
+  } finally {
+    // ALWAYS restore — including on the timeout/error path above.
+    writeFileSync(filePath, originalBytes, 'utf8');
+  }
+}

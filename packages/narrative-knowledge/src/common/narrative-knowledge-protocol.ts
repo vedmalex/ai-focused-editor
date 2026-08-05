@@ -264,3 +264,46 @@ export interface RebuildAvailability {
   /** Present exactly when `available` is false. */
   readonly reason?: RebuildRefusalReason;
 }
+
+/**
+ * Pushed to every connected frontend when a workspace's index generation
+ * advances (TASK-022 UR-043).
+ *
+ * `generation` IS THE SAME COUNTER `IndexState.generation` ALREADY CARRIES —
+ * no new concept, just the existing one delivered instead of polled.
+ * `rootUri` is the SAME STRING a caller passes as this protocol's own
+ * `rootUri` parameter (`workspaceService.tryGetRoots()[0].resource.toString()`
+ * in every existing consumer): a frontend matches it against its own cached
+ * workspace root by plain equality, no canonicalisation on this side of the
+ * RPC boundary — see `NodeNarrativeKnowledgeService`'s doc for how the
+ * backend recovers that exact string from a workspace root that is stored
+ * internally as a canonical filesystem path.
+ *
+ * DEBOUNCED, NOT ONE-PUSH-PER-COMMIT. See
+ * `INDEX_CHANGE_NOTIFICATION_DEBOUNCE_MS` (`narrative-index-maintainer.ts`)
+ * for where the coalescing happens and why: a full rebuild commits many
+ * transactions in one drain-to-empty cycle, and UR-043's own boundary forbids
+ * redrawing a panel once per commit.
+ */
+export interface NarrativeIndexChangedEvent {
+  readonly rootUri: string;
+  readonly generation: number;
+}
+
+/**
+ * Client side of {@link NarrativeKnowledgeService} (TASK-022 UR-043): the one
+ * push a frontend needs to stop polling and redraw itself instead.
+ *
+ * DELIBERATELY NOT A METHOD ON `NarrativeKnowledgeService` ITSELF. That
+ * interface is implemented BOTH by the frontend RPC proxy (a plain method call
+ * becomes a request) AND by the backend (`NodeNarrativeKnowledgeService`);
+ * neither shape can carry a live `Event<T>` PROPERTY across the RPC boundary —
+ * the proxy factory turns every property access into a remote method call, so
+ * an `Event`-typed field on the shared interface would silently break rather
+ * than push anything. Every other server→client push in this codebase
+ * (`GitWatcherClient.onGitChanged`, `FileSystemWatcherClient.onDidFilesChanged`)
+ * uses the same separate-client-interface shape, for the identical reason.
+ */
+export interface NarrativeKnowledgeServiceClient {
+  onIndexChanged(event: NarrativeIndexChangedEvent): void;
+}

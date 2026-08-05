@@ -15,6 +15,8 @@ import {
   diagnosticsEnvelopesReaderScript,
   assertNarrativeKnowledgeWatcherSelfUpdates,
   watcherStatusSnapshotReaderScript,
+  assertEntityCardsWidgetSelfUpdatesOnPush,
+  entityCardsWidgetTextReaderScript,
   createIsolatedSampleWorkspace,
   removeIsolatedSampleWorkspace
 } from './narrative-knowledge-round-trip.mjs';
@@ -199,6 +201,18 @@ try {
   // all). Runs LAST and edits/restores a real fixture file on disk.
   await assertNarrativeKnowledgeWatcherSelfUpdates(
     () => page.evaluate(watcherStatusSnapshotReaderScript()),
+    'browser'
+  );
+
+  // TASK-022 UR-043: the OPEN Entity Cards widget (opened above by
+  // `entities.refreshCards` at line ~143, still open here) must redraw itself
+  // from the backend's `onIndexChanged` push. This is deliberately the LAST
+  // check in the file and runs after the watcher self-update tooth above —
+  // it needs the index already `ready` and this exact card indexed, which
+  // that tooth's own predecessor (`assertNarrativeKnowledgeRebuildReady`)
+  // already established.
+  await assertEntityCardsWidgetSelfUpdatesOnPush(
+    () => page.evaluate(entityCardsWidgetTextReaderScript()),
     'browser'
   );
 

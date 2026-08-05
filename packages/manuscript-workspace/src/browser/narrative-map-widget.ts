@@ -1,11 +1,17 @@
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { nls } from '@theia/core/lib/common/nls';
+import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import {
   inject,
   injectable,
   postConstruct
 } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
+import {
+  NarrativeIndexChangeWatcher,
+  type NarrativeIndexChangedEvent,
+  type NarrativeIndexChangeWatcher as NarrativeIndexChangeWatcherType
+} from '@ai-focused-editor/narrative-knowledge';
 import {
   NarrativeGraphService,
   NarrativeGraphSnapshot,
@@ -33,8 +39,28 @@ export class NarrativeMapWidget extends ReactWidget {
   @inject(NarrativeGraphService)
   protected readonly graphService!: NarrativeGraphService;
 
+  @inject(NarrativeIndexChangeWatcher)
+  protected readonly indexChangeWatcher!: NarrativeIndexChangeWatcherType;
+
+  @inject(WorkspaceService)
+  protected readonly workspaceService!: WorkspaceService;
+
   protected snapshot: NarrativeGraphSnapshot | undefined;
   protected loading = false;
+  /** The workspace root this widget answers pushes for — resolved the same
+   *  way every other narrative-knowledge consumer resolves it
+   *  (`entity-cards-widget.ts`, `browser-narrative-graph-service.ts`), rather
+   *  than reused from `snapshot.rootUri`: that field is rebuilt from the
+   *  BACKEND's canonical filesystem path (`node-narrative-graph-service.ts`'s
+   *  `FileUri.create(rootPath)`), which can differ byte-for-byte from the
+   *  `file:` string this frontend cached — a realpath through a symlink on
+   *  macOS being the ordinary case. Comparing against a SEPARATELY resolved,
+   *  never-canonicalised value keeps the equality check exact. */
+  protected rootUri: string | undefined;
+  /** Set when a push arrives while this widget is closed or scrolled out of
+   *  view (TASK-022 UR-043) — see `EntityCardsWidget`'s identical field for
+   *  the full reasoning; the two widgets are the pair UR-043 names. */
+  protected pendingRefresh = false;
 
   @postConstruct()
   protected init(): void {
@@ -44,6 +70,13 @@ export class NarrativeMapWidget extends ReactWidget {
     this.title.iconClass = 'fa fa-share-alt';
     this.title.closable = true;
     this.addClass('afe-narrative-map');
+    this.toDispose.push(this.indexChangeWatcher.onDidIndexChange(event => this.onIndexChanged(event)));
+    this.toDispose.push(this.onDidChangeVisibility(visible => {
+      if (visible && this.pendingRefresh) {
+        this.pendingRefresh = false;
+        void this.refresh();
+      }
+    }));
     void this.refresh();
   }
 
@@ -51,10 +84,30 @@ export class NarrativeMapWidget extends ReactWidget {
     this.loading = true;
     this.update();
     try {
+      this.rootUri = await this.getRootUri();
       this.snapshot = await this.graphService.refresh();
     } finally {
       this.loading = false;
       this.update();
+    }
+  }
+
+  protected async getRootUri(): Promise<string | undefined> {
+    await this.workspaceService.ready;
+    const root = this.workspaceService.tryGetRoots()[0] ?? (await this.workspaceService.roots)[0];
+    return root?.resource.toString();
+  }
+
+  /** See `EntityCardsWidget.onIndexChanged` for the full reasoning — this is
+   *  the same filter and the same visibility guard, applied here. */
+  protected onIndexChanged(event: NarrativeIndexChangedEvent): void {
+    if (this.rootUri === undefined || event.rootUri !== this.rootUri) {
+      return;
+    }
+    if (this.isVisible) {
+      void this.refresh();
+    } else {
+      this.pendingRefresh = true;
     }
   }
 

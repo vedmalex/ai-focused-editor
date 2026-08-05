@@ -93,6 +93,35 @@ export const WATCHER_WARMUP_SWEEP_INTERVAL_MS = 2_000;
  */
 export const WATCHER_WARMUP_DURATION_MS = 60_000;
 
+/**
+ * How long to wait, after the LAST completed pass, before telling
+ * `onIndexChanged` about the generation reached (TASK-022 UR-043).
+ *
+ * NAMED AND CHOSEN DELIBERATELY, not left as an inline magic number — UR-043's
+ * own boundary requires it: "частые изменения должны схлопываться (при
+ * перестройке поколение растёт много раз подряд — нельзя перерисовывать на
+ * каждое)". A full rebuild, or a `git checkout` that lands a whole burst of
+ * watcher batches back to back, can drive several passes — several committed
+ * transactions, several generation bumps — through {@link NarrativeIndexMaintainer.drain}
+ * before the queue empties; pushing one RPC notification per pass would make
+ * Narrative Map and Entity Cards redraw once per commit during exactly that
+ * burst.
+ *
+ * THE SAME DEBOUNCE IDIOM ALREADY USED FOR THE WATCHER'S OWN BATCHING
+ * ({@link NarrativeIndexMaintainerOptions.config}'s `debounceMs`): each
+ * completed pass RE-ARMS a single timer rather than firing immediately, so a
+ * burst collapses to one push carrying the LAST generation reached, exactly
+ * as `onFileChanges` collapses a burst of file events into one batch.
+ *
+ * 250ms IS SHORTER THAN THE DEFAULT WATCHER `debounceMs` (400ms), ON PURPOSE.
+ * This timer only ever starts AFTER a pass has already committed, so it adds
+ * to a wait the user already sat through rather than compounding with it; the
+ * five-second poll UR-036 replaces made "index caught up" invisible for up to
+ * five seconds, so 250ms on top of an already-committed write is not a
+ * regression against anything a reader could have noticed before.
+ */
+export const INDEX_CHANGE_NOTIFICATION_DEBOUNCE_MS = 250;
+
 /** What one pass produced: an incremental report, or a full rebuild's. */
 export type MaintenanceOutcome =
   | { kind: 'update'; trigger: MaintenanceTrigger; report: NarrativeUpdateReport }
@@ -126,6 +155,17 @@ export interface NarrativeIndexMaintainerOptions {
   /** Scope of config changes this maintainer answers to. */
   rootPath?: string;
   now?: () => number;
+  /**
+   * Debounced "generation advanced" push (TASK-022 UR-043). Called AT MOST
+   * once per {@link INDEX_CHANGE_NOTIFICATION_DEBOUNCE_MS} window, with the
+   * generation the session reports once the debounce settles — see that
+   * constant's own doc for why a whole rebuild still collapses to one call.
+   *
+   * OPTIONAL, like {@link watcher}: a maintainer built for a test or for the
+   * bun contract-core lane has nobody to push to, and omitting this callback
+   * costs it nothing beyond the one timer it would otherwise arm.
+   */
+  onIndexChanged?: (generation: number) => void;
 }
 
 interface QueuedPass {
@@ -143,6 +183,7 @@ export class NarrativeIndexMaintainer {
   private readonly configurator: NarrativeMemoryConfigurator | undefined;
   private readonly rootPath: string | undefined;
   private readonly now: () => number;
+  private readonly notifyIndexChanged: ((generation: number) => void) | undefined;
 
   private readonly subscriptions: NarrativeDisposable[] = [];
   private debounceTimer: NarrativeTimerHandle | undefined;
@@ -157,6 +198,14 @@ export class NarrativeIndexMaintainer {
   private queue: QueuedPass[] = [];
   private draining: Promise<void> | undefined;
   private started = false;
+  /** Armed by {@link scheduleIndexChangedNotification}; re-armed (not
+   *  stacked) by every pass that completes while it is pending — the
+   *  coalescing {@link INDEX_CHANGE_NOTIFICATION_DEBOUNCE_MS} exists for. */
+  private notifyTimer: NarrativeTimerHandle | undefined;
+  /** The generation last handed to {@link notifyIndexChanged}, so a pass that
+   *  committed nothing new (an empty sweep) does not re-announce the same
+   *  number when its own debounce window settles. */
+  private lastNotifiedGeneration: number | undefined;
 
   /**
    * How many passes are executing RIGHT NOW.
@@ -178,6 +227,7 @@ export class NarrativeIndexMaintainer {
     this.configurator = options.configurator;
     this.rootPath = options.rootPath;
     this.now = options.now ?? (() => Date.now());
+    this.notifyIndexChanged = options.onIndexChanged;
   }
 
   // ---- lifecycle ---------------------------------------------------------
@@ -226,6 +276,13 @@ export class NarrativeIndexMaintainer {
     this.debounceTimer = undefined;
     this.sweepTimer?.cancel();
     this.sweepTimer = undefined;
+    // Same reasoning as the two cancellations above (UR-043): a maintainer
+    // that is stopping must not fire a push moments later for a workspace
+    // whose session may already be gone — `NodeNarrativeKnowledgeService.dispose()`
+    // clears `this.sessions` synchronously, and an unarmed timer is a timer
+    // that cannot read it.
+    this.notifyTimer?.cancel();
+    this.notifyTimer = undefined;
     this.stopWarmup();
     for (const subscription of this.subscriptions.splice(0)) {
       subscription.dispose();
@@ -373,7 +430,16 @@ export class NarrativeIndexMaintainer {
         this.inFlight++;
         this.maxConcurrentPasses = Math.max(this.maxConcurrentPasses, this.inFlight);
         try {
-          pass.resolve(await pass.run());
+          const outcome = await pass.run();
+          pass.resolve(outcome);
+          // A REJECTED pass wrote nothing, so it is deliberately excluded —
+          // scheduling a push after a failed write would announce a change
+          // that never committed. A pass that resolves may still have
+          // written NOTHING (an empty sweep, ОВ-4's "пустой проход бесплатен"),
+          // which `scheduleIndexChangedNotification` itself is what filters:
+          // it reads the CURRENT generation only once the debounce settles,
+          // so a no-op pass followed by silence re-announces nothing.
+          this.scheduleIndexChangedNotification();
         } catch (error) {
           pass.reject(error);
         } finally {
@@ -390,6 +456,38 @@ export class NarrativeIndexMaintainer {
     if (this.queue.length > 0 && this.draining === undefined) {
       this.draining = this.drain();
     }
+  }
+
+  /**
+   * (Re)arm the debounced `onIndexChanged` push (TASK-022 UR-043).
+   *
+   * CALLED AFTER EVERY RESOLVED PASS, not once per `drain()` call. The two
+   * read the same as a single coalesced push in the common case — a burst of
+   * passes runs inside one `drain()` — but they are not the same event: a
+   * pass can also arrive AFTER a `drain()` has already returned (the restart
+   * branch just above), and re-arming per pass is what keeps that second
+   * burst debounced too, with no dependence on how the queue happened to be
+   * shaped.
+   */
+  private scheduleIndexChangedNotification(): void {
+    const notify = this.notifyIndexChanged;
+    if (notify === undefined) {
+      return;
+    }
+    this.notifyTimer?.cancel();
+    this.notifyTimer = this.scheduler.schedule(INDEX_CHANGE_NOTIFICATION_DEBOUNCE_MS, () => {
+      this.notifyTimer = undefined;
+      const generation = this.session.state().generation;
+      if (generation === this.lastNotifiedGeneration) {
+        // Every pass since the last push committed nothing new — most often
+        // a "Check for Changes Now" that found nothing. UR-043 forbids
+        // announcing a change that did not happen exactly as it forbids
+        // announcing one too often; silence is the honest answer here.
+        return;
+      }
+      this.lastNotifiedGeneration = generation;
+      notify(generation);
+    });
   }
 
   // ---- the watcher path --------------------------------------------------

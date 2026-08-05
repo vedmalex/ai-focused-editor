@@ -1,6 +1,7 @@
 import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'node:path';
 import { existsSync, promises as fs } from 'node:fs';
 import { inject, injectable } from '@theia/core/shared/inversify';
+import { Emitter, type Event } from '@theia/core/lib/common';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import {
   InMemoryNarrativeIndexStore,
@@ -26,6 +27,7 @@ import {
   type NarrativeDocumentSummary,
   type NarrativeEntity,
   type NarrativeFileWatcher,
+  type NarrativeIndexChangedEvent,
   type NarrativeIndexStore,
   type NarrativeKnowledgeService,
   type NarrativeMemoryConfigPatch,
@@ -79,6 +81,62 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
   /** One maintainer per root: the watcher subscription, the debounce window,
    *  the fallback sweep and THE SINGLE WRITE GUARD for that workspace. */
   protected readonly maintainers = new Map<string, NarrativeIndexMaintainer>();
+
+  /**
+   * The exact `rootUri` string a frontend last passed in, keyed by the
+   * CANONICAL path {@link session} opens a store under (TASK-022 UR-043).
+   *
+   * WHY THIS EXISTS. `NarrativeIndexChangedEvent.rootUri` has to be a string a
+   * frontend can compare against its own cached `workspaceService.tryGetRoots()
+   * [0].resource.toString()` by PLAIN EQUALITY — the frontend has no `fs`
+   * module to canonicalise anything with. Every RPC method here canonicalises
+   * `rootUri` through {@link canonicalWorkspaceKey} BEFORE it ever reaches a
+   * session or a maintainer, so neither holds the original string — this map
+   * is the one place it survives.
+   *
+   * ONLY EVER SET FROM A `file:` URI, DELIBERATELY (see {@link session}).
+   * `getContextForDocument`/`updateDocument` also call `session()`, but with
+   * an ALREADY-CANONICAL root path found by walking up to a `manifest.yaml`
+   * — recording that value here would overwrite a good `file://` string with
+   * a bare filesystem path on the very next document edit, and every
+   * `NarrativeIndexChangedEvent` after that would carry a `rootUri` no
+   * frontend's cached string could ever equal.
+   *
+   * NOT PRUNED BY {@link reconcileMaintainers}. A root the LRU evicted and a
+   * root that was never opened both answer with `?? rootPath` (the canonical
+   * key) if pushed to before any `file:` call repopulates the entry — a
+   * strictly worse but still HARMLESS answer (no consumer will ever have
+   * cached that exact string as ITS workspace root, so the comparison simply
+   * never matches, exactly as if no event had been sent). Pruning on eviction
+   * would buy nothing a session reopen does not already fix on its own.
+   */
+  protected readonly originalRootUriByPath = new Map<string, string>();
+
+  /**
+   * Debounced "the index for this root changed" push (TASK-022 UR-043).
+   *
+   * FED BY EACH ROOT'S OWN {@link NarrativeIndexMaintainer}, which is where
+   * the actual debounce/coalescing lives — see
+   * `INDEX_CHANGE_NOTIFICATION_DEBOUNCE_MS` (`narrative-index-maintainer.ts`).
+   * This emitter itself does no additional debouncing; it exists only to fan
+   * one root's already-debounced signal out to every RPC connection currently
+   * subscribed (`narrative-knowledge-backend-module.ts`), same as
+   * `FileSystemWatcherServiceDispatcher` fans a filesystem event out to
+   * several registered clients.
+   */
+  protected readonly onIndexChangedEmitter = new Emitter<NarrativeIndexChangedEvent>();
+
+  /** Public surface of {@link onIndexChangedEmitter}. Subscribed to, once per
+   *  RPC connection, in `narrative-knowledge-backend-module.ts` — NOT via
+   *  `setClient`, because this service is bound in singleton scope and serves
+   *  every connection with the SAME instance (UR-041 made that plural: one
+   *  process can now serve more than one open window). `setClient` REPLACES
+   *  the one client it remembers, which would silently stop pushing to every
+   *  connection but the most recent; a plain `Event`, subscribed to per
+   *  connection and disposed on that connection's close, has no such limit. */
+  get onIndexChanged(): Event<NarrativeIndexChangedEvent> {
+    return this.onIndexChangedEmitter.event;
+  }
 
   /**
    * The `configure` handler, ONE PER PROCESS.
@@ -350,6 +408,8 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
     }
     this.maintainers.clear();
     this.sessions.clear();
+    this.originalRootUriByPath.clear();
+    this.onIndexChangedEmitter.dispose();
     this.registry.closeAll();
   }
 
@@ -381,6 +441,18 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
       config: () => this.resolver.resolve(rootPath),
       configurator: this.configurator,
       rootPath,
+      // UR-043. The maintainer already debounces/coalesces; this callback
+      // only has to fan the ALREADY-SETTLED generation out to every RPC
+      // connection. Falling back to `rootPath` itself (rather than dropping
+      // the event) covers the theoretical case of a maintainer started before
+      // any `file:`-shaped call ever reached `session()` — it cannot happen
+      // through this class's own call graph (see `session`'s doc), but a
+      // silently swallowed push would be a worse failure than one no
+      // frontend's cached URI happens to match.
+      onIndexChanged: generation => this.onIndexChangedEmitter.fire({
+        rootUri: this.originalRootUriByPath.get(rootPath) ?? rootPath,
+        generation
+      }),
       ...(this.createWatcher !== undefined ? { watcher: this.createWatcher(rootPath) } : {})
     });
     this.maintainers.set(rootPath, maintainer);
@@ -415,6 +487,11 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
    */
   protected session(rootUriOrPath: string): NarrativeIndexSession {
     const rootPath = canonicalWorkspaceKey(rootUriOrPath);
+    // See `originalRootUriByPath`'s own doc for why ONLY a `file:` URI is
+    // recorded here, never the canonical path some callers already pass.
+    if (rootUriOrPath.startsWith('file:')) {
+      this.originalRootUriByPath.set(rootPath, rootUriOrPath);
+    }
     const existing = this.sessions.get(rootPath);
     if (existing !== undefined) {
       return existing;
