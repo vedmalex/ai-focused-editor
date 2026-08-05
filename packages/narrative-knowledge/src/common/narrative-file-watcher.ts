@@ -82,6 +82,29 @@ export interface NarrativeFileWatcher {
    */
   onDidFail(listener: (failure: NarrativeWatcherFailure) => void): NarrativeDisposable;
   dispose(): void;
+
+  /**
+   * Resolves once the underlying subscription is believed to be armed
+   * (TASK-022 UR-036 part 2, ISS-360).
+   *
+   * OPTIONAL, AND ITS ABSENCE IS A CLAIM: "this watcher delivers changes from
+   * the moment `onDidChangeFiles` is subscribed, with no arming lag worth
+   * covering". That is true of {@link TestNarrativeFileWatcher} (its `push()`
+   * is synchronous) and false of the real Theia adapter — measurement against
+   * a running application showed the spawned parcel watcher can start
+   * delivering events TENS OF SECONDS after `FileSystemWatcherService
+   * .watchFileChanges()`'s own promise resolves, and in that gap an edit is
+   * lost outright: no subscription is live to see it, and the only thing that
+   * would otherwise notice is the fallback sweep on its full, minutes-long TTL.
+   *
+   * A watcher that can attest to this gap implements it, and
+   * `NarrativeIndexMaintainer` uses the resolution as the trigger for a short
+   * warm-up reconciliation phase (see `WATCHER_WARMUP_SWEEP_INTERVAL_MS` /
+   * `WATCHER_WARMUP_DURATION_MS`) that closes exactly this window — cheaply,
+   * through the same prefiltered sweep the routine TTL fallback already runs,
+   * not a rebuild.
+   */
+  whenReady?(): Promise<void>;
 }
 
 /**
@@ -97,6 +120,17 @@ export class TestNarrativeFileWatcher implements NarrativeFileWatcher {
   private readonly changeListeners = new Set<(changes: readonly NarrativeFileChange[]) => void>();
   private readonly failListeners = new Set<(failure: NarrativeWatcherFailure) => void>();
   private disposed = false;
+
+  /**
+   * UNSET BY EVERY EXISTING FIXTURE, ON PURPOSE (ISS-360). This double already
+   * delivers `push()` synchronously, so it has no "not yet armed" phase to
+   * model, and every readiness/timer assertion already written against it
+   * (`narrative-index-maintenance-contract.ts`) depends on `start()` arming
+   * NOTHING beyond the fallback sweep. A case that specifically wants to
+   * exercise the warm-up phase assigns this field to a function BEFORE calling
+   * `maintainer.start()` — see the ISS-360 cases in that same contract file.
+   */
+  whenReady: (() => Promise<void>) | undefined;
 
   onDidChangeFiles(listener: (changes: readonly NarrativeFileChange[]) => void): NarrativeDisposable {
     this.changeListeners.add(listener);

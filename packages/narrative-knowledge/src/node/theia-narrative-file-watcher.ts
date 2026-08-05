@@ -65,6 +65,11 @@ export class TheiaNarrativeFileWatcher implements NarrativeFileWatcher {
   private readonly options: TheiaNarrativeFileWatcherOptions;
   private watcherId: number | undefined;
   private disposed = false;
+  /** See {@link whenReady}. Settles once, whichever way `watchFileChanges`
+   *  goes — a rejection is reported through {@link emitFailure} already; it is
+   *  not repeated as a rejection here (ISS-360 tooth: `whenReady()` is a
+   *  TIMING signal for the warm-up sweep, not a second failure channel). */
+  private readonly readyPromise: Promise<void>;
 
   constructor(options: TheiaNarrativeFileWatcherOptions) {
     this.options = options;
@@ -75,7 +80,7 @@ export class TheiaNarrativeFileWatcher implements NarrativeFileWatcher {
       // could only be discarded one layer up.
       onError: () => this.emitFailure('the file watcher reported an error')
     });
-    void options.watcherService
+    this.readyPromise = options.watcherService
       .watchFileChanges(this.clientId, FileUri.create(options.rootPath).toString(), {
         // The same skip list the walk uses. Watching `node_modules` or the
         // `.theia` directory that HOLDS THE INDEX DATABASE would make the index
@@ -95,6 +100,19 @@ export class TheiaNarrativeFileWatcher implements NarrativeFileWatcher {
         // let the index claim a freshness it cannot have for the whole session.
         this.emitFailure('the file watcher could not be started');
       });
+  }
+
+  /**
+   * Resolves once `watchFileChanges()`'s own promise has settled — the
+   * EARLIEST signal this adapter has, and, per ISS-360's measurement, NOT
+   * proof that events are flowing yet: a live application showed the spawned
+   * parcel watcher start delivering changes up to sixteen measured seconds
+   * AFTER this resolves. `NarrativeIndexMaintainer` treats this resolution as
+   * "start the warm-up phase", not "trust the watcher" — the warm-up sweep
+   * cadence is what actually covers the remaining gap.
+   */
+  whenReady(): Promise<void> {
+    return this.readyPromise;
   }
 
   onDidChangeFiles(listener: (changes: readonly NarrativeFileChange[]) => void): NarrativeDisposable {

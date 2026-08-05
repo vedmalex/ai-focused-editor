@@ -64,7 +64,34 @@ import { systemTimerScheduler, type NarrativeTimerHandle, type NarrativeTimerSch
 import type { NarrativeWorkspaceSource } from './narrative-workspace-source';
 
 /** Why a pass ran. Carried into the report so a log says what woke the index. */
-export type MaintenanceTrigger = 'watcher' | 'explicit' | 'ttl-sweep' | 'recovery-sweep' | 'document';
+export type MaintenanceTrigger = 'watcher' | 'explicit' | 'ttl-sweep' | 'recovery-sweep' | 'document' | 'warmup-sweep';
+
+/**
+ * How often a warm-up sweep runs while a watcher's arming is unproven
+ * (TASK-022 UR-036 part 2, ISS-360).
+ *
+ * NOT SUB-SECOND, DELIBERATELY. The failure this closes is a real gap of up to
+ * sixteen measured seconds between `watchFileChanges()`'s promise resolving and
+ * the spawned watcher actually delivering an event — polling faster than an
+ * editor's own save cadence would not close that gap any better and would only
+ * add I/O for no observational gain. Two seconds bounds the loss window to
+ * "barely noticeable" without turning the warm-up phase into the thing ОВ-1's
+ * routine TTL sweep is deliberately cheap by NOT being.
+ */
+export const WATCHER_WARMUP_SWEEP_INTERVAL_MS = 2_000;
+
+/**
+ * How long the warm-up phase runs before yielding to the ordinary
+ * `fallbackTtlMs` cadence (ISS-360).
+ *
+ * The measured worst case was sixteen seconds; sixty gives a wide margin for a
+ * slower disk or a bigger manuscript's `stat()` pass without leaving the
+ * frequent sweep running indefinitely on a workspace that is simply idle —
+ * `fallbackTtlMs` is the setting for STEADY STATE, tech_spec ОВ-9б's own
+ * wording, and this constant is deliberately a separate number so warming up
+ * faster never means redefining what that setting means.
+ */
+export const WATCHER_WARMUP_DURATION_MS = 60_000;
 
 /** What one pass produced: an incremental report, or a full rebuild's. */
 export type MaintenanceOutcome =
@@ -120,6 +147,11 @@ export class NarrativeIndexMaintainer {
   private readonly subscriptions: NarrativeDisposable[] = [];
   private debounceTimer: NarrativeTimerHandle | undefined;
   private sweepTimer: NarrativeTimerHandle | undefined;
+  /** Armed only during the warm-up phase (ISS-360); `undefined` once it ends. */
+  private warmupTimer: NarrativeTimerHandle | undefined;
+  /** When the warm-up phase gives up and defers to `fallbackTtlMs`; `undefined`
+   *  outside the phase (before it starts, and after it ends either way). */
+  private warmupDeadline: number | undefined;
   /** Changes accumulated since the current debounce window opened. */
   private pending: NarrativeFileChange[] = [];
   private queue: QueuedPass[] = [];
@@ -165,6 +197,7 @@ export class NarrativeIndexMaintainer {
     if (this.watcher !== undefined) {
       this.subscriptions.push(this.watcher.onDidChangeFiles(changes => this.onFileChanges(changes)));
       this.subscriptions.push(this.watcher.onDidFail(failure => this.onWatcherLost(failure.message)));
+      this.beginWatcherWarmup(this.watcher);
     }
     if (this.configurator !== undefined) {
       this.subscriptions.push(this.configurator.onDidChange(change => this.onConfigChange(change)));
@@ -193,6 +226,7 @@ export class NarrativeIndexMaintainer {
     this.debounceTimer = undefined;
     this.sweepTimer?.cancel();
     this.sweepTimer = undefined;
+    this.stopWarmup();
     for (const subscription of this.subscriptions.splice(0)) {
       subscription.dispose();
     }
@@ -378,6 +412,20 @@ export class NarrativeIndexMaintainer {
     if (changes.length === 0) {
       return;
     }
+    // A REAL EVENT IS DELIBERATELY *NOT* TREATED AS PROOF THE WHOLE WATCHER IS
+    // ARMED (ISS-360). The spawned watcher behind this port covers a subtree,
+    // and there is no guarantee every directory in it armed at the same
+    // instant — one event proves coverage for the path it names, not for the
+    // rest of the manuscript. Cancelling the warm-up phase on the strength of
+    // a single event would re-open ISS-360's own window for whatever had not
+    // armed yet, just narrower and far less likely to be noticed. The warm-up
+    // phase therefore runs to its own deadline regardless of events arriving
+    // alongside it; the cost is bounded (at most `WATCHER_WARMUP_DURATION_MS`
+    // / `WATCHER_WARMUP_SWEEP_INTERVAL_MS` prefiltered sweeps, each a `stat()`
+    // walk that reads a file only when its (size, mtime) prefilter says so —
+    // ОВ-1 C2's own tooth), and the single guard this maintainer already owns
+    // serializes a warm-up sweep against a debounced watcher pass exactly as
+    // it does an explicit rebuild against either.
     this.pending.push(...changes.map(change => ({ ...change, path: normalizeWorkspacePath(change.path) })));
     this.debounceTimer?.cancel();
     this.debounceTimer = this.scheduler.schedule(this.readConfig().debounceMs, () => {
@@ -421,6 +469,69 @@ export class NarrativeIndexMaintainer {
       return;
     }
     this.armSweep();
+  }
+
+  /**
+   * Start the warm-up phase for a watcher whose arming this maintainer cannot
+   * take on faith (ISS-360).
+   *
+   * `watcher.whenReady()` ABSENT MEANS SKIP ENTIRELY. A watcher with no such
+   * method (every test double in this codebase today) is claiming its events
+   * are live the instant `onDidChangeFiles` returned, and the warm-up phase
+   * has nothing to wait for — arming it anyway would schedule timers a caller
+   * of `start()` never asked for and no readiness case here has ever assumed
+   * exist (`scheduler.armedDelays` is asserted EXACTLY elsewhere in this file).
+   *
+   * THE FIRST RECONCILE PASS RUNS THE INSTANT `whenReady()` RESOLVES, before
+   * any interval timer — that pass is what closes the gap between
+   * "subscribed" and "provably armed", which is exactly the gap an edit could
+   * have landed in and which no event will ever be delivered for.
+   */
+  private beginWatcherWarmup(watcher: NarrativeFileWatcher): void {
+    const ready = watcher.whenReady?.();
+    if (ready === undefined) {
+      return;
+    }
+    void ready.then(() => {
+      if (!this.started) {
+        return;
+      }
+      this.warmupDeadline = this.now() + WATCHER_WARMUP_DURATION_MS;
+      void this.sweep('prefiltered', 'warmup-sweep').catch(() => undefined);
+      this.armWarmupSweep();
+    });
+  }
+
+  /**
+   * Re-arm one short-interval warm-up sweep, or stop the phase.
+   *
+   * THE PHASE ENDS BY ITS OWN DEADLINE, DELIBERATELY NOT BY THE FIRST REAL
+   * EVENT (see {@link onFileChanges}'s own comment) — this method's only exit
+   * is "give up after `WATCHER_WARMUP_DURATION_MS`", handled by simply not
+   * re-arming; the long `fallbackTtlMs` sweep armed in `start()` was never
+   * paused and keeps standing insurance from here on, unchanged from what it
+   * did before this phase existed. `stop()` is the other door, via
+   * {@link stopWarmup} directly.
+   */
+  private armWarmupSweep(): void {
+    if (!this.started || this.warmupDeadline === undefined || this.now() >= this.warmupDeadline) {
+      this.warmupTimer = undefined;
+      this.warmupDeadline = undefined;
+      return;
+    }
+    this.warmupTimer = this.scheduler.schedule(WATCHER_WARMUP_SWEEP_INTERVAL_MS, () => {
+      this.warmupTimer = undefined;
+      void this.sweep('prefiltered', 'warmup-sweep')
+        .catch(() => undefined)
+        .finally(() => this.armWarmupSweep());
+    });
+  }
+
+  /** Cancel the warm-up phase, if one is running. Idempotent. */
+  private stopWarmup(): void {
+    this.warmupTimer?.cancel();
+    this.warmupTimer = undefined;
+    this.warmupDeadline = undefined;
   }
 
   private armSweep(): void {

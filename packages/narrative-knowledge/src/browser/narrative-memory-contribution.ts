@@ -56,6 +56,30 @@ const STATUS_BAR_ID = 'ai-focused-editor.narrativeMemory.status';
  * timer at all: markers are only recomputed when `generation` moves, which is
  * exactly the use `IndexState.generation` documents ("a value a consumer is
  * safe to cache against").
+ *
+ * STILL THE RIGHT CALL AFTER ISS-360 (TASK-022 UR-036 part 2), RE-EXAMINED
+ * RATHER THAN ASSUMED. ISS-360 closed the multi-MINUTE loss window a cold
+ * watcher subscription used to leave open — `NarrativeIndexMaintainer`'s
+ * warm-up phase now applies an on-disk edit within roughly
+ * `WATCHER_WARMUP_SWEEP_INTERVAL_MS` (2 s) of arming, and a live watcher event
+ * applies one within one debounce window (400 ms by default) — so the term
+ * THIS timer adds is now the LARGEST remaining one for the two surfaces that
+ * actually read it (the status bar, and the diagnostics markers gated on
+ * `applyDiagnostics`'s own `publishedGeneration` check): up to 5 s of extra
+ * display latency on top of a backend that is typically sub-two-seconds now.
+ * That is a real, user-visible number, not a rounding error — and it is
+ * WHY THE ORIGINAL RATIONALE ABOVE STILL CARRIES THE DECISION: a push channel
+ * needs a `RpcServer` CLIENT half added to `NarrativeKnowledgeService` — a
+ * change to the protocol's SHAPE, felt by the round-trip probe, the frontend
+ * module's proxy wiring and every future consumer of this service, not a
+ * change local to this file — and that is deliberately not a call to make
+ * inside a bug-fix pass that owns the maintainer, not the protocol. The smoke
+ * check this ISS added (`assertNarrativeKnowledgeWatcherSelfUpdates`) is
+ * UNAFFECTED by this timer either way: it calls `getIndexStatus`/
+ * `listDocuments` directly over RPC on its own 500 ms loop, never through this
+ * contribution's poll. If the 5 s display lag becomes the complaint on its own
+ * (rather than the multi-minute loss ISS-360 was about), that is the moment to
+ * spend the protocol change — tracked, not silently deferred again.
  */
 export const NARRATIVE_MEMORY_POLL_INTERVAL_MS = 5000;
 

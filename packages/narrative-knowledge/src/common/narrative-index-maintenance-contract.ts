@@ -34,7 +34,11 @@
 import { check, deepEqual, equal } from './contract-assertions';
 import type { NarrativeIndexStore } from './graph';
 import { NarrativeIndexSession, type IndexableFile } from './narrative-index-session';
-import { NarrativeIndexMaintainer } from './narrative-index-maintainer';
+import {
+  NarrativeIndexMaintainer,
+  WATCHER_WARMUP_DURATION_MS,
+  WATCHER_WARMUP_SWEEP_INTERVAL_MS
+} from './narrative-index-maintainer';
 import { TestNarrativeFileWatcher } from './narrative-file-watcher';
 import { ManualTimerScheduler } from './narrative-timer';
 import { InMemoryWorkspaceSource } from './narrative-workspace-source';
@@ -226,6 +230,31 @@ async function pushAndSettle(built: Built, ...changes: { path: string; type: 'ad
   built.watcher.push(...changes);
   built.scheduler.advance(built.configStore.resolve(CONTRACT_ROOT).debounceMs);
   await built.maintainer.flush();
+}
+
+/**
+ * Wait for the guard to drain, INCLUDING a fire-and-forget continuation chained
+ * onto the pass that just finished (ISS-360's `armWarmupSweep` re-arm, `armSweep`'s
+ * own TTL re-arm, and the watcher path's failure recorder all share this shape:
+ * `void this.enqueue(...).catch(...).finally(callback)`).
+ *
+ * `flush()` ALONE IS NOT ENOUGH FOR THESE. It awaits `this.draining` — the
+ * `drain()` promise — which settles as soon as the queue empties, and that
+ * happens ONE MICROTASK TICK BEFORE a `.catch()/.finally()` chained onto the
+ * INDIVIDUAL pass's own promise gets to run (the pass promise resolves inside
+ * `drain()`'s loop; `drain()`'s own promise resolves after it, in the same
+ * synchronous stretch, so whoever awaits `flush()` is woken first). A
+ * fire-and-forget callback such as `armWarmupSweep()`'s re-arm therefore has not
+ * necessarily run yet the instant `flush()` returns — repeating flush across a
+ * few empty microtask turns gives it the ticks it needs, and, if it enqueues a
+ * NEW pass (as a re-arm-and-fire would), a later `flush()` call in the same loop
+ * picks that up too.
+ */
+async function drainSettled(maintainer: NarrativeIndexMaintainer): Promise<void> {
+  for (let round = 0; round < 8; round++) {
+    await maintainer.flush();
+    await Promise.resolve();
+  }
 }
 
 /** The two texts C1/C2/C4 need: same length, different bytes. */
@@ -957,6 +986,223 @@ export const NARRATIVE_MAINTENANCE_CONTRACT: NarrativeMaintenanceContractCase[] 
         50,
         'and the NEXT window picks the new value up, with nobody having had to notify anybody'
       );
+    }
+  },
+
+  // -- ISS-360: the warm-up phase for a watcher that arms asynchronously --
+
+  {
+    name: 'ISS-360 — a watcher that arms asynchronously gets an immediate warm-up sweep, catching an edit ' +
+      'that landed before it was provably armed',
+    async run(makeHarness) {
+      const harness = await makeHarness();
+      const source = new InMemoryWorkspaceSource(manuscript());
+      const scheduler = new ManualTimerScheduler();
+      const watcher = new TestNarrativeFileWatcher();
+      // The SAME promise both this case and the maintainer observe — a fresh
+      // promise per call (a naive `whenReady = () => new Promise(...)`) would
+      // let the two sides race on two different objects.
+      let resolveArmed!: () => void;
+      const armedSignal = new Promise<void>(resolve => { resolveArmed = resolve; });
+      watcher.whenReady = () => armedSignal;
+      const session = new NarrativeIndexSession({
+        store: harness.store,
+        schemaVersion: SCHEMA_VERSION,
+        now: () => 1_700_000_500_000
+      });
+      const maintainer = new NarrativeIndexMaintainer({
+        session,
+        source,
+        config: () => harness.configStore.resolve(CONTRACT_ROOT),
+        scheduler,
+        watcher,
+        rootPath: CONTRACT_ROOT,
+        now: () => scheduler.now
+      });
+      maintainer.start();
+      await maintainer.rebuildNow();
+
+      // The edit ISS-360 measured as lost outright: it happens BEFORE the
+      // watcher can attest to being armed, and no event will ever be delivered
+      // for it — only a reconcile pass can find it.
+      const before = session.documentOf(CH(2))!.contentHash;
+      source.put(file(CH(2), 'Edited before the watcher armed: [[char:arjuna|Арджуна]].'));
+
+      const armedDelaysBeforeReady = [...scheduler.armedDelays];
+      resolveArmed();
+      // Both this reaction and the maintainer's own are attached to the SAME
+      // promise, the maintainer's FIRST (during `start()`, above); promise
+      // reactions run in attachment order, so awaiting it here guarantees the
+      // maintainer's warm-up reaction — which enqueues the sweep synchronously
+      // — has already run by the time control returns.
+      await armedSignal;
+      await maintainer.flush();
+
+      check(
+        session.documentOf(CH(2))!.contentHash !== before,
+        'the immediate warm-up pass must catch the edit — no event was ever pushed to this watcher in ' +
+          'this case, so only a reconcile pass could have seen it'
+      );
+      check(
+        scheduler.armedDelays.length > armedDelaysBeforeReady.length,
+        'and a short-interval warm-up timer must be armed too, distinct from the long fallback sweep ' +
+          'armed at start()'
+      );
+      equal(
+        scheduler.armedDelays[scheduler.armedDelays.length - 1],
+        WATCHER_WARMUP_SWEEP_INTERVAL_MS,
+        'armed with the warm-up interval, not the (usually much longer) fallbackTtlMs'
+      );
+      maintainer.stop();
+    }
+  },
+  {
+    name: 'ISS-360 — a real event during the warm-up phase does NOT stop it: the phase runs its own course, ' +
+      'serialized against the debounced watcher pass through the single guard',
+    async run(makeHarness) {
+      const harness = await makeHarness();
+      const source = new InMemoryWorkspaceSource(manuscript());
+      const scheduler = new ManualTimerScheduler();
+      const watcher = new TestNarrativeFileWatcher();
+      let resolveArmed!: () => void;
+      const armedSignal = new Promise<void>(resolve => { resolveArmed = resolve; });
+      watcher.whenReady = () => armedSignal;
+      const session = new NarrativeIndexSession({
+        store: harness.store,
+        schemaVersion: SCHEMA_VERSION,
+        now: () => 1_700_000_500_000
+      });
+      const maintainer = new NarrativeIndexMaintainer({
+        session,
+        source,
+        config: () => harness.configStore.resolve(CONTRACT_ROOT),
+        scheduler,
+        watcher,
+        rootPath: CONTRACT_ROOT,
+        now: () => scheduler.now
+      });
+      maintainer.start();
+      await maintainer.rebuildNow();
+
+      resolveArmed();
+      await armedSignal;
+      await maintainer.flush();
+      const warmupArmsAfterImmediatePass = scheduler.armedDelays.filter(
+        delay => delay === WATCHER_WARMUP_SWEEP_INTERVAL_MS
+      ).length;
+      equal(warmupArmsAfterImmediatePass, 1, 'exactly one warm-up interval timer is armed after the immediate pass');
+
+      // A REAL event arrives DURING the warm-up phase. A Theia watcher covers a
+      // whole subtree, and there is no guarantee every directory in it armed at
+      // the same instant — this event proves coverage for the path it names,
+      // not for the rest of the manuscript, so it must NOT read as "the
+      // subscription is fully armed, stop reconciling" (see the maintainer's
+      // own comment on `onFileChanges`).
+      const before = session.documentOf(CH(3))!.contentHash;
+      source.put(file(CH(3), 'Real event: [[char:arjuna|Арджуна]].'));
+      watcher.push({ path: CH(3), type: 'updated' });
+      scheduler.advance(harness.configStore.resolve(CONTRACT_ROOT).debounceMs);
+      await drainSettled(maintainer);
+      check(
+        session.documentOf(CH(3))!.contentHash !== before,
+        'the debounced watcher pass applies the real event normally, warm-up phase or not'
+      );
+
+      // Advance past several more warm-up intervals: the phase must KEEP
+      // re-arming itself, unaffected by the event that just went through the
+      // very same guard.
+      scheduler.advance(WATCHER_WARMUP_SWEEP_INTERVAL_MS * 3);
+      await drainSettled(maintainer);
+      const warmupArmsAfterEvent = scheduler.armedDelays.filter(
+        delay => delay === WATCHER_WARMUP_SWEEP_INTERVAL_MS
+      ).length;
+      check(
+        warmupArmsAfterEvent > warmupArmsAfterImmediatePass,
+        'the warm-up phase must keep re-arming across a real event — one event is not proof the whole ' +
+          'subscription is armed'
+      );
+      check(
+        maintainer.maxConcurrentPasses === 1,
+        'the debounced watcher pass and the warm-up sweeps never run concurrently — the single guard ' +
+          'serializes them exactly as it does an explicit rebuild against either'
+      );
+      maintainer.stop();
+    }
+  },
+  {
+    name: 'ISS-360 — the warm-up phase gives up after WATCHER_WARMUP_DURATION_MS and stops re-arming itself',
+    async run(makeHarness) {
+      const harness = await makeHarness();
+      const source = new InMemoryWorkspaceSource(manuscript());
+      const scheduler = new ManualTimerScheduler();
+      const watcher = new TestNarrativeFileWatcher();
+      let resolveArmed!: () => void;
+      const armedSignal = new Promise<void>(resolve => { resolveArmed = resolve; });
+      watcher.whenReady = () => armedSignal;
+      const session = new NarrativeIndexSession({
+        store: harness.store,
+        schemaVersion: SCHEMA_VERSION,
+        now: () => 1_700_000_500_000
+      });
+      const maintainer = new NarrativeIndexMaintainer({
+        session,
+        source,
+        config: () => harness.configStore.resolve(CONTRACT_ROOT),
+        scheduler,
+        watcher,
+        rootPath: CONTRACT_ROOT,
+        now: () => scheduler.now
+      });
+      maintainer.start();
+      await maintainer.rebuildNow();
+      resolveArmed();
+      await armedSignal;
+      await maintainer.flush();
+
+      // Drive the virtual clock past the warm-up deadline, one warm-up
+      // interval at a time, WITHOUT ever pushing a real event — the exact "the
+      // watcher never proves itself, and never fails either" case the
+      // duration bound exists for. Each re-arm happens ASYNCHRONOUSLY (inside
+      // a sweep's `.finally()`), so a single big `advance()` would not chain
+      // through them the way it does for synchronous callbacks — hence the
+      // step-and-flush loop. `pending` is not the termination signal: the long
+      // `fallbackTtlMs` timer armed at `start()` stays pending throughout and
+      // would make that count forever nonzero on its own.
+      const countWarmupArms = () =>
+        scheduler.armedDelays.filter(delay => delay === WATCHER_WARMUP_SWEEP_INTERVAL_MS).length;
+      let armCount = countWarmupArms();
+      equal(armCount, 1, 'exactly one warm-up interval timer armed after the immediate pass');
+      let stabilizedAfter = -1;
+      for (let iteration = 1; iteration <= 50; iteration++) {
+        scheduler.advance(WATCHER_WARMUP_SWEEP_INTERVAL_MS);
+        await drainSettled(maintainer);
+        const next = countWarmupArms();
+        if (next === armCount) {
+          stabilizedAfter = iteration;
+          break;
+        }
+        armCount = next;
+      }
+      check(
+        stabilizedAfter > 0,
+        'the warm-up phase must stop re-arming itself within a bounded number of intervals, not run forever'
+      );
+      equal(
+        armCount,
+        WATCHER_WARMUP_DURATION_MS / WATCHER_WARMUP_SWEEP_INTERVAL_MS,
+        'exactly enough intervals to cover the warm-up duration, no more'
+      );
+
+      // Confirm it STAYS stopped: advancing further must not resume it.
+      scheduler.advance(WATCHER_WARMUP_DURATION_MS);
+      await drainSettled(maintainer);
+      equal(
+        countWarmupArms(),
+        armCount,
+        'once the warm-up phase has ended, no further short-interval timers are armed — only the long ' +
+          'fallbackTtlMs sweep (already running since start()) still stands as insurance'
+      );
+      maintainer.stop();
     }
   }
 ];
