@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { cp, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -749,6 +749,20 @@ export function entityCardsWidgetTextReaderScript(widgetId = 'ai-focused-editor.
  * card's displayed name is a pure function of this field, so this check
  * cannot pass or fail for a filename-tree reason it was never built to test.
  *
+ * TWO SEQUENTIAL EDITS, NOT ONE (ISS-371). A single edit-and-wait cannot tell
+ * a PERSISTENT subscription from a ONE-SHOT one that happens to fire before
+ * this check's own deadline — exactly the shape of false green ISS-359 found
+ * once already in this same package (a file watcher that never ran in the
+ * product, caught only because a contract test made a SINGLE assertion look
+ * for a SINGLE effect). The author hit precisely this in the running app:
+ * the first live rename after startup redrew the panel, subsequent ones did
+ * not, and it took a live session to notice because nothing here checked for
+ * a second push. This version edits `name:` TWICE in a row, waiting for each
+ * push before making the next edit, so a subscription/listener/timer that
+ * only survives one delivery — disposed after firing, a `notifyTimer` that
+ * fails to re-arm, an `Event.once`-shaped wiring, anything of that family —
+ * fails on the SECOND wait exactly where a human would have noticed it too.
+ *
  * THE FIXTURE IS ALWAYS RESTORED, INCLUDING ON THE FAILURE/TIMEOUT PATH — same
  * discipline as {@link assertNarrativeKnowledgeWatcherSelfUpdates} and for the
  * identical reason (this isolated workspace copy, ISS-365, is still shared
@@ -771,41 +785,95 @@ export async function assertEntityCardsWidgetSelfUpdatesOnPush(readWidgetText, t
 
   const filePath = join(fileURLToPath(baseline.rootUri), ENTITY_CARD_PUSH_TARGET_RELPATH);
   const originalBytes = readFileSync(filePath, 'utf8');
-  const pushMarker = `Arjuna (UR-043 push tooth ${Date.now()})`;
-  try {
-    if (!originalBytes.includes('name: Arjuna\n')) {
-      throw new Error(
-        `[${target}] ${ENTITY_CARD_PUSH_TARGET_RELPATH} does not contain the expected "name: Arjuna" line — ` +
-        'the fixture card changed shape and this check needs updating alongside it.'
-      );
-    }
-    writeFileSync(filePath, originalBytes.replace('name: Arjuna\n', `name: ${pushMarker}\n`), 'utf8');
+  if (!originalBytes.includes('name: Arjuna\n')) {
+    throw new Error(
+      `[${target}] ${ENTITY_CARD_PUSH_TARGET_RELPATH} does not contain the expected "name: Arjuna" line — ` +
+      'the fixture card changed shape and this check needs updating alongside it.'
+    );
+  }
 
+  // Wait for `readWidgetText()` to report `marker` somewhere in the panel's
+  // rendered text, polling on the same 500ms/`timeoutMs` cadence the
+  // one-edit version used. Shared by both edits below so a REGRESSION in
+  // either delivery reports with the SAME clarity the original single-edit
+  // check did — this is a refactor of that wait loop, not a new one.
+  const waitForMarker = async (marker, ordinal) => {
     const deadline = Date.now() + timeoutMs;
-    let lastSeenText = baseline.text;
+    let lastSeenText = '';
     while (Date.now() < deadline) {
       const snapshot = await readWidgetText();
       if (snapshot && snapshot.ok) {
         lastSeenText = snapshot.text;
-        if (snapshot.text.includes(pushMarker)) {
-          console.log(
-            `PASS [${target}] Entity Cards widget self-updated from a live push: on-disk card edit reached ` +
-            'the open panel with no refresh() call and no Refresh command executed'
-          );
+        if (snapshot.text.includes(marker)) {
           return;
         }
       }
       await new Promise(resolve => setTimeout(resolve, 500));
     }
-
+    const causeHint = ordinal === 1
+      ? 'The onIndexChanged push most likely never reached this widget.'
+      : ordinal === 2
+        ? 'The FIRST push arrived (edit #1 passed) but this SECOND push did not — the subscription most ' +
+          'likely fired once and was not re-armed/was disposed after its first delivery (ISS-371).'
+        : 'Both content-edit pushes arrived (#1 and #2 passed) but the push for a RENAME (delete+add, not an ' +
+          "'updated' event) did not — the rename path most likely never reaches " +
+          'scheduleIndexChangedNotification/onIndexChanged the way a content edit does (ISS-371).';
     throw new Error(
-      `[${target}] the open Entity Cards widget did NOT show "${pushMarker}" after an on-disk edit to ` +
-      `${ENTITY_CARD_PUSH_TARGET_RELPATH} within ${timeoutMs}ms, and no refresh()/Refresh command was ` +
+      `[${target}] the open Entity Cards widget did NOT show "${marker}" (edit #${ordinal}) after an on-disk ` +
+      `edit to ${ENTITY_CARD_PUSH_TARGET_RELPATH} within ${timeoutMs}ms, and no refresh()/Refresh command was ` +
       `invoked anywhere in this check. Last observed widget text did not contain the marker (length ` +
-      `${lastSeenText.length}). The onIndexChanged push most likely never reached this widget.`
+      `${lastSeenText.length}). ${causeHint}`
+    );
+  };
+
+  try {
+    const firstMarker = `Arjuna (UR-043 push tooth ${Date.now()}-a)`;
+    writeFileSync(filePath, originalBytes.replace('name: Arjuna\n', `name: ${firstMarker}\n`), 'utf8');
+    await waitForMarker(firstMarker, 1);
+
+    // SECOND edit, same file, same field, waited for the SAME way — the only
+    // difference from the first is that it starts from `firstMarker`'s own
+    // line rather than the original "Arjuna" one. A maintainer/service/widget
+    // wiring that only forwards ONE push per subscription lifetime passes the
+    // wait above and then times out here.
+    const secondMarker = `Arjuna (UR-043 push tooth ${Date.now()}-b)`;
+    const afterFirstEdit = readFileSync(filePath, 'utf8');
+    writeFileSync(filePath, afterFirstEdit.replace(`name: ${firstMarker}\n`, `name: ${secondMarker}\n`), 'utf8');
+    await waitForMarker(secondMarker, 2);
+
+    // THIRD change, and the one ISS-371 itself names: an actual file RENAME,
+    // not a content edit. A rename is a *pair* of watcher events (delete +
+    // add — this backend has no rename event of its own, see
+    // `narrative-index-maintainer.ts`'s own module doc and `pairMovedDocuments`),
+    // where every edit above was a single 'updated' event. `entity.sourcePath`
+    // is rendered verbatim in the card (`afe-entity-path`), so a rename is
+    // observable here exactly the way the first two edits were, through the
+    // SAME wait helper — the only thing that changes is which on-disk
+    // operation produces the marker.
+    const renamedRelPath = ENTITY_CARD_PUSH_TARGET_RELPATH.replace('arjuna.yaml', 'arjuna-renamed.yaml');
+    const renamedPath = join(fileURLToPath(baseline.rootUri), renamedRelPath);
+    renameSync(filePath, renamedPath);
+    try {
+      await waitForMarker(renamedRelPath, 3);
+    } finally {
+      // Move back onto the original filename BEFORE the outer `finally`
+      // restores its content — the outer block only knows how to rewrite
+      // `filePath`, not undo a rename, so this inner one is what keeps a
+      // failed wait from leaving a stray `arjuna-renamed.yaml` behind.
+      if (existsSync(renamedPath)) {
+        renameSync(renamedPath, filePath);
+      }
+    }
+
+    console.log(
+      `PASS [${target}] Entity Cards widget self-updated from THREE consecutive live pushes: two on-disk ` +
+      'content edits and one file rename in a row each reached the open panel with no refresh() call and no ' +
+      'Refresh command executed'
     );
   } finally {
-    // ALWAYS restore — including on the timeout/error path above.
+    // ALWAYS restore — including on the timeout/error path above. Content
+    // only: the rename stage above already restores the filename itself in
+    // its own inner `finally`, whatever the outcome.
     writeFileSync(filePath, originalBytes, 'utf8');
   }
 }

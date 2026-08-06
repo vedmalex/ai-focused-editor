@@ -21,6 +21,8 @@ import {
   diagnosticsEnvelopesReaderScript,
   assertNarrativeKnowledgeWatcherSelfUpdates,
   watcherStatusSnapshotReaderScript,
+  assertEntityCardsWidgetSelfUpdatesOnPush,
+  entityCardsWidgetTextReaderScript,
   createIsolatedSampleWorkspace,
   removeIsolatedSampleWorkspace
 } from './narrative-knowledge-round-trip.mjs';
@@ -289,6 +291,35 @@ try {
   try {
     await assertNarrativeKnowledgeWatcherSelfUpdates(
       () => window.evaluate(watcherStatusSnapshotReaderScript()),
+      'electron'
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+
+  // TASK-022 ISS-371: the Entity Cards widget's live `onIndexChanged` push
+  // had NEVER been checked in the ELECTRON target before — this file never
+  // opened the widget at all, so a target-specific defect in this exact path
+  // (UR-043) could ship green here regardless of what the browser smoke
+  // found. Same shared tooth as browser-smoke.mjs (two content edits and a
+  // real file rename, chained — ISS-371's own strengthening, since a single
+  // edit cannot tell a persistent subscription from a one-shot one).
+  try {
+    await window.evaluate(async () => {
+      const container = window.theia && window.theia.container;
+      const findKey = label => {
+        for (const [candidate] of container._bindingDictionary._map.entries()) {
+          const candidateLabel = candidate && (candidate.description || candidate.name);
+          if (candidateLabel === label) return candidate;
+        }
+        return undefined;
+      };
+      const registry = container.get(findKey('CommandRegistry'));
+      await registry.executeCommand('ai-focused-editor.entities.refreshCards');
+    });
+    await window.waitForTimeout(1500);
+    await assertEntityCardsWidgetSelfUpdatesOnPush(
+      () => window.evaluate(entityCardsWidgetTextReaderScript()),
       'electron'
     );
   } catch (error) {
