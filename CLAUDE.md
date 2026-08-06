@@ -17,10 +17,14 @@ This repository must be operated through the MB3 workflow.
 
 ### Common MB3 Commands
 
-- `mb3 create \"Task name\"`
-- `mb3 status`
-- `mb3 phase check-exit`
-- `mb3 task advance`
+**`mb3` is usually NOT on PATH — prefer the MCP twin.** Every verb below has an MCP equivalent, and the MCP tools are the surface a consumer provably has. Reach for the CLI only when you need a daemon-independent path (e.g. the MCP daemon is down).
+
+CLI resolution order: (1) `mb3`, if `command -v mb3` succeeds; (2) `<projectDir>/plugins/bin/mb3` — the location the installer rewrites `${CLAUDE_PLUGIN_ROOT}` to, and the same file as the repo dev wrapper; (3) otherwise use the MCP tool. Note that a literal `$CLAUDE_PLUGIN_ROOT/bin/mb3` resolves ONLY after that installer rewrite — there is no `bin/` inside the plugin directory itself.
+
+- `mb3 create \"Task name\"` — MCP: `mb3_task` action `create`
+- `mb3 status` — MCP: `mb3_task` action `status`
+- `mb3 phase check-exit` — MCP: `mb3_phase` action `check_exit`
+- `mb3 task advance` — MCP: `mb3_task` action `advance`
 
 ### Specialist Routing Hints
 
@@ -56,6 +60,7 @@ When spawning `Agent(subagent_type=\"mb3-critic\")`, require: SINGLE-PASS per di
 - Meta-cognition guard (TASK-544 D3/UR-004): a repeated REVISE is LEGITIMATE design feedback, NOT evidence the gate is broken; a `missing_envelope` / capture-oscillation is an ORTHOGONAL runtime capture-mechanism bug — do NOT conflate them or treat repeated REVISE as a defect that waives the findings.
 - Prompt-discipline (TASK-544 D7.2/UR-004): instruct the critic to emit ONLY the clean v2 envelope; free-form CAR analysis goes ABOVE the envelope as PROSE, NEVER as an extra top-level envelope field (`report_markdown` / `rendered_markdown` / `date` / `report` / `summary`). The fenced envelope MUST be the ABSOLUTE FINAL element of the critic's output.
 - Custom-lens consumption mandate (TASK-614 / REQ-043): when a gate's `lens_ids` resolve to a plugin-declared `critic.extensions[].lens_file` extension (see `plugin-loader/types.ts` `CriticExtensionDeclaration.lens_file`), the orchestrator MUST call `buildCustomLensInjection(snapshot, lensIds)` (critic-extension-bridge.ts) and include the returned block in the critic prompt, OR give the critic the explicit absolute lens-file path as a self-Read fallback. The critic is `Read`/`Glob`/`Grep`-only with no MCP — without this injection (or path) it cannot see the plugin's lens content at all. Orchestration-discipline only (no runtime spawn-time auto-injector — CD-39); same pattern as the CD-65 inject-requests.md / inject-rendered-evidence rules.
+- Scoped re-gate framing (CD-70 (i) / TASK-641): on a re-dispatch after REVISE/BLOCK, the brief MUST present prior remediation as CLAIMS TO VERIFY ("here is what changed — verify it and issue a verdict"), NEVER as settled state ("here is what is already closed") — a fresh spawn drifts into ack-mode from the FRAMING alone, not only from a `SendMessage`-resume. The brief MUST also state that a dispatch emitting no envelope has NOT performed the review (the runtime records `da_extraction_failed` and the verdict is LOST), and that a sound remediation is answered with a PROCEED ENVELOPE, not prose saying so. Full text via `mb3 cd get CD-70`.
 
 ### MB3 Interaction Discipline (live-requirement capture)
 
