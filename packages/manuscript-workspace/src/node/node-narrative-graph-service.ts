@@ -62,6 +62,8 @@ export class NodeNarrativeGraphService implements NarrativeGraphBackendService {
         ownership: [],
         nodes: [],
         relations: [],
+        authoredEdges: [],
+        authoredNodes: [],
         truncated: false,
         totalEntities: 0,
         diagnostics: [{
@@ -86,7 +88,13 @@ export class NodeNarrativeGraphService implements NarrativeGraphBackendService {
       this.knowledge.getManifestChapters(rootUri),
       this.knowledge.listDocuments(rootUri),
       this.knowledge.findEntities(rootUri),
-      this.knowledge.getRelations(rootUri, { relType: OWNERSHIP_REL_TYPE, origin: 'explicit' })
+      // ALL origins, not just 'explicit' (TASK-022 UR-044/UR-026): the old
+      // `origin: 'explicit'` filter silently discarded every `ai-candidate`
+      // ownership hop before it ever reached the assembler — nothing
+      // downstream (Narrative Map graph, ownership chain text) could show a
+      // candidate at all. `assembleNarrativeGraphSnapshot` now classifies
+      // each row by its own `relation.origin` instead of trusting the query.
+      this.knowledge.getRelations(rootUri, { relType: OWNERSHIP_REL_TYPE })
     ]);
 
     const manifest = manifestEnvelope.data;

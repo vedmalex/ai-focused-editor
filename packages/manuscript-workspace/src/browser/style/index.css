@@ -590,6 +590,18 @@
   padding: 1px 0;
 }
 
+/* TASK-022 UR-044a/UR-026: an ai-candidate ownership hop is never distinguished
+   by colour alone — a dashed underline is the second, non-colour cue backing
+   the "(AI-suggested)" text suffix `renderOwnershipLink` already adds. */
+.afe-narrative-ownership-link.origin-ai-candidate {
+  color: var(--theia-charts-yellow, #c9971f);
+  border-bottom: 1px dashed var(--theia-charts-yellow, #c9971f);
+}
+
+.afe-narrative-ownership-link.origin-explicit {
+  font-weight: 600;
+}
+
 /* timeline */
 
 .afe-narrative-timeline {
@@ -690,19 +702,100 @@
   max-width: 460px;
 }
 
+/* TASK-022 UR-044: the "show co-mentions" toggle plus the origin legend. */
+.afe-narrative-graph-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: var(--theia-ui-font-size0);
+}
+
+.afe-narrative-graph-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.afe-narrative-graph-legend {
+  display: flex;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  color: var(--theia-descriptionForeground);
+}
+
+.afe-narrative-graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.afe-narrative-graph-legend-item::before {
+  content: '';
+  display: inline-block;
+  width: 16px;
+  height: 0;
+  border-top-width: 3px;
+  border-top-style: solid;
+}
+
+.afe-narrative-graph-legend-item.origin-explicit::before {
+  border-top-color: var(--theia-charts-red, #c4402c);
+}
+
+.afe-narrative-graph-legend-item.origin-ai-candidate::before {
+  border-top-color: var(--theia-charts-yellow, #c9971f);
+  border-top-style: dashed;
+}
+
+.afe-narrative-graph-legend-item.origin-derived::before {
+  border-top-color: var(--theia-descriptionForeground, rgba(128, 128, 128, 0.7));
+  border-top-style: dotted;
+  border-top-width: 2px;
+}
+
 .afe-narrative-graph-svg {
   width: 100%;
   height: auto;
 }
 
+/* Baseline (unmatched origin, should not occur — every edge sets one). */
 .afe-narrative-graph-edge {
   stroke: var(--theia-descriptionForeground, rgba(128, 128, 128, 0.7));
   stroke-opacity: 0.5;
 }
 
+/* derived (co-occurrence) — deliberately RECEDING ("фоном", UR-044a): reduced
+   opacity ON TOP OF the fine dash pattern `renderEdge` already sets inline, so
+   the cue survives even where CSS is stripped (a printed/exported view). */
+.afe-narrative-graph-edge.origin-derived {
+  stroke: var(--theia-descriptionForeground, rgba(128, 128, 128, 0.7));
+  stroke-opacity: 0.45;
+}
+
+/* explicit (authored) — deliberately NOTICEABLE ("заметное", UR-044a): full
+   opacity, a distinct accent colour, on top of the solid (no-dasharray) line
+   `renderEdge` already sets inline. */
+.afe-narrative-graph-edge.origin-explicit {
+  stroke: var(--theia-charts-red, #c4402c);
+  stroke-opacity: 0.95;
+}
+
+/* ai-candidate — the THIRD kind (UR-044a): its own accent colour, on top of
+   the coarse dash pattern `renderEdge` already sets inline. */
+.afe-narrative-graph-edge.origin-ai-candidate {
+  stroke: var(--theia-charts-yellow, #c9971f);
+  stroke-opacity: 0.85;
+}
+
 .afe-narrative-graph-edge:hover {
   stroke: var(--theia-focusBorder);
-  stroke-opacity: 0.9;
+  stroke-opacity: 1;
 }
 
 .afe-narrative-graph-dot {

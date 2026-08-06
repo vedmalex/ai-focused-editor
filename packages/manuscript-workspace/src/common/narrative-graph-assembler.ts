@@ -49,6 +49,7 @@ import {
   type ManifestProblem,
   type NarrativeEntity,
   type NarrativeMention,
+  type NarrativeOrigin,
   type NarrativeRelation
 } from '@ai-focused-editor/narrative-knowledge';
 import {
@@ -87,7 +88,16 @@ export interface AssembleNarrativeGraphSnapshotInput {
   /** `findEntities(rootUri)`'s result — id is unique across the whole index
    *  (`buildEntityCatalog` dedupes by id alone), so a flat map is lossless. */
   entities: readonly NarrativeEntity[];
-  /** `getRelations(rootUri, { relType: <ownership>, origin: 'explicit' })`'s result. */
+  /**
+   * `getRelations(rootUri, { relType: <ownership> })`'s result, ALL origins
+   * (TASK-022 UR-044/UR-026). Previously the caller filtered this to
+   * `origin: 'explicit'` only, which silently discarded every `ai-candidate`
+   * ownership hop from EVERY consumer of this module — including the
+   * Narrative Map, whose whole point is to make agent-proposed vs
+   * author-confirmed knowledge visually distinguishable. `buildOwnership`
+   * and the authored-edge builder below both read `relation.origin` per row
+   * rather than assuming `explicit`.
+   */
   ownershipRelations: readonly NarrativeRelation[];
   /**
    * Builds a navigable URI for a workspace-relative path, when the caller can.
@@ -213,6 +223,11 @@ export function assembleNarrativeGraphSnapshot(
 
   const ownership = buildOwnership(input.ownershipRelations, entityById);
   const { nodes, relations, truncated, totalEntities } = buildRelations(nodeTotals, chapterEntitySets);
+  const { authoredEdges, authoredNodes } = buildAuthoredGraph(
+    input.ownershipRelations,
+    entityById,
+    new Set(nodes.map(node => node.id))
+  );
 
   return {
     ...(input.rootUri !== undefined ? { rootUri: input.rootUri } : {}),
@@ -220,22 +235,35 @@ export function assembleNarrativeGraphSnapshot(
     ownership,
     nodes,
     relations,
+    authoredEdges,
+    authoredNodes,
     truncated,
     totalEntities,
     diagnostics
   };
 }
 
+/** Narrow a relation's origin to the two values an ownership relation may
+ *  actually carry, dropping anything else (defensive: `derived` is produced
+ *  exclusively by THIS module's own co-occurrence fold, never by a stored
+ *  ownership row — WP-8 cards only ever write `explicit` or `ai-candidate` —
+ *  but nothing enforces that at the type level once the origin filter is
+ *  gone, so a stray row is skipped rather than mis-labelled). */
+function authoredOrigin(origin: NarrativeOrigin): 'explicit' | 'ai-candidate' | undefined {
+  return origin === 'explicit' || origin === 'ai-candidate' ? origin : undefined;
+}
+
 /**
  * Ownership chains (tech_spec TECH_SPEC WP-7 §7.4): group by `sourceId` (the
  * artifact card that owns the relation), keep list order via `listPosition`.
  *
- * SCOPED TO `origin: 'explicit'` BY THE CALLER'S QUERY, NARROWER THAN THE
- * PRE-MIGRATION READER. The old scan read every YAML `ownership:` entry with no
- * concept of provenance; an `ai-candidate` entry (WP-8, unimplemented in this
- * pass — UR-026's "Narrative Map: узел + легенда" candidate display) is
- * invisible here. Nothing in the current fixture exercises that gap; it is
- * recorded rather than silently accepted.
+ * ALL AUTHORED ORIGINS, NOT JUST `explicit` (TASK-022 UR-044/UR-026 — this
+ * used to be scoped to `explicit` by the caller's query, which made every
+ * `ai-candidate` ownership hop invisible here; the caller now passes every
+ * origin and this function classifies per row instead). A candidate entry is
+ * INCLUDED, tagged `origin: 'ai-candidate'` on its {@link NarrativeOwnershipEntry}
+ * — UR-026's "разделение труда агент/автор" requires it be shown, distinctly
+ * from a confirmed hop, rather than either dropped or silently conflated.
  *
  * TRANSFER ORDER ACROSS ARTIFACTS IS THE ONE THING THIS FIXTURE CANNOT PIN — it
  * seeds exactly one artifact. Sorted by `artifactId` (code point) for a
@@ -248,6 +276,9 @@ function buildOwnership(
 ): NarrativeOwnershipTransfer[] {
   const bySource = new Map<string, NarrativeRelation[]>();
   for (const relation of relations) {
+    if (authoredOrigin(relation.origin) === undefined) {
+      continue;
+    }
     const list = bySource.get(relation.sourceId) ?? [];
     list.push(relation);
     bySource.set(relation.sourceId, list);
@@ -262,7 +293,9 @@ function buildOwnership(
       const ownerEntity = relation.targetResolved ? entityById.get(relation.targetId) : undefined;
       const entry: NarrativeOwnershipEntry = {
         owner: relation.targetId,
-        ownerLabel: ownerEntity?.name ?? relation.targetId
+        ownerLabel: ownerEntity?.name ?? relation.targetId,
+        // Filtered to authoredOrigin() !== undefined above.
+        origin: authoredOrigin(relation.origin)!
       };
       if (relation.storyTimeFrom !== undefined) {
         entry.from = relation.storyTimeFrom;
@@ -333,7 +366,8 @@ function buildRelations(
             sourceLabel: nodeTotals.get(source)!.label,
             targetLabel: nodeTotals.get(target)!.label,
             weight: 1,
-            sharedChapters: [String(chapterIndex)]
+            sharedChapters: [String(chapterIndex)],
+            origin: 'derived'
           });
         }
       }
@@ -346,4 +380,89 @@ function buildRelations(
     || edgeLabelCollator.compare(left.targetLabel, right.targetLabel));
 
   return { nodes, relations, truncated, totalEntities };
+}
+
+/** Resolve one relation end (an entity id) to the graph's composite node key
+ *  and a display label, the same fallback `buildOwnership` already uses for
+ *  an id with no card: raw id as both the label and (with an empty `kind`)
+ *  the key prefix. */
+function resolveGraphEnd(
+  id: string,
+  entityById: ReadonlyMap<string, NarrativeEntity>
+): { key: string; kind: string; entityId: string; label: string } {
+  const entity = entityById.get(id);
+  const kind = entity?.type ?? '';
+  return { key: `${kind}:${id}`, kind, entityId: id, label: entity?.name ?? id };
+}
+
+/**
+ * Build the Narrative Map's authored (ownership) graph edges/nodes (TASK-022
+ * UR-044/UR-026) — a SEPARATE fold over the same `relations` `buildOwnership`
+ * reads, because the two outputs serve different consumers (the ownership
+ * TEXT chain vs. this package's graph) and, per `NarrativeGraphSnapshot
+ * .authoredEdges`'s doc comment, must never be merged into `relations` itself.
+ *
+ * ONE EDGE PER RELATION ROW, star-shaped from the artifact (`sourceId`) to
+ * each owner (`targetId`) — matching the data as stored, not a reconstructed
+ * owner-to-owner sequence. `NarrativeRelation` only ever records
+ * artifact-owns-owner; inventing a chronological owner-to-owner edge would be
+ * presenting a relationship the index does not have (the boundary this task
+ * draws: representation only, no new data).
+ *
+ * NODE UNION, CO-OCCURRENCE WINS: `presentNodeIds` (the FINAL, already
+ * truncated `nodes` list) is checked first, so an entity that already has a
+ * ring position from co-occurrence never gets a second, duplicate node here —
+ * only an end absent from `nodes` (never mentioned in chapter prose, e.g. a
+ * mythic prior owner with a card but no `[[character:id|label]]` tag
+ * anywhere) gets a synthesized `authoredNodes` entry.
+ */
+function buildAuthoredGraph(
+  relations: readonly NarrativeRelation[],
+  entityById: ReadonlyMap<string, NarrativeEntity>,
+  presentNodeIds: ReadonlySet<string>
+): {
+  authoredEdges: NarrativeRelationEdge[];
+  authoredNodes: NarrativeRelationNode[];
+} {
+  const authoredEdges: NarrativeRelationEdge[] = [];
+  const authoredNodeByKey = new Map<string, NarrativeRelationNode>();
+
+  for (const relation of relations) {
+    const origin = authoredOrigin(relation.origin);
+    if (origin === undefined) {
+      continue;
+    }
+    const source = resolveGraphEnd(relation.sourceId, entityById);
+    const target = resolveGraphEnd(relation.targetId, entityById);
+    authoredEdges.push({
+      source: source.key,
+      target: target.key,
+      sourceLabel: source.label,
+      targetLabel: target.label,
+      weight: 1,
+      sharedChapters: [],
+      origin,
+      relType: relation.relType
+    });
+    for (const end of [source, target]) {
+      if (presentNodeIds.has(end.key) || authoredNodeByKey.has(end.key)) {
+        continue;
+      }
+      authoredNodeByKey.set(end.key, {
+        id: end.key,
+        kind: end.kind,
+        entityId: end.entityId,
+        label: end.label,
+        appearances: 0
+      });
+    }
+  }
+
+  authoredEdges.sort((left, right) =>
+    edgeLabelCollator.compare(left.sourceLabel, right.sourceLabel)
+    || edgeLabelCollator.compare(left.targetLabel, right.targetLabel)
+    || (left.origin ?? '').localeCompare(right.origin ?? ''));
+  const authoredNodes = [...authoredNodeByKey.values()].sort(compareByLabel);
+
+  return { authoredEdges, authoredNodes };
 }

@@ -9,9 +9,11 @@ import {
   OWNERSHIP_REL_TYPE,
   envelope,
   extractManifestChapters,
+  wholeFileEvidence,
   type EntityQuery,
   type MentionQuery,
   type NarrativeDocumentSummary,
+  type NarrativeRelation,
   type RelationQuery
 } from '@ai-focused-editor/narrative-knowledge';
 import { scanWorkspaceFiles } from '@ai-focused-editor/narrative-knowledge/lib/node/narrative-workspace-scan';
@@ -113,16 +115,48 @@ function edge(relations: NarrativeRelationEdge[], a: string, b: string): Narrati
 }
 
 /**
+ * An `ai-candidate` ownership hop (TASK-022 UR-044/UR-026) — `entity-card-
+ * extraction.ts` only ever writes `explicit` from a YAML `ownership:` list
+ * (WP-8, the candidate-authoring UI, is out of this task's scope), so the only
+ * way to exercise a candidate row in a fixture is to inject it directly via
+ * `store.transaction`, the same technique `narrative-index-store-contract.ts`
+ * uses. `bhima` deliberately has NO entity card AND NO chapter-prose mention
+ * — it proves the synthesized-node path (an authored edge to an entity absent
+ * from BOTH `nodes` and any card) independently of the `varuna` case already
+ * in `seedWorkspace`'s explicit chain (which has no card but WOULD have a
+ * prose mention if one existed; `bhima` has neither).
+ */
+const AI_CANDIDATE_OWNERSHIP: NarrativeRelation = {
+  sourceId: 'gandiva',
+  targetId: 'bhima',
+  relType: OWNERSHIP_REL_TYPE,
+  origin: 'ai-candidate',
+  ownerPath: 'entities/artifacts/gandiva.yaml',
+  sourceResolved: true,
+  targetResolved: false,
+  listPosition: 2,
+  confidence: 0.6,
+  evidence: [wholeFileEvidence('entities/artifacts/gandiva.yaml')]
+};
+
+/**
  * Minimal `NarrativeKnowledgeService` double covering exactly the five methods
  * `NodeNarrativeGraphService` calls — the same technique
  * `narrative-consumer-baseline.test.ts`'s `buildFixtureKnowledgeService` uses,
  * kept local because this file's fixture (`seedWorkspace`) is independent of
  * that one's.
  */
-function buildFixtureKnowledgeService(rootPath: string) {
+function buildFixtureKnowledgeService(rootPath: string, extraRelations: readonly NarrativeRelation[] = []) {
   const store = new InMemoryNarrativeIndexStore();
   const session = new NarrativeIndexSession({ store, schemaVersion: NARRATIVE_INDEX_SCHEMA_VERSION });
   session.rebuild(scanWorkspaceFiles(rootPath));
+  if (extraRelations.length > 0) {
+    store.transaction(writer => {
+      for (const relation of extraRelations) {
+        writer.putRelation(relation);
+      }
+    });
+  }
 
   return {
     async getManifestChapters() {
@@ -156,9 +190,9 @@ function buildFixtureKnowledgeService(rootPath: string) {
  *  — `@inject` fields are plain instance properties, and this bypasses Inversify
  *  entirely (the same pattern `narrative-consumer-baseline.test.ts` uses for
  *  `EntityCardsWidget`/`ManuscriptFindEntitiesTool`). */
-function buildService(rootPath: string): NodeNarrativeGraphService {
+function buildService(rootPath: string, extraRelations: readonly NarrativeRelation[] = []): NodeNarrativeGraphService {
   const service = Object.create(NodeNarrativeGraphService.prototype) as NodeNarrativeGraphService;
-  (service as unknown as { knowledge: unknown }).knowledge = buildFixtureKnowledgeService(rootPath);
+  (service as unknown as { knowledge: unknown }).knowledge = buildFixtureKnowledgeService(rootPath, extraRelations);
   return service;
 }
 
@@ -340,5 +374,87 @@ describe('NodeNarrativeGraphService', () => {
     const warning = snapshot.diagnostics.find(diagnostic =>
       diagnostic.message.includes('Missing manifest.yaml'));
     expect(warning?.severity).toBe('warning');
+  });
+
+  /**
+   * TASK-022 UR-044/UR-026 — before this task, `NodeNarrativeGraphService`
+   * queried `getRelations({ relType: OWNERSHIP_REL_TYPE, origin: 'explicit' })`
+   * (`node-narrative-graph-service.ts`, pre-change), so an `ai-candidate`
+   * ownership hop was discarded before it ever reached the assembler: it
+   * appeared in NEITHER the ownership chain text NOR any graph edge. These
+   * four tests are the teeth for that fix and for the new `authoredEdges`/
+   * `authoredNodes` fields the Narrative Map widget draws from.
+   */
+  describe('authored (ownership) graph — explicit and ai-candidate origin (UR-044/UR-026)', () => {
+    test('an ai-candidate ownership hop is no longer discarded — it appears in the ownership chain, tagged distinctly from explicit', async () => {
+      await seedWorkspace(root);
+      service = buildService(root, [AI_CANDIDATE_OWNERSHIP]);
+      const snapshot = await service.getSnapshot(root);
+
+      const gandiva = snapshot.ownership.find(transfer => transfer.artifactId === 'gandiva');
+      expect(gandiva).toBeDefined();
+      // The two pre-existing (YAML) hops stay 'explicit'.
+      expect(gandiva!.entries.filter(entry => entry.owner === 'varuna' || entry.owner === 'arjuna')
+        .every(entry => entry.origin === 'explicit')).toBe(true);
+      // The injected hop surfaces, tagged 'ai-candidate' — this is the part
+      // that was IMPOSSIBLE before the fix (the old query never returned it).
+      const candidate = gandiva!.entries.find(entry => entry.owner === 'bhima');
+      expect(candidate).toBeDefined();
+      expect(candidate!.origin).toBe('ai-candidate');
+    });
+
+    test('authoredEdges carries one edge per ownership hop, tagged with its real origin and relType', async () => {
+      await seedWorkspace(root);
+      service = buildService(root, [AI_CANDIDATE_OWNERSHIP]);
+      const snapshot = await service.getSnapshot(root);
+
+      const authored = snapshot.authoredEdges ?? [];
+      // varuna and bhima have no entity card -> unresolved -> empty-kind
+      // composite key, same fallback convention `buildOwnership` already uses
+      // for a label ("falls back to the raw id").
+      const varunaEdge = authored.find(item => item.target === ':varuna');
+      const arjunaEdge = authored.find(item => item.target === 'character:arjuna');
+      const bhimaEdge = authored.find(item => item.target === ':bhima');
+
+      expect(varunaEdge).toMatchObject({ source: 'artifact:gandiva', origin: 'explicit', relType: OWNERSHIP_REL_TYPE });
+      expect(arjunaEdge).toMatchObject({ source: 'artifact:gandiva', origin: 'explicit', relType: OWNERSHIP_REL_TYPE });
+      expect(bhimaEdge).toMatchObject({ source: 'artifact:gandiva', origin: 'ai-candidate', relType: OWNERSHIP_REL_TYPE });
+    });
+
+    test('authoredNodes synthesizes a node ONLY for an owner absent from co-occurrence nodes, never duplicating one already present', async () => {
+      await seedWorkspace(root);
+      service = buildService(root, [AI_CANDIDATE_OWNERSHIP]);
+      const snapshot = await service.getSnapshot(root);
+
+      // gandiva (the artifact) and arjuna are BOTH tagged in chapter prose
+      // (seedWorkspace) -> already present in `nodes` -> must NOT be
+      // duplicated into `authoredNodes`.
+      const coOccurrenceIds = new Set(snapshot.nodes.map(node => node.id));
+      expect(coOccurrenceIds.has('artifact:gandiva')).toBe(true);
+      expect(coOccurrenceIds.has('character:arjuna')).toBe(true);
+
+      const authoredIds = new Set((snapshot.authoredNodes ?? []).map(node => node.id));
+      expect(authoredIds.has('artifact:gandiva')).toBe(false);
+      expect(authoredIds.has('character:arjuna')).toBe(false);
+
+      // varuna and bhima never appear in prose and have no card -> absent
+      // from `nodes` -> MUST be synthesized here, or their edges above would
+      // have no endpoint to draw to.
+      const varunaNode = (snapshot.authoredNodes ?? []).find(node => node.id === ':varuna');
+      const bhimaNode = (snapshot.authoredNodes ?? []).find(node => node.id === ':bhima');
+      expect(varunaNode).toMatchObject({ entityId: 'varuna', kind: '', label: 'varuna', appearances: 0 });
+      expect(bhimaNode).toMatchObject({ entityId: 'bhima', kind: '', label: 'bhima', appearances: 0 });
+    });
+
+    test('without the injected candidate, authoredEdges/ownership hold explicit-only — the fixture is not accidentally green', async () => {
+      await seedWorkspace(root);
+      service = buildService(root); // no extraRelations
+      const snapshot = await service.getSnapshot(root);
+
+      expect((snapshot.authoredEdges ?? []).every(item => item.origin === 'explicit')).toBe(true);
+      const gandiva = snapshot.ownership.find(transfer => transfer.artifactId === 'gandiva');
+      expect(gandiva!.entries.every(entry => entry.origin === 'explicit')).toBe(true);
+      expect(gandiva!.entries.find(entry => entry.owner === 'bhima')).toBeUndefined();
+    });
   });
 });

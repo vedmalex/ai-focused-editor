@@ -1,4 +1,5 @@
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { StorageService } from '@theia/core/lib/browser/storage-service';
 import { nls } from '@theia/core/lib/common/nls';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import {
@@ -10,7 +11,8 @@ import React from '@theia/core/shared/react';
 import {
   NarrativeIndexChangeWatcher,
   type NarrativeIndexChangedEvent,
-  type NarrativeIndexChangeWatcher as NarrativeIndexChangeWatcherType
+  type NarrativeIndexChangeWatcher as NarrativeIndexChangeWatcherType,
+  type NarrativeOrigin
 } from '@ai-focused-editor/narrative-knowledge';
 import {
   NarrativeGraphService,
@@ -31,6 +33,13 @@ const SVG_CENTER = SVG_SIZE / 2;
 const RING_RADIUS = 150;
 const LABEL_RADIUS = RING_RADIUS + 16;
 
+/** One resolved graph edge, always carrying its origin (TASK-022 UR-044) — the
+ *  shape `computeVisibleGraph` returns, after defaulting the protocol's
+ *  optional `origin` so every downstream render function can rely on it. */
+interface VisibleEdge extends NarrativeRelationEdge {
+  origin: NarrativeOrigin;
+}
+
 @injectable()
 export class NarrativeMapWidget extends ReactWidget {
   static readonly ID = 'ai-focused-editor.narrative-map';
@@ -45,8 +54,23 @@ export class NarrativeMapWidget extends ReactWidget {
   @inject(WorkspaceService)
   protected readonly workspaceService!: WorkspaceService;
 
+  @inject(StorageService)
+  protected readonly storageService!: StorageService;
+
+  /** Persisted key for the "show co-mentions" toggle (TASK-022 UR-044b) — the
+   *  same `StorageService` pattern `transcript-check-widget.ts` uses for its
+   *  playback-position persistence, which is workspace-scoped by the
+   *  `WorkspaceStorageService` binding underneath, so the choice survives a
+   *  restart without leaking across different books. */
+  protected static readonly SHOW_CO_OCCURRENCE_KEY = 'afe-narrative-map:show-co-occurrence';
+
   protected snapshot: NarrativeGraphSnapshot | undefined;
   protected loading = false;
+  /** Whether co-occurrence (`origin: 'derived'`) edges/nodes are drawn.
+   *  Defaults OFF (UR-044b: "на чистой карте только авторское") and is
+   *  restored from `storageService` before the FIRST paint in `initialize()`
+   *  — never flips visibly after an initial derived-edges-shown render. */
+  protected showCoOccurrence = false;
   /** The workspace root this widget answers pushes for — resolved the same
    *  way every other narrative-knowledge consumer resolves it
    *  (`entity-cards-widget.ts`, `browser-narrative-graph-service.ts`), rather
@@ -77,7 +101,27 @@ export class NarrativeMapWidget extends ReactWidget {
         void this.refresh();
       }
     }));
-    void this.refresh();
+    void this.initialize();
+  }
+
+  /** Restore the persisted toggle BEFORE the first `refresh()`/paint, so the
+   *  map never flashes "co-mentions shown" and then hides them a tick later
+   *  (the flash `transcript-check-widget.ts:836` avoids the same way for its
+   *  own persisted playback state). */
+  protected async initialize(): Promise<void> {
+    this.showCoOccurrence = (await this.storageService.getData<boolean>(
+      NarrativeMapWidget.SHOW_CO_OCCURRENCE_KEY
+    )) ?? false;
+    await this.refresh();
+  }
+
+  protected async setShowCoOccurrence(value: boolean): Promise<void> {
+    if (this.showCoOccurrence === value) {
+      return;
+    }
+    this.showCoOccurrence = value;
+    this.update();
+    await this.storageService.setData(NarrativeMapWidget.SHOW_CO_OCCURRENCE_KEY, value);
   }
 
   async refresh(): Promise<void> {
@@ -231,7 +275,13 @@ export class NarrativeMapWidget extends ReactWidget {
   }
 
   protected renderOwnershipTransfer(transfer: NarrativeOwnershipTransfer): React.ReactNode {
-    const chain = transfer.entries.map(entry => entry.ownerLabel).join(' → ');
+    const chain: React.ReactNode[] = [];
+    transfer.entries.forEach((entry, index) => {
+      if (index > 0) {
+        chain.push(h('span', { key: `${transfer.artifactId}-arrow-${index}` }, ' → '));
+      }
+      chain.push(this.renderOwnershipLink(transfer.artifactId, entry, index));
+    });
     const detailed = transfer.entries.filter(entry => this.ownershipDetail(entry));
     return h(
       'div',
@@ -240,7 +290,7 @@ export class NarrativeMapWidget extends ReactWidget {
         'div',
         { className: 'afe-narrative-ownership-chain' },
         h('strong', undefined, `${transfer.artifactLabel}: `),
-        chain
+        ...chain
       ),
       detailed.length === 0
         ? undefined
@@ -253,6 +303,27 @@ export class NarrativeMapWidget extends ReactWidget {
             `${entry.ownerLabel}${this.ownershipDetail(entry)}`
           ))
         )
+    );
+  }
+
+  /**
+   * One owner in the chain (TASK-022 UR-044a/UR-026). An `ai-candidate` hop
+   * gets a TEXT suffix, not just a `className` — the requirement is explicit
+   * that distinction may not rest on colour alone, and a suffix is legible
+   * even to a reader who never sees the CSS (a screen reader, a colourblind
+   * theme, a screenshot). `explicit` renders exactly as before (no suffix, no
+   * behavioural change to the common case).
+   */
+  protected renderOwnershipLink(artifactId: string, entry: NarrativeOwnershipEntry, index: number): React.ReactNode {
+    return h(
+      'span',
+      {
+        key: `${artifactId}-link-${index}`,
+        className: `afe-narrative-ownership-link origin-${entry.origin}`
+      },
+      entry.origin === 'ai-candidate'
+        ? nls.localize('ai-focused-editor/entities/ownership-ai-candidate', '{0} (AI-suggested)', entry.ownerLabel)
+        : entry.ownerLabel
     );
   }
 
@@ -272,26 +343,123 @@ export class NarrativeMapWidget extends ReactWidget {
 
   // ---------- relations ----------
 
+  /**
+   * Resolve what the graph actually draws (TASK-022 UR-044), given the
+   * persisted `showCoOccurrence` toggle:
+   *
+   * - ai-candidate and explicit (authored) edges are ALWAYS drawn — the
+   *   toggle is scoped to "показывать совместные упоминания" (co-mentions)
+   *   only, never to agent-proposed or author-written connections.
+   * - `origin: 'derived'` (co-occurrence) edges/nodes are drawn ONLY when the
+   *   toggle is on.
+   *
+   * NODE SET FOLLOWS THE VISIBLE EDGE SET, not a fixed list — with the toggle
+   * off, only entities reachable by an authored edge get a node (the point of
+   * UR-044b: "на чистой карте только авторское"). A co-occurrence node that
+   * happens to ALSO be an authored-edge endpoint (e.g. an artifact mentioned
+   * in prose that also has an ownership chain) still shows, resolved from
+   * `nodes` rather than duplicated — the same co-occurrence-wins rule the
+   * assembler already applies when building `authoredNodes`.
+   */
+  protected computeVisibleGraph(snapshot: NarrativeGraphSnapshot): {
+    nodes: NarrativeRelationNode[];
+    edges: VisibleEdge[];
+  } {
+    const authoredEdges: VisibleEdge[] = (snapshot.authoredEdges ?? []).map(edge => ({
+      ...edge,
+      origin: edge.origin ?? 'explicit'
+    }));
+    const authoredNodeById = new Map((snapshot.authoredNodes ?? []).map(node => [node.id, node]));
+    const coNodeById = new Map(snapshot.nodes.map(node => [node.id, node]));
+
+    if (this.showCoOccurrence) {
+      const derivedEdges: VisibleEdge[] = snapshot.relations.map(edge => ({
+        ...edge,
+        origin: edge.origin ?? 'derived'
+      }));
+      return {
+        nodes: [...snapshot.nodes, ...(snapshot.authoredNodes ?? [])],
+        // Authored edges paint LAST (on top): a co-occurrence and an
+        // authored edge between the SAME two endpoints (e.g. Arjuna and
+        // Gandiva both co-occur in prose and have an ownership hop) overlap
+        // exactly on the ring — painting the authored one last means the
+        // "заметное" (noticeable) edge wins the overlap, which is what
+        // UR-044a asks for even in this coincidental case.
+        edges: [...derivedEdges, ...authoredEdges]
+      };
+    }
+
+    const neededIds = new Set<string>();
+    for (const edge of authoredEdges) {
+      neededIds.add(edge.source);
+      neededIds.add(edge.target);
+    }
+    const nodes: NarrativeRelationNode[] = [];
+    for (const id of neededIds) {
+      const node = coNodeById.get(id) ?? authoredNodeById.get(id);
+      if (node) {
+        nodes.push(node);
+      }
+    }
+    return { nodes, edges: authoredEdges };
+  }
+
   protected renderRelations(snapshot: NarrativeGraphSnapshot): React.ReactNode {
-    const { nodes, relations, truncated, totalEntities } = snapshot;
+    const { truncated, totalEntities } = snapshot;
+    const { nodes, edges } = this.computeVisibleGraph(snapshot);
     return h(
       'section',
       { className: 'afe-narrative-map-section' },
       h('h4', undefined, nls.localize('ai-focused-editor/entities/relations', 'Relations')),
-      truncated
+      this.renderGraphControls(),
+      truncated && this.showCoOccurrence
         ? h(
           'p',
           { className: 'afe-narrative-truncation' },
-          nls.localize('ai-focused-editor/entities/showing-top', 'Showing the top {0} of {1} entities by appearances.', nodes.length, totalEntities)
+          nls.localize('ai-focused-editor/entities/showing-top', 'Showing the top {0} of {1} entities by appearances.', snapshot.nodes.length, totalEntities)
         )
         : undefined,
       nodes.length < 2
-        ? h('p', { className: 'afe-empty-state' }, nls.localize('ai-focused-editor/entities/not-enough-entities', 'Not enough co-occurring entities to draw a graph.'))
-        : this.renderGraph(nodes, relations)
+        ? h('p', { className: 'afe-empty-state' }, nls.localize('ai-focused-editor/entities/not-enough-entities', 'Not enough connected entities to draw a graph.'))
+        : this.renderGraph(nodes, edges)
     );
   }
 
-  protected renderGraph(nodes: NarrativeRelationNode[], relations: NarrativeRelationEdge[]): React.ReactNode {
+  /** The toggle (UR-044b) plus the origin legend (UR-044a) — placed together
+   *  since the legend only makes sense once the reader knows the toggle can
+   *  change what it describes. */
+  protected renderGraphControls(): React.ReactNode {
+    return h(
+      'div',
+      { className: 'afe-narrative-graph-controls' },
+      h(
+        'label',
+        { className: 'afe-narrative-graph-toggle' },
+        h('input', {
+          type: 'checkbox',
+          checked: this.showCoOccurrence,
+          onChange: (event: React.ChangeEvent<HTMLInputElement>) => void this.setShowCoOccurrence(event.target.checked)
+        }),
+        nls.localize('ai-focused-editor/entities/show-co-occurrence', 'Show co-mentions')
+      ),
+      this.renderGraphLegend()
+    );
+  }
+
+  protected renderGraphLegend(): React.ReactNode {
+    return h(
+      'ul',
+      { className: 'afe-narrative-graph-legend' },
+      h('li', { className: 'afe-narrative-graph-legend-item origin-explicit' },
+        nls.localize('ai-focused-editor/entities/legend-explicit', 'Authored')),
+      h('li', { className: 'afe-narrative-graph-legend-item origin-ai-candidate' },
+        nls.localize('ai-focused-editor/entities/legend-ai-candidate', 'AI-suggested')),
+      h('li', { className: 'afe-narrative-graph-legend-item origin-derived' },
+        nls.localize('ai-focused-editor/entities/legend-derived', 'Co-mentioned'))
+    );
+  }
+
+  protected renderGraph(nodes: NarrativeRelationNode[], edges: VisibleEdge[]): React.ReactNode {
     const positions = new Map<string, { x: number; y: number; angle: number }>();
     nodes.forEach((node, index) => {
       const angle = -Math.PI / 2 + (2 * Math.PI * index) / nodes.length;
@@ -302,7 +470,8 @@ export class NarrativeMapWidget extends ReactWidget {
       });
     });
 
-    const maxWeight = relations.reduce((max, edge) => Math.max(max, edge.weight), 1);
+    const derivedWeights = edges.filter(edge => edge.origin === 'derived');
+    const maxWeight = derivedWeights.reduce((max, edge) => Math.max(max, edge.weight), 1);
     const maxAppearances = nodes.reduce((max, node) => Math.max(max, node.appearances), 1);
 
     return h(
@@ -314,9 +483,9 @@ export class NarrativeMapWidget extends ReactWidget {
           className: 'afe-narrative-graph-svg',
           viewBox: `0 0 ${SVG_SIZE} ${SVG_SIZE}`,
           role: 'img',
-          'aria-label': nls.localize('ai-focused-editor/entities/graph-aria', 'Entity co-occurrence graph')
+          'aria-label': nls.localize('ai-focused-editor/entities/graph-aria', 'Entity relationship graph')
         },
-        h('g', { className: 'afe-narrative-graph-edges' }, ...relations.map(edge =>
+        h('g', { className: 'afe-narrative-graph-edges' }, ...edges.map(edge =>
           this.renderEdge(edge, positions, maxWeight))),
         h('g', { className: 'afe-narrative-graph-nodes' }, ...nodes.map(node =>
           this.renderNode(node, positions, maxAppearances)))
@@ -324,8 +493,45 @@ export class NarrativeMapWidget extends ReactWidget {
     );
   }
 
+  /**
+   * Origin-driven line style (TASK-022 UR-044a). Every value here is a
+   * SVG-attribute the returned React element carries in `props` — verifiable
+   * directly by a test walking the element tree, and NEVER relying on colour
+   * alone (the requirement's own boundary): `explicit` is solid and thick,
+   * `ai-candidate` is a coarse dash at a medium fixed width, `derived` is a
+   * fine dash whose width still scales with `weight` (preserves the existing
+   * "more shared chapters -> thicker line" signal, just visually receding
+   * relative to the two authored kinds).
+   */
+  protected edgeStyle(origin: NarrativeOrigin, weight: number, maxWeight: number): {
+    strokeWidth: number;
+    strokeDasharray?: string;
+  } {
+    switch (origin) {
+      case 'explicit':
+        return { strokeWidth: 3.5 };
+      case 'ai-candidate':
+        return { strokeWidth: 2.25, strokeDasharray: '5 3' };
+      case 'derived':
+      default:
+        return { strokeWidth: 1 + (weight / maxWeight) * 4, strokeDasharray: '1 3' };
+    }
+  }
+
+  protected edgeTitle(edge: VisibleEdge): string {
+    if (edge.origin === 'derived') {
+      return nls.localize('ai-focused-editor/entities/edge-title', '{0} ↔ {1}: {2} chapters', edge.sourceLabel, edge.targetLabel, edge.weight);
+    }
+    const kindLabel = edge.origin === 'ai-candidate'
+      ? nls.localize('ai-focused-editor/entities/edge-ai-candidate', 'AI-suggested')
+      : nls.localize('ai-focused-editor/entities/edge-explicit', 'Authored');
+    return edge.relType
+      ? `${edge.sourceLabel} → ${edge.targetLabel} (${edge.relType}, ${kindLabel})`
+      : `${edge.sourceLabel} → ${edge.targetLabel} (${kindLabel})`;
+  }
+
   protected renderEdge(
-    edge: NarrativeRelationEdge,
+    edge: VisibleEdge,
     positions: Map<string, { x: number; y: number }>,
     maxWeight: number
   ): React.ReactNode {
@@ -334,19 +540,20 @@ export class NarrativeMapWidget extends ReactWidget {
     if (!source || !target) {
       return undefined;
     }
-    const strokeWidth = 1 + (edge.weight / maxWeight) * 5;
+    const style = this.edgeStyle(edge.origin, edge.weight, maxWeight);
     return h(
       'line',
       {
-        key: `${edge.source}|${edge.target}`,
-        className: 'afe-narrative-graph-edge',
+        key: `${edge.source}|${edge.target}|${edge.origin}`,
+        className: `afe-narrative-graph-edge origin-${edge.origin}`,
         x1: source.x,
         y1: source.y,
         x2: target.x,
         y2: target.y,
-        strokeWidth
+        strokeWidth: style.strokeWidth,
+        strokeDasharray: style.strokeDasharray
       },
-      h('title', undefined, nls.localize('ai-focused-editor/entities/edge-title', '{0} ↔ {1}: {2} chapters', edge.sourceLabel, edge.targetLabel, edge.weight))
+      h('title', undefined, this.edgeTitle(edge))
     );
   }
 
