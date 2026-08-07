@@ -9,7 +9,7 @@
  * functions.
  */
 
-import { parseChapterFrontMatter, type ChapterFrontMatterValue } from './chapter-front-matter';
+import { parseChapterFrontMatter, type ChapterFrontMatterValue } from '@ai-focused-editor/narrative-knowledge';
 
 /** One indexed note: its full path/URI string as supplied by the caller, and its `.md`-stripped basename (original case, for display). */
 export interface NoteIndexEntry {

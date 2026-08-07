@@ -23,16 +23,41 @@
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { computeSourceFingerprint } from '../src/node/docs/source-scan';
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test';
+import { computeSourceFingerprint, INVENTORY_SOURCE_ROOTS } from '../src/node/docs/source-scan';
 import { hashSourceRef } from '../src/node/docs/source-refs';
+
+/**
+ * The per-test budget, STATED rather than inherited — the same decision, for
+ * the same reason, as the one documented at length in
+ * `extract-feature-inventory.test.ts`.
+ *
+ * This file has the identical cost class: all 113 tests run the real generator
+ * as a `bun` SUBPROCESS, so each one pays interpreter startup before it does
+ * any work of its own. Measured idle at HEAD `adaff12`: ~16.9 s for the file,
+ * slowest case ~0.95 s. That case therefore sits only ~5.3x under bun's
+ * 5000 ms default — a THINNER margin than the real-tree case in the sibling
+ * file had (~7.2x), and the same measured >30x load multiplier applies to the
+ * spawn floor here. This file was also reported failing alongside that one in
+ * the flaky `verify` run this budget was written for.
+ */
+const SUBPROCESS_TEST_TIMEOUT_MS = 60_000;
+
+jest.setTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 /**
  * Fixture trees and generator output live in the OS temp directory, never in the
  * working tree: a test that leaves an artefact behind shows up in `git status`,
  * misleads the next reader and invites an accidental commit.
+ *
+ * PER PROCESS (`process.pid`) for the reason spelled out on the twin constant
+ * in `extract-feature-inventory.test.ts`: `afterEach` removes TEST_ROOT
+ * wholesale, so under a fixed shared name two overlapping runs of this file
+ * delete each other's fixtures and the generator subprocess exits 2 on a repo
+ * that no longer exists. That is exactly how a `bun run verify` here came back
+ * with 14 failures in this file that a solo re-run could not reproduce.
  */
-const TEST_ROOT = join(tmpdir(), 'generate-docs-content-test');
+const TEST_ROOT = join(tmpdir(), `generate-docs-content-test-${process.pid}`);
 
 const SCRIPT_PATH = join(import.meta.dir, 'generate-docs-content.mjs');
 
@@ -44,11 +69,15 @@ const CONTENT_DIR = `${PACKAGE_DIR}/src/browser/docs/content`;
 const INVENTORY_PATH = `${PACKAGE_DIR}/docs-inventory.generated.json`;
 const MODULE_PATH = `${PACKAGE_DIR}/src/browser/docs/docs-content.generated.ts`;
 
-const SOURCE_DIRS = [
-  `${PACKAGE_DIR}/src`,
-  'packages/ai-connect-theia/src',
-  'packages/document-preview-theia/src'
-];
+/**
+ * The declared traversal roots as bare directories — DERIVED from
+ * {@link INVENTORY_SOURCE_ROOTS}, not restated. This was the THIRD hand-kept
+ * copy of one declaration (the others are in `extract-feature-inventory.test.ts`
+ * and `src/node/docs/source-scan.test.ts`); adding a root in TASK-022 WP-0
+ * broke all three at once, since the generator rejects a declared-but-absent
+ * root and every fixture repo here is built from this list.
+ */
+const SOURCE_DIRS = INVENTORY_SOURCE_ROOTS.map(root => root.replace(/\/\*\*\/\*\.ts$/, ''));
 
 interface InventorySpec {
   commands?: string[];
@@ -1922,7 +1951,13 @@ describe('control numbers on the REAL tree (§1.7, F-D8-5)', () => {
     expect(result.stderr).toBe('');
     expect(result.exitCode).toBe(0);
     expect(Number(metric(result.report, 'Inventory ids \\(commands\\)'))).toBeGreaterThanOrEqual(165);
-    expect(metric(result.report, 'Inventory keys \\(preferences\\)')).toBe('22');
+    // 22 → 27 in TASK-022 WP-5 (the five `narrativeMemory.*` keys of AD-5).
+    expect(metric(result.report, 'Inventory keys \\(preferences\\)')).toBe('27');
+    // AND STILL ZERO UNCOVERED, which is the half of this case that carries
+    // weight: five new keys and two new commands entered the census, and the
+    // reference page shipped in the same work package covers all seven. A
+    // growth in the first number with a growth in this one would be
+    // undocumented surface.
     expect(metric(result.report, 'Uncovered')).toBe('0');
   });
 

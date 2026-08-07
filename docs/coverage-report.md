@@ -5,11 +5,11 @@
 
 | Metric | Value |
 |---|---|
-| Inventory packages | `manuscript-workspace`, `ai-connect-theia`, `document-preview-theia` |
+| Inventory packages | `manuscript-workspace`, `ai-connect-theia`, `document-preview-theia`, `narrative-knowledge` |
 | Inventory namespaces | `ai-focused-editor.`, `ai-connect.` |
-| Inventory ids (commands) | 173 |
-| Inventory keys (preferences) | 22 |
-| Covered by exact id | 194 |
+| Inventory ids (commands) | 176 |
+| Inventory keys (preferences) | 27 |
+| Covered by exact id | 202 |
 | Covered by directive occurrence | 0 |
 | Absorbed by glob | 0 |
 | Allowlisted: external | 0 |
@@ -35,7 +35,7 @@
 | Glob absorption ceiling (N) | 8 |
 | Pending exception requests | 0 |
 | Passed via pending external request | 0 |
-| Docs content size | 348.5 KB |
+| Docs content size | 376.2 KB |
 
 ## Covered by directive occurrence
 

@@ -4,7 +4,7 @@ import type {
   DidChangeLabelEvent,
   LabelProviderContribution
 } from '@theia/core/lib/browser/label-provider';
-import { BASE_ENTITY_TYPES } from '../common/entity-type-registry';
+import { BASE_ENTITY_TYPES } from '@ai-focused-editor/narrative-knowledge';
 import {
   AuthorMaterialFolderTreeNode,
   AuthorMaterialsSectionGroupTreeNode,

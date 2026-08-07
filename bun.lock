@@ -17,6 +17,7 @@
         "@ai-focused-editor/document-preview-theia": "workspace:*",
         "@ai-focused-editor/git": "0.1.0",
         "@ai-focused-editor/manuscript-workspace": "workspace:*",
+        "@ai-focused-editor/narrative-knowledge": "workspace:*",
         "@parcel/watcher-darwin-arm64": "2.5.6",
         "@theia/ai-chat": "1.73.1",
         "@theia/ai-chat-ui": "1.73.1",
@@ -74,6 +75,7 @@
         "@ai-focused-editor/document-preview-theia": "workspace:*",
         "@ai-focused-editor/git": "0.1.0",
         "@ai-focused-editor/manuscript-workspace": "workspace:*",
+        "@ai-focused-editor/narrative-knowledge": "workspace:*",
         "@parcel/watcher-darwin-arm64": "2.5.6",
         "@theia/ai-chat": "1.73.1",
         "@theia/ai-chat-ui": "1.73.1",
@@ -189,6 +191,7 @@
         "@ai-focused-editor/ai-connect-theia": "workspace:*",
         "@ai-focused-editor/book-export": "0.1.0",
         "@ai-focused-editor/document-preview-theia": "workspace:*",
+        "@ai-focused-editor/narrative-knowledge": "workspace:*",
         "@ai-focused-editor/semantic-markdown": "workspace:*",
         "@excalidraw/excalidraw": "0.18.1",
         "@theia/ai-chat": "1.73.1",
@@ -227,11 +230,31 @@
         "typescript": "~5.8.3",
       },
     },
+    "packages/narrative-knowledge": {
+      "name": "@ai-focused-editor/narrative-knowledge",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ai-focused-editor/semantic-markdown": "workspace:*",
+        "@theia/ai-core": "1.73.1",
+        "@theia/core": "1.73.1",
+        "@theia/filesystem": "1.73.1",
+        "@theia/markers": "1.73.1",
+        "@theia/workspace": "1.73.1",
+        "ajv": "8.20.0",
+        "yaml": "2.9.0",
+      },
+      "devDependencies": {
+        "@types/node": "^24.0.10",
+        "reflect-metadata": "0.2.2",
+        "typescript": "~5.8.3",
+      },
+    },
     "packages/obsidian-plugin": {
       "name": "@ai-focused-editor/obsidian-plugin",
       "version": "0.1.0",
       "dependencies": {
         "@ai-focused-editor/manuscript-workspace": "workspace:*",
+        "@ai-focused-editor/narrative-knowledge": "workspace:*",
         "@ai-focused-editor/semantic-markdown": "workspace:*",
         "yaml": "2.9.0",
       },
@@ -303,6 +326,8 @@
     "@ai-focused-editor/git": ["@ai-focused-editor/git@workspace:packages/theia-git-fork"],
 
     "@ai-focused-editor/manuscript-workspace": ["@ai-focused-editor/manuscript-workspace@workspace:packages/manuscript-workspace"],
+
+    "@ai-focused-editor/narrative-knowledge": ["@ai-focused-editor/narrative-knowledge@workspace:packages/narrative-knowledge"],
 
     "@ai-focused-editor/obsidian-plugin": ["@ai-focused-editor/obsidian-plugin@workspace:packages/obsidian-plugin"],
 

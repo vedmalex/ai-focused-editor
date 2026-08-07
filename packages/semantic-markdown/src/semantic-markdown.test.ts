@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test';
 import {
   classifyWikiLinkCandidate,
+  computeCodeSpanRanges,
+  isOffsetInCodeSpan,
   nextFootnoteNumber,
   normalizeSemanticMarkdownTags,
   parseFootnotes,
@@ -136,6 +138,143 @@ test('still flags a multiline label inside the labeled kind:id|label form', () =
     severity: 'error',
     message: 'Invalid semantic Markdown tag. Expected [[kind:id|label]] with single-line label and ASCII id.'
   });
+});
+
+// ---------------------------------------------------------------------------
+// computeCodeSpanRanges / isOffsetInCodeSpan — TASK-022/UR-035 (ISS-358): a
+// `[[kind:id|label]]`-shaped SYNTAX EXAMPLE inside inline code or a fenced
+// code block must not be treated as a live tag by ANY consumer. This is the
+// live-editor regression the user confirmed directly: the doc line
+// `` portable Markdown with `[[kind:id|label]]` tags `` in
+// examples/sample-book/content/chapter-01.md was underlined as a broken
+// reference. Reuses the SAME fence/backtick walk `splitMathSegments` already
+// uses for `$` — see that describe block below for the shared-mechanism proof.
+// ---------------------------------------------------------------------------
+
+test('computeCodeSpanRanges: covers an inline code span', () => {
+  const text = 'See `[[char:nobody|Nobody]]` here.';
+  const span = '`[[char:nobody|Nobody]]`';
+  const start = text.indexOf(span);
+  expect(computeCodeSpanRanges(text)).toEqual([{ start, end: start + span.length }]);
+});
+
+test('computeCodeSpanRanges: covers a ``` fenced code block body', () => {
+  const text = 'before\n```\n[[char:nobody|Nobody]]\n```\nafter';
+  const ranges = computeCodeSpanRanges(text);
+  expect(ranges).toHaveLength(1);
+  expect(text.slice(ranges[0].start, ranges[0].end)).toBe('```\n[[char:nobody|Nobody]]\n```\n');
+});
+
+test('computeCodeSpanRanges: covers a ~~~ fenced code block body too', () => {
+  const text = 'before\n~~~\n[[char:nobody|Nobody]]\n~~~\nafter';
+  const ranges = computeCodeSpanRanges(text);
+  expect(ranges).toHaveLength(1);
+  expect(text.slice(ranges[0].start, ranges[0].end)).toBe('~~~\n[[char:nobody|Nobody]]\n~~~\n');
+});
+
+test('computeCodeSpanRanges: an escaped backtick does not open an inline code span', () => {
+  const text = 'a \\` not code `still not` b';
+  const span = '`still not`';
+  const start = text.indexOf(span);
+  expect(computeCodeSpanRanges(text)).toEqual([{ start, end: start + span.length }]);
+});
+
+test('isOffsetInCodeSpan: true inside a range, false at/after its end and before its start', () => {
+  const ranges = [{ start: 5, end: 10 }];
+  expect(isOffsetInCodeSpan(4, ranges)).toBe(false);
+  expect(isOffsetInCodeSpan(5, ranges)).toBe(true);
+  expect(isOffsetInCodeSpan(9, ranges)).toBe(true);
+  expect(isOffsetInCodeSpan(10, ranges)).toBe(false);
+});
+
+// ---------------------------------------------------------------------------
+// Every SEMANTIC_TAG_PATTERN-driven function in this file must agree that a
+// tag inside code is not a tag — parseSemanticMarkdown, validateSemanticMarkdown,
+// normalizeSemanticMarkdownTags, renderSemanticMarkdownPreview.
+// ---------------------------------------------------------------------------
+
+test('parseSemanticMarkdown: a labeled tag inside inline code is not a tag', () => {
+  expect(parseSemanticMarkdown('Use `[[char:nobody|Nobody]]` tags.').tags).toEqual([]);
+});
+
+test('parseSemanticMarkdown: a labeled tag inside a fenced code block is not a tag (``` and ~~~)', () => {
+  expect(parseSemanticMarkdown('```\n[[char:nobody|Nobody]]\n```').tags).toEqual([]);
+  expect(parseSemanticMarkdown('~~~\n[[char:nobody|Nobody]]\n~~~').tags).toEqual([]);
+});
+
+test('parseSemanticMarkdown: a real tag AFTER a fenced code block is still found, with unshifted coordinates', () => {
+  // The exact shape of the live regression: a code example precedes real prose.
+  const text = '```\n[[char:nobody|Nobody]]\n```\nMeet [[char:krishna|Krishna]] here.';
+  const document = parseSemanticMarkdown(text);
+  expect(document.tags).toHaveLength(1);
+  expect(document.tags[0]).toMatchObject({ kind: 'char', id: 'krishna', label: 'Krishna' });
+  // Coordinates are computed by the SAME offset->position math as the
+  // un-guarded scan (nothing before the surviving tag was rewritten or
+  // removed, only skipped-over) — assert them against a plain indexOf, not a
+  // second hand count, so this test cannot silently drift with the fixture.
+  const start = text.indexOf('[[char:krishna|Krishna]]');
+  expect(document.tags[0].range).toEqual({
+    start: { line: 3, character: start - text.lastIndexOf('\n', start) - 1 },
+    end: { line: 3, character: start - text.lastIndexOf('\n', start) - 1 + '[[char:krishna|Krishna]]'.length }
+  });
+});
+
+test('parseSemanticMarkdown: a real tag on the SAME line as inline code, after it, is still found at the right offset', () => {
+  const text = 'The `[[kind:id|label]]` syntax tags [[char:krishna|Krishna]] like this.';
+  const document = parseSemanticMarkdown(text);
+  expect(document.tags).toHaveLength(1);
+  const start = text.indexOf('[[char:krishna|Krishna]]');
+  expect(document.tags[0]).toMatchObject({
+    kind: 'char',
+    id: 'krishna',
+    range: { start: { line: 0, character: start }, end: { line: 0, character: start + '[[char:krishna|Krishna]]'.length } }
+  });
+});
+
+test('validateSemanticMarkdown: does not flag a well-formed tag written inside inline code', () => {
+  expect(validateSemanticMarkdown('Use `[[char:nobody|Nobody]]` as an example.')).toHaveLength(0);
+});
+
+test('validateSemanticMarkdown: does not flag a MALFORMED tag-shaped example inside inline code', () => {
+  // Documentation showing the WRONG syntax on purpose must not get a live
+  // diagnostic either — it is prose ABOUT the grammar, not the grammar.
+  expect(validateSemanticMarkdown('Wrong: `[[char:krishna Krishna]]` (embedded space).')).toHaveLength(0);
+});
+
+test('validateSemanticMarkdown: does not flag an unclosed tag-shaped candidate inside a fenced code block', () => {
+  expect(validateSemanticMarkdown('```\nsee [[char:krishna\n```')).toHaveLength(0);
+});
+
+test('validateSemanticMarkdown: still flags a real malformed tag AFTER a fenced code block', () => {
+  const diagnostics = validateSemanticMarkdown('```\n[[char:krishna|ok]]\n```\nA [[char:krishna Krishna]]');
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0].message).toBe(
+    'Invalid semantic Markdown tag. Expected [[kind:id|label]] with single-line label and ASCII id.'
+  );
+});
+
+test('normalizeSemanticMarkdownTags: does not rewrite a tag-shaped example inside inline code', () => {
+  const text = 'See `[[char:KRISHNA|  Krishna   Govinda ]]` for the syntax.';
+  expect(normalizeSemanticMarkdownTags(text)).toBe(text);
+});
+
+test('normalizeSemanticMarkdownTags: still normalizes a real tag AFTER a code example', () => {
+  // The code-example tag before it is untouched byte-for-byte; the real tag
+  // after it still gets its label whitespace collapsed as usual.
+  const text = '`[[char:KRISHNA|  X  ]]` then [[char:krishna|  Krishna   Govinda ]] end';
+  expect(normalizeSemanticMarkdownTags(text)).toBe(
+    '`[[char:KRISHNA|  X  ]]` then [[char:krishna|Krishna Govinda]] end'
+  );
+});
+
+test('renderSemanticMarkdownPreview: a tag-shaped example inside inline code renders as literal code, not bold+meta', () => {
+  const text = 'Docs use `[[kind:id|label]]` tags.';
+  expect(renderSemanticMarkdownPreview(text)).toBe(text);
+});
+
+test('renderSemanticMarkdownPreview: a real tag alongside a code example still renders as bold+meta', () => {
+  expect(renderSemanticMarkdownPreview('Docs use `[[kind:id|label]]` like [[char:krishna|Krishna]].'))
+    .toBe('Docs use `[[kind:id|label]]` like **Krishna** _(char:krishna)_.');
 });
 
 // ---------------------------------------------------------------------------
@@ -390,4 +529,17 @@ test('splitMathSegments: a lone backtick does not swallow following math', () =>
   // Mirrors a preview text node that holds a literal backtick (no closing run):
   // the backtick is literal and the later $...$ still parses.
   expect(shape(splitMathSegments('a ` then $z$'))).toEqual(['text:a ` then ', 'inline:z']);
+});
+
+test('splitMathSegments: a stray backtick does not swallow math across a BLANK LINE (TASK-022/UR-035 tightening)', () => {
+  // Without the blank-line bound, the unclosed backtick on line 1 would
+  // search the WHOLE rest of the text for the next backtick — here, one
+  // typed for emphasis in a later, unrelated paragraph — and everything in
+  // between (including the real $z$ formula) would be misread as code.
+  const text = 'Use ` for emphasis here.\n\nThe answer is $z$, and see ` again.';
+  expect(shape(splitMathSegments(text))).toEqual([
+    'text:Use ` for emphasis here.\n\nThe answer is ',
+    'inline:z',
+    'text:, and see ` again.'
+  ]);
 });

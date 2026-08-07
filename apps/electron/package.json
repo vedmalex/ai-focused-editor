@@ -8,6 +8,7 @@
     "@ai-focused-editor/document-preview-theia": "workspace:*",
     "@ai-focused-editor/git": "0.1.0",
     "@ai-focused-editor/manuscript-workspace": "workspace:*",
+    "@ai-focused-editor/narrative-knowledge": "workspace:*",
     "@parcel/watcher-darwin-arm64": "2.5.6",
     "@theia/ai-chat": "1.73.1",
     "@theia/ai-chat-ui": "1.73.1",
@@ -74,6 +75,11 @@
   },
   "theia": {
     "target": "electron",
+    "backend": {
+      "config": {
+        "singleInstance": false
+      }
+    },
     "frontend": {
       "config": {
         "applicationName": "AI Focused Editor",

@@ -1,6 +1,6 @@
 # Chapter 1 — The Field of Decision
 
-On the field between two armies, [[char:krishna|Krishna]] reins in the chariot and waits.
+On the [[location:kurukshetra|field]] between two armies, [[char:krishna|Krishna]] reins in the chariot and waits.
 [[char:arjuna|Arjuna]] surveys the ranks: teachers, cousins, friends — every face familiar.
 
 "My limbs fail me," [[char:arjuna|he]] says, lowering [[artifact:gandiva|Gandiva]], the great bow.

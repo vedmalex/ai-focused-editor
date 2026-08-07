@@ -94,20 +94,98 @@ export interface RenderHtmlToPdfOptions {
 
 /** Minimal structural surface of puppeteer-core used here (avoids a type dependency). */
 interface PuppeteerPage {
-  setContent(html: string, options?: { waitUntil?: string | string[] }): Promise<void>;
+  setContent(html: string, options?: { waitUntil?: string | string[]; timeout?: number }): Promise<void>;
   addStyleTag(options: { content: string }): Promise<void>;
   pdf(options: unknown): Promise<Uint8Array>;
 }
 interface PuppeteerBrowser {
   newPage(): Promise<PuppeteerPage>;
   close(): Promise<void>;
+  /** Native child process handle; used for a bounded, guaranteed teardown (see below). */
+  process(): { kill(signal?: string): void } | null;
 }
 interface PuppeteerModule {
   launch(options: {
     executablePath: string;
     headless: boolean;
     args?: string[];
+    timeout?: number;
   }): Promise<PuppeteerBrowser>;
+}
+
+/**
+ * TASK-024: puppeteer-core defaults a 30s timeout to BOTH `launch()` (waiting
+ * for the browser's DevTools websocket to come up) and `page.setContent()`'s
+ * navigation wait — inherited silently, not sized for this environment.
+ *
+ * Measured on the actual dev machine (shared, 20+ concurrent users, observed
+ * load averages 20-63): a reproduced `bun test` run of the integration test
+ * hit puppeteer's stock 30s `setContent` timeout at ~41s wall clock even at a
+ * *moderate* load average (~30-40) with nothing unusual running.
+ *
+ * A phase-by-phase instrumentation (launch/newPage/setContent/pdf/close) at
+ * load ~60-67 found `setContent` itself consistently FAST (under 1s, five
+ * for five) and `launch` fast too (2-7s) — neither is the actual variance
+ * source. `browser.close()` alone spiked as high as 84s under transient
+ * contention, and a follow-up run under load left a `--headless=new` Chrome
+ * process alive (state `Us`) after bun force-killed the test at a 180s test
+ * timeout: `close()` can hang past any timeout given to it and still leak the
+ * process, which compounds load for every test that runs after it. That
+ * leak, not the timeout constant, is the actual determinism bug — raising
+ * timeouts only widens the window in which it can happen.
+ *
+ * LAUNCH_READY_TIMEOUT_MS / NAVIGATION_TIMEOUT_MS stay generous (60s, 2x
+ * puppeteer's 30s default) because the worst *directly observed* setContent
+ * failure was ~44.5s wall clock. CLOSE_TIMEOUT_MS is deliberately short
+ * (10s, comfortably above the ~500ms-5s healthy range measured above): once
+ * teardown is bounded and backed by a forced kill, there is no reason to let
+ * it run long — a slow close() gets the same outcome as a fast one, a dead
+ * process, and the test doesn't pay for the difference.
+ */
+const LAUNCH_READY_TIMEOUT_MS = 60_000;
+const NAVIGATION_TIMEOUT_MS = 60_000;
+const CLOSE_TIMEOUT_MS = 10_000;
+
+/**
+ * Tear a browser down within a hard deadline, guaranteeing the OS process is
+ * gone before returning. `browser.close()` alone is not sufficient under load
+ * (measured hang: 84s, and in one run the process outlived even a 180s bun
+ * test timeout, state `Us` / uninterruptible) — this races the polite CDP
+ * close against CLOSE_TIMEOUT_MS and force-kills the underlying process if
+ * the race is lost, so a stuck close() can never leak a Chrome into the next
+ * test's load. Never throws: teardown failures must not shadow the render
+ * error that is usually the reason `finally` is running in the first place.
+ */
+async function closeBrowser(browser: PuppeteerBrowser): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = Symbol('close-timeout');
+  try {
+    // A crashed browser / lost CDP connection makes close() REJECT rather than
+    // hang — that must take the same forced-kill path as a hang, not silently
+    // resolve as "handled". Mapping the rejection to the timeout sentinel (not
+    // `undefined`) is what makes that so.
+    const result = await Promise.race([
+      browser.close().then(
+        () => undefined,
+        () => timedOut
+      ),
+      new Promise<typeof timedOut>(resolvePromise => {
+        timer = setTimeout(() => resolvePromise(timedOut), CLOSE_TIMEOUT_MS);
+      })
+    ]);
+    if (result === timedOut) {
+      browser.process()?.kill('SIGKILL');
+    }
+  } catch {
+    // Teardown must never throw over the caller's own error.
+    try {
+      browser.process()?.kill('SIGKILL');
+    } catch {
+      // best-effort only
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 const PAPER_FORMATS: Record<PdfPaperFormat, string> = {
@@ -169,12 +247,13 @@ export async function renderHtmlToPdf(html: string, options: RenderHtmlToPdfOpti
   const browser = await puppeteer.launch({
     executablePath,
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    timeout: LAUNCH_READY_TIMEOUT_MS
   });
 
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: NAVIGATION_TIMEOUT_MS });
     await page.addStyleTag({ content: BOOK_PRINT_CSS });
     const pdf = await page.pdf({
       format,
@@ -185,7 +264,10 @@ export async function renderHtmlToPdf(html: string, options: RenderHtmlToPdfOpti
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, Buffer.from(pdf));
   } finally {
-    await browser.close();
+    // Bounded, guaranteed teardown — see closeBrowser's docstring (TASK-024):
+    // a plain `browser.close()` here was measured to hang up to 84s under
+    // load and, once, to outlive the surrounding test's own timeout entirely.
+    await closeBrowser(browser);
   }
 }
 

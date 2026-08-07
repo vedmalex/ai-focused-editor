@@ -72,6 +72,16 @@ const SAMPLE_HTML = `<!doctype html>
 </main></body></html>`;
 
 describe('renderHtmlToPdf integration', () => {
+  // TASK-024: 180s, not the bun default. PdfGenerator.ts now gives launch() and
+  // setContent() an explicit 60s each (measured margin over the worst directly
+  // observed failure, ~44.5s wall clock, on this shared/loaded dev machine), and
+  // bounds browser.close() teardown to 10s with a forced kill on top (a plain
+  // close() was measured to hang up to 84s under load and once outlived the
+  // test's own timeout, leaking the Chrome process — see closeBrowser() in
+  // PdfGenerator.ts). Worst case is now bounded: 60s + 60s + 10s teardown +
+  // a few seconds of launch/pdf overhead ≈ 135s. This test-level timeout must
+  // stay strictly larger than that sum (budget ordering) or bun kills the test
+  // first and hides the diagnosable puppeteer error; 180s leaves ~45s of margin.
   test.skipIf(!CHROME)('renders HTML to a valid, non-trivial PDF file', async () => {
     const outputPath = join(SCRATCH, 'sample.pdf');
     await renderHtmlToPdf(SAMPLE_HTML, { outputPath, format: 'a4' });
@@ -81,5 +91,5 @@ describe('renderHtmlToPdf integration', () => {
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-');
     // Non-trivial: a real one-page rendering is comfortably over 1 KiB.
     expect((await stat(outputPath)).size).toBeGreaterThan(1024);
-  }, 60000);
+  }, 180000);
 });

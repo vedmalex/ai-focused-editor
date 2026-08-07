@@ -491,8 +491,8 @@ describe('A.4 the never-throws contract', () => {
     ':::steps{id="a"}\n:::steps{id="b"}\n:::',
     'обычный текст без директив',
     ':action[«»—…]{command="c"}',
-    ': {a="b"}',
-    ':action{command=" "}',
+    ':\u0000{a="b"}',
+    ':action{command="\u0000"}',
     '::::::action[x]{y="z"}',
     ':action{command="c"}'.repeat(50)
   ];

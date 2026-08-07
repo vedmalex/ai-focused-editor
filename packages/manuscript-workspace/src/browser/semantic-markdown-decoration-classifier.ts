@@ -14,7 +14,8 @@
  */
 
 import type { NarrativeEntity } from '../common';
-import { parseWikiLinks, resolveNoteLink, type WikiLinkMatch } from '../common/link-navigation';
+import { parseWikiLinks, type WikiLinkMatch } from '@ai-focused-editor/narrative-knowledge';
+import { resolveNoteLink } from '../common/link-navigation';
 import type { NoteIndex } from '../common/note-index';
 
 /** Hover text for a note link that resolved to an equal-distance-tie candidate (plan §2/UR-005(1)). */

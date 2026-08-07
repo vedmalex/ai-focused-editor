@@ -46,6 +46,7 @@ const SEMANTIC_TAG_EXACT_PATTERN = /^\[\[(\p{Ll}[\p{L}\p{N}_-]*):([A-Za-z0-9_.:-
 
 export function parseSemanticMarkdown(text: string): SemanticMarkdownDocument {
   const lineStarts = computeLineStarts(text);
+  const codeRanges = computeCodeSpanRanges(text);
   const tags: SemanticTag[] = [];
   let match: RegExpExecArray | null;
 
@@ -53,6 +54,14 @@ export function parseSemanticMarkdown(text: string): SemanticMarkdownDocument {
   while ((match = SEMANTIC_TAG_PATTERN.exec(text)) !== null) {
     const [raw, kind, id, label] = match;
     const startOffset = match.index;
+    // TASK-022/UR-035 (ISS-358): a `[[kind:id|label]]`-shaped SYNTAX EXAMPLE
+    // written inside inline code or a fenced code block is not a live
+    // reference — see `computeCodeSpanRanges`'s doc comment. Skipping here
+    // (never mutating `text` or the match) is what keeps every SURVIVING
+    // tag's range byte-identical to the un-guarded scan.
+    if (isOffsetInCodeSpan(startOffset, codeRanges)) {
+      continue;
+    }
     const labelOffset = startOffset + raw.indexOf(label);
 
     tags.push({
@@ -90,8 +99,17 @@ export function renderSemanticMarkdownPreview(text: string): string {
   const { body, notes } = renderFootnotePreviewSections(text);
   const combined = notes ? `${body}\n\n${notes}` : body;
   const withTaskGlyphs = renderTaskListGlyphs(combined);
+  // Code ranges are computed over `withTaskGlyphs` — the SAME string the
+  // `replace` below scans — so offsets always agree, even though the
+  // footnote splice and glyph rewrite both change length from the original
+  // `text` (TASK-022/UR-035, ISS-358): a tag written as a code EXAMPLE
+  // renders as literal code, not bold+meta.
+  const codeRanges = computeCodeSpanRanges(withTaskGlyphs);
   SEMANTIC_TAG_PATTERN.lastIndex = 0;
-  return withTaskGlyphs.replace(SEMANTIC_TAG_PATTERN, (_raw, kind: string, id: string, label: string) => {
+  return withTaskGlyphs.replace(SEMANTIC_TAG_PATTERN, (raw: string, kind: string, id: string, label: string, offset: number) => {
+    if (isOffsetInCodeSpan(offset, codeRanges)) {
+      return raw;
+    }
     const escapedLabel = escapeMarkdownText(label);
     const escapedMeta = escapeMarkdownText(`${kind}:${id}`);
     return `**${escapedLabel}** _(${escapedMeta})_`;
@@ -335,6 +353,130 @@ function findCodeFenceClose(text: string, openIndex: number, fence: { char: stri
 }
 
 /**
+ * Offset beyond which an inline-code closer search must not look (TASK-022/
+ * UR-035, ISS-358): a CommonMark inline code span never crosses a blank
+ * line — a blank line always ends the enclosing block. The pre-existing
+ * unbounded search (find the SAME-length backtick run anywhere later in the
+ * whole text) let one stray, never-closed backtick anywhere earlier in a
+ * document swallow everything up to the next same-length run however far
+ * away — silently hiding real `$…$` math (and, once `computeCodeSpanRanges`
+ * below reuses this same search, real `[[kind:id]]` entity tags) inside what
+ * only LOOKS like code. Bounding at the next blank line keeps the
+ * single-paragraph, soft-line-break case working exactly as before while
+ * fixing the cross-block swallow.
+ */
+function inlineCodeCloserLimit(text: string, from: number): number {
+  const blankLine = text.indexOf('\n\n', from);
+  return blankLine === -1 ? text.length : blankLine;
+}
+
+/**
+ * If a run of `run` backticks starting at `i` opens an inline code span,
+ * return the offset just past the closing run of exactly `run` backticks
+ * (bounded by {@link inlineCodeCloserLimit}); else `undefined` — the run is
+ * literal (unclosed, or the naive close point is immediately followed by
+ * another backtick, i.e. a longer run — CommonMark needs an EXACT-length
+ * closing run). Shared by `splitMathSegments` and `computeCodeSpanRanges` so
+ * both agree on exactly the same inline-code boundaries.
+ */
+function findInlineCodeClose(text: string, i: number, run: number): number | undefined {
+  const closer = '`'.repeat(run);
+  const limit = inlineCodeCloserLimit(text, i + run);
+  const closeIndex = text.indexOf(closer, i + run);
+  if (closeIndex === -1 || closeIndex >= limit) {
+    return undefined;
+  }
+  if (text[closeIndex + run] === '`') {
+    return undefined;
+  }
+  return closeIndex + run;
+}
+
+/** Half-open `[start, end)` char-offset range of one fenced-code-block body or inline-code span. */
+export interface CodeSpanRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * Every fenced-code-block body and inline-code-span range in `text`, as
+ * half-open char-offset ranges — the SAME code-detection walk `splitMathSegments`
+ * uses to keep `$` inside code literal (TASK-022/UR-035, ISS-358), reused here
+ * (not re-implemented with different rules) so a `[[kind:id|label]]`-shaped
+ * tag written as a syntax EXAMPLE inside documentation code is never mistaken
+ * for a live reference — for exactly the reason a `$` inside code is never
+ * mistaken for math.
+ *
+ * `parseSemanticMarkdown`, `validateSemanticMarkdown`, `normalizeSemanticMarkdownTags`,
+ * `renderSemanticMarkdownPreview` (all in this file) and
+ * `@ai-focused-editor/narrative-knowledge`'s `parseWikiLinks` all call this to
+ * post-filter/skip matches whose start offset falls inside a returned range —
+ * NEVER by mutating `text` or the match itself, so a SURVIVING tag's
+ * coordinates are always exactly what the bare, code-blind regex produced.
+ */
+export function computeCodeSpanRanges(text: string): CodeSpanRange[] {
+  const ranges: CodeSpanRange[] = [];
+  const n = text.length;
+  let i = 0;
+
+  while (i < n) {
+    const ch = text[i];
+
+    if ((ch === '`' || ch === '~') && isMathLineStart(text, i)) {
+      const fence = matchCodeFenceOpen(text, i);
+      if (fence) {
+        const close = findCodeFenceClose(text, i, fence);
+        ranges.push({ start: i, end: close });
+        i = close;
+        continue;
+      }
+    }
+
+    if (ch === '\\' && i + 1 < n) {
+      i += 2;
+      continue;
+    }
+
+    if (ch === '`') {
+      let run = 0;
+      while (i + run < n && text[i + run] === '`') {
+        run++;
+      }
+      const close = findInlineCodeClose(text, i, run);
+      if (close !== undefined) {
+        ranges.push({ start: i, end: close });
+        i = close;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+
+    i += 1;
+  }
+
+  return ranges;
+}
+
+/**
+ * True when `offset` falls inside one of `ranges`. `ranges` is produced by a
+ * single left-to-right walk ({@link computeCodeSpanRanges}), so it is always
+ * ascending and non-overlapping by construction — a linear scan with an
+ * early-exit is enough at parse-call volume.
+ */
+export function isOffsetInCodeSpan(offset: number, ranges: readonly CodeSpanRange[]): boolean {
+  for (const range of ranges) {
+    if (offset < range.start) {
+      break;
+    }
+    if (offset < range.end) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Split `text` into ordered text / inline-math / block-math segments using the
  * SAME delimiter semantics the preview applies: block `$$…$$` (may span lines),
  * inline `$…$` (single line, non-empty, no inner `$`), with `$` inside fenced
@@ -377,19 +519,16 @@ export function splitMathSegments(text: string): MathSegment[] {
       continue;
     }
 
-    // Inline code span: a run of k backticks closed by a run of exactly k backticks.
+    // Inline code span: a run of k backticks closed by a run of exactly k
+    // backticks, bounded at the next blank line (findInlineCodeClose).
     if (ch === '`') {
       let run = 0;
       while (i + run < n && text[i + run] === '`') {
         run++;
       }
-      const closer = '`'.repeat(run);
-      const closeIndex = text.indexOf(closer, i + run);
-      // Guard against a longer backtick run matching (indexOf finds a substring, so
-      // require the char after the closer is not another backtick — CommonMark needs
-      // an exact-length closing run).
-      if (closeIndex !== -1 && text[closeIndex + run] !== '`') {
-        i = closeIndex + run;
+      const close = findInlineCodeClose(text, i, run);
+      if (close !== undefined) {
+        i = close;
         continue;
       }
       // Unclosed / mismatched: the single backtick is literal, keep scanning after it.
@@ -535,6 +674,7 @@ export function classifyWikiLinkCandidate(raw: string): WikiLinkClassification {
 
 export function validateSemanticMarkdown(text: string): SemanticMarkdownDiagnostic[] {
   const lineStarts = computeLineStarts(text);
+  const codeRanges = computeCodeSpanRanges(text);
   const diagnostics: SemanticMarkdownDiagnostic[] = [];
   let offset = 0;
 
@@ -545,6 +685,17 @@ export function validateSemanticMarkdown(text: string): SemanticMarkdownDiagnost
     }
 
     const endOffset = text.indexOf(']]', startOffset + 2);
+
+    // TASK-022/UR-035 (ISS-358): a `[[...]]`-shaped candidate that starts
+    // inside inline code or a fenced code block is a syntax EXAMPLE, not a
+    // real tag — neither the "invalid tag" nor the "unclosed tag" diagnostic
+    // applies. Skip past it (advancing exactly as far as the un-guarded scan
+    // would) without touching `diagnostics`.
+    if (isOffsetInCodeSpan(startOffset, codeRanges)) {
+      offset = endOffset === -1 ? text.length : endOffset + 2;
+      continue;
+    }
+
     if (endOffset === -1) {
       diagnostics.push({
         severity: 'error',
@@ -581,9 +732,14 @@ export function validateSemanticMarkdown(text: string): SemanticMarkdownDiagnost
 }
 
 export function normalizeSemanticMarkdownTags(text: string): string {
+  const codeRanges = computeCodeSpanRanges(text);
   SEMANTIC_TAG_PATTERN.lastIndex = 0;
-  return text.replace(SEMANTIC_TAG_PATTERN, (_raw, kind: string, id: string, label: string) =>
-    `[[${kind.toLowerCase()}:${id.trim()}|${label.replace(/\s+/g, ' ').trim()}]]`
+  // TASK-022/UR-035 (ISS-358): never rewrite a tag-shaped code EXAMPLE — that
+  // would corrupt the documentation the example is teaching from.
+  return text.replace(SEMANTIC_TAG_PATTERN, (raw: string, kind: string, id: string, label: string, offset: number) =>
+    isOffsetInCodeSpan(offset, codeRanges)
+      ? raw
+      : `[[${kind.toLowerCase()}:${id.trim()}|${label.replace(/\s+/g, ' ').trim()}]]`
   );
 }
 

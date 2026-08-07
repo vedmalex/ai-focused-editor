@@ -1,0 +1,393 @@
+/**
+ * `configure(patch)` — shape, validation and idempotence (TASK-022 WP-4b,
+ * tech_spec ОВ-9б).
+ *
+ * WHERE THE BOUNDARY WITH WP-3 RUNS. `NarrativeMemoryConfigResolver` in
+ * `src/node` owns the LADDER: five sources, strongest first, plus the single
+ * asymmetry ОВ-9а pins to the ladder itself (a `--narrative-index-db` flag locks
+ * `databasePath` for the whole process). This module owns what sits ON TOP of
+ * rung 1 — the answer a caller gets back, the ranges a value must be inside, the
+ * difference between "key absent" and "key present and `undefined`", and the
+ * monotonic version that says whether anything actually moved. The resolver's
+ * own header says so in as many words, and printing either half twice is the
+ * failure this task has already paid for.
+ *
+ * WHY THIS IS IN `src/common` WHEN THE RESOLVER IS NOT. The resolver reads a
+ * file (`node:fs`), so it cannot be here. Everything above it is arithmetic over
+ * a record, and putting it here means the SAME assertions run under `bun`
+ * against a hand-built store and under `node` against the REAL five-rung ladder
+ * — which is the only arrangement in which ОВ-9б's teeth 1 and 6 say anything
+ * about production.
+ *
+ * THE METHOD RETURNS A RESULT AND NOT `void`, AND THAT IS THE WHOLE REASON THIS
+ * TYPE EXISTS. Without it WP-5 can prove it CALLED `configure` and nothing
+ * more — not that the value was accepted, not that it was refused as out of
+ * range, not that it will only take effect next start. A settings UI that cannot
+ * distinguish those three shows the user a number the system is not using.
+ */
+
+import { DEFAULT_NARRATIVE_MEMORY_CONFIG, type NarrativeMemoryConfig } from './narrative-memory-config';
+
+/**
+ * The keys a frontend may patch.
+ *
+ * `diagnosticsEnabled` is NOT here: it is a purely frontend concern (plan AD-5)
+ * and the backend never reads it, so offering it would be offering a knob with
+ * nothing behind it.
+ */
+export interface NarrativeMemoryConfigPatch {
+  debounceMs?: number;
+  fallbackTtlMs?: number;
+  /** Advisory: accepted and validated, but takes effect at the NEXT start. */
+  databasePath?: string;
+  maxOpenWorkspaces?: number;
+}
+
+/** Every patchable key, as data. */
+export const NARRATIVE_MEMORY_PATCH_KEYS = [
+  'debounceMs',
+  'fallbackTtlMs',
+  'databasePath',
+  'maxOpenWorkspaces'
+] as const satisfies readonly (keyof NarrativeMemoryConfigPatch)[];
+
+export type NarrativeMemoryPatchKey = (typeof NARRATIVE_MEMORY_PATCH_KEYS)[number];
+
+/** Why one key of a patch was refused. */
+export type ConfigureRejectionReason = 'locked-by-cli' | 'out-of-range' | 'unknown-key';
+
+export interface ConfigureRejection {
+  key: string;
+  reason: ConfigureRejectionReason;
+}
+
+export interface ConfigureDeferral {
+  key: string;
+  until: 'next-backend-start';
+}
+
+export interface ConfigureResult {
+  /** The FULL configuration after the patch, not the delta. */
+  effective: NarrativeMemoryConfig;
+  /** Keys this patch put in force. */
+  applied: NarrativeMemoryPatchKey[];
+  /** Keys accepted whose effect waits for the next backend start. */
+  deferred: ConfigureDeferral[];
+  /** Keys refused, each with its reason. */
+  rejected: ConfigureRejection[];
+  /**
+   * Monotonic, and it does NOT move when nothing changed.
+   *
+   * That is consequence 2 of ОВ-9б's idempotence, and it is the field a
+   * consumer keys a cache on. A version that advanced on every call would make
+   * "the configuration changed" indistinguishable from "somebody typed in the
+   * settings box", which is the event `PreferenceService` fires per keystroke.
+   */
+  configVersion: number;
+}
+
+/**
+ * Accepted ranges. OUT OF RANGE IS REFUSED, NEVER CLAMPED.
+ *
+ * The choice is deliberate and it has a price. A clamped value diverges
+ * SILENTLY from what the settings UI shows, so the user reads one number while
+ * the system uses another and nothing anywhere says so. Refusing costs WP-5 an
+ * obligation — it must SHOW the refusal — and that obligation is why
+ * {@link ConfigureResult.rejected} is part of the answer rather than a log line.
+ */
+export const NARRATIVE_MEMORY_CONFIG_RANGES: Readonly<
+  Record<'debounceMs' | 'fallbackTtlMs' | 'maxOpenWorkspaces', readonly [number, number]>
+> = Object.freeze({
+  debounceMs: [0, 60_000],
+  fallbackTtlMs: [1_000, 3_600_000],
+  maxOpenWorkspaces: [1, 32]
+});
+
+/**
+ * The rung-1 storage `configure` writes through.
+ *
+ * IMPLEMENTED IN `src/node` BY `NarrativeMemoryConfigResolver`, and by a plain
+ * record in the fast lane. Four members and no more: anything else would be this
+ * module reaching into the ladder, which is WP-3's.
+ */
+export interface NarrativeMemoryConfigStore {
+  /** The effective configuration for one scope, ladder applied. */
+  resolve(rootPath: string): NarrativeMemoryConfig;
+  /** Whether `--narrative-index-db` locked `databasePath` for this process. */
+  isDatabasePathLockedByCli(): boolean;
+  /** Record rung-1 values. */
+  setRuntimeOverrides(patch: Partial<NarrativeMemoryConfig>, rootPath?: string): unknown;
+  /** Drop rung-1 values, so the next rung down wins again. */
+  clearRuntimeOverrides(keys: readonly (keyof NarrativeMemoryConfig)[], rootPath?: string): void;
+}
+
+/**
+ * Scope key for a patch with no `rootUri`.
+ *
+ * A PATCH WITHOUT A ROOT IS GLOBAL: it applies to every open workspace and to
+ * every future one (ОВ-9б, "Область действия"). But `effective` still has to be
+ * computed against SOMETHING, and the ladder is per-root by construction —
+ * rung 4 is a per-workspace file. This sentinel is that something: it is not a
+ * path, so the file rung finds nothing under it and the answer is the ladder
+ * minus its per-workspace rung, which is exactly what "the default for future
+ * workspaces" means.
+ */
+export const GLOBAL_CONFIG_SCOPE = '\u0000global';
+
+/** A change the configurator announces to whoever is holding timers. */
+export interface NarrativeConfigChange {
+  /** The scope patched, or {@link GLOBAL_CONFIG_SCOPE}. */
+  rootPath: string;
+  /** Keys whose EFFECTIVE value actually moved. Never empty. */
+  changed: NarrativeMemoryPatchKey[];
+  configVersion: number;
+}
+
+/**
+ * Normalize and validate a `databasePath` from a PATCH.
+ *
+ * IT IS STRICTER THAN THE SAME KEY ON A LOWER RUNG, AND THAT IS INTENTIONAL.
+ * The CLI flag may name an absolute path — an operator pointing the index at a
+ * scratch volume means that volume, and `NarrativeIndexStoreRegistry` honours it
+ * (`databaseFileFor`). A patch may not: it arrives from a settings field in a
+ * frontend that is not the operator, and ОВ-9б bounds it to "непустая строка, НЕ
+ * выходящая за workspace после нормализации". So an absolute path and anything
+ * that climbs out with `..` are refused as `out-of-range`.
+ */
+export function normalizePatchedDatabasePath(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (trimmed === '') {
+    return undefined;
+  }
+  const unixAbsolute = trimmed.startsWith('/');
+  const windowsAbsolute = /^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.startsWith('\\\\');
+  if (unixAbsolute || windowsAbsolute) {
+    return undefined;
+  }
+  const segments: string[] = [];
+  for (const segment of trimmed.split(/[\\/]+/)) {
+    if (segment === '' || segment === '.') {
+      continue;
+    }
+    if (segment === '..') {
+      if (segments.length === 0) {
+        // Climbs out of the workspace. Refused rather than resolved: the index
+        // database is a derivative cache OF THIS workspace, and one that lives
+        // outside it becomes an orphan the moment the folder is deleted.
+        return undefined;
+      }
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments.length === 0 ? undefined : segments.join('/');
+}
+
+function inRange(key: keyof typeof NARRATIVE_MEMORY_CONFIG_RANGES, value: unknown): boolean {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return false;
+  }
+  const [low, high] = NARRATIVE_MEMORY_CONFIG_RANGES[key];
+  return value >= low && value <= high;
+}
+
+/**
+ * The `configure(patch)` handler.
+ *
+ * ONE PER BACKEND PROCESS, holding the monotonic version. It is deliberately NOT
+ * per store: ОВ-9б tooth 6 requires a patch that arrives BEFORE the first store
+ * is opened to be honoured when that store opens, and a handler owned by a store
+ * cannot exist before one.
+ */
+export class NarrativeMemoryConfigurator {
+  private readonly store: NarrativeMemoryConfigStore;
+  private version = 0;
+  private readonly listeners = new Set<(change: NarrativeConfigChange) => void>();
+
+  constructor(store: NarrativeMemoryConfigStore) {
+    this.store = store;
+  }
+
+  /** The current monotonic version. */
+  get configVersion(): number {
+    return this.version;
+  }
+
+  /**
+   * Announce EFFECTIVE changes.
+   *
+   * Fires only when something moved — which is what makes ОВ-9б's consequence 3
+   * ("a patch that changes nothing does not touch the watcher AT ALL") a
+   * property of this class rather than a rule every subscriber must remember.
+   * `PreferenceService` re-sends a value on every keystroke in a settings field;
+   * a subscriber that re-armed a timer per notification would hammer the watcher
+   * dozens of times while somebody typed `400`.
+   */
+  onDidChange(listener: (change: NarrativeConfigChange) => void): { dispose(): void } {
+    this.listeners.add(listener);
+    return { dispose: () => this.listeners.delete(listener) };
+  }
+
+  /**
+   * Apply one patch.
+   *
+   * SPARSE, AND `undefined` IS NOT ABSENCE. `'key' in patch` is the test, never
+   * `patch.key !== undefined`: an absent key means "leave it alone", an explicit
+   * `undefined` means "drop my override and fall back to whatever the ladder says
+   * next". Without the distinction, resetting a setting to its default is
+   * inexpressible — there is no value that means "no value".
+   *
+   * TOTAL, so order does not matter: `configure({a})` then `configure({b})`
+   * leaves the same `effective` as `configure({a, b})`, because each call merges
+   * into rung-1 storage rather than replacing it.
+   */
+  configure(patch: NarrativeMemoryConfigPatch, rootPath?: string): ConfigureResult {
+    const scope = rootPath ?? GLOBAL_CONFIG_SCOPE;
+    const before = this.store.resolve(scope);
+
+    const applied: NarrativeMemoryPatchKey[] = [];
+    const deferred: ConfigureDeferral[] = [];
+    const rejected: ConfigureRejection[] = [];
+    const accepted: Partial<NarrativeMemoryConfig> = {};
+    const cleared: (keyof NarrativeMemoryConfig)[] = [];
+
+    for (const key of Object.keys(patch) as (keyof NarrativeMemoryConfigPatch)[]) {
+      if (!(NARRATIVE_MEMORY_PATCH_KEYS as readonly string[]).includes(key)) {
+        // The rest of the patch is still applied. Refusing the WHOLE patch over
+        // one stray key would break every older frontend the day this interface
+        // grows a sixth setting.
+        rejected.push({ key, reason: 'unknown-key' });
+        continue;
+      }
+      const value = patch[key];
+      if (value === undefined) {
+        // An explicit `undefined` is a RESET, and it is refused and deferred by
+        // the same rules the value form is: a locked key stays locked whether
+        // the patch is trying to set it or to unset it, and `databasePath`
+        // cannot change under an open file in either direction.
+        if (key === 'databasePath') {
+          if (this.store.isDatabasePathLockedByCli()) {
+            rejected.push({ key, reason: 'locked-by-cli' });
+            continue;
+          }
+          cleared.push(key);
+          deferred.push({ key, until: 'next-backend-start' });
+          continue;
+        }
+        cleared.push(key);
+        applied.push(key);
+        continue;
+      }
+      if (key === 'databasePath') {
+        if (this.store.isDatabasePathLockedByCli()) {
+          // The ladder's one asymmetry, surfaced. The flag is what an operator
+          // uses when there is NO choice — a read-only workspace, a test
+          // harness, a network volume without locking — so a setting able to
+          // override it would make the flag useless.
+          rejected.push({ key, reason: 'locked-by-cli' });
+          continue;
+        }
+        const normalized = normalizePatchedDatabasePath(value as string);
+        if (normalized === undefined) {
+          rejected.push({ key, reason: 'out-of-range' });
+          continue;
+        }
+        accepted.databasePath = normalized;
+        // ACCEPTED, STORED, AND STILL `deferred`: the file is already open and
+        // re-aiming it mid-flight would drop the writer lock (ОВ-4). Storing it
+        // anyway is what makes tooth 6 work — a patch that arrives before the
+        // first open decides which file gets opened.
+        deferred.push({ key, until: 'next-backend-start' });
+        continue;
+      }
+      if (!inRange(key, value)) {
+        rejected.push({ key, reason: 'out-of-range' });
+        continue;
+      }
+      accepted[key] = value as never;
+      applied.push(key);
+    }
+
+    if (cleared.length > 0) {
+      this.store.clearRuntimeOverrides(cleared, rootPath);
+    }
+    if (Object.keys(accepted).length > 0) {
+      this.store.setRuntimeOverrides(accepted, rootPath);
+    }
+
+    const after = this.store.resolve(scope);
+    const changed = NARRATIVE_MEMORY_PATCH_KEYS.filter(key => before[key] !== after[key]);
+    if (changed.length > 0) {
+      this.version++;
+      const change: NarrativeConfigChange = {
+        rootPath: scope,
+        changed: [...changed],
+        configVersion: this.version
+      };
+      for (const listener of [...this.listeners]) {
+        listener(change);
+      }
+    }
+
+    return {
+      effective: after,
+      applied: applied.sort(),
+      deferred,
+      rejected,
+      configVersion: this.version
+    };
+  }
+}
+
+/**
+ * A rung-1 store with no ladder under it — the fast lane's double.
+ *
+ * IT IS NOT A SUBSTITUTE FOR THE RESOLVER AND IS NOT PRETENDING TO BE. The
+ * contract core runs the SAME cases against this and against the real five-rung
+ * resolver in the node lane; what this one proves is the arithmetic above rung 1,
+ * what the node lane proves is that the arithmetic sits on the real ladder.
+ */
+export class InMemoryConfigStore implements NarrativeMemoryConfigStore {
+  private readonly global: Partial<NarrativeMemoryConfig> = {};
+  private readonly byRoot = new Map<string, Partial<NarrativeMemoryConfig>>();
+  private readonly base: NarrativeMemoryConfig;
+  private cliLock: boolean;
+
+  constructor(options: { base?: Partial<NarrativeMemoryConfig>; databasePathLockedByCli?: boolean } = {}) {
+    this.base = { ...DEFAULT_NARRATIVE_MEMORY_CONFIG, ...options.base };
+    this.cliLock = options.databasePathLockedByCli === true;
+  }
+
+  /** Flip the CLI lock, so one harness can exercise both sides of tooth 2. */
+  setDatabasePathLockedByCli(locked: boolean): void {
+    this.cliLock = locked;
+  }
+
+  resolve(rootPath: string): NarrativeMemoryConfig {
+    return { ...this.base, ...this.global, ...(this.byRoot.get(rootPath) ?? {}) };
+  }
+
+  isDatabasePathLockedByCli(): boolean {
+    return this.cliLock;
+  }
+
+  setRuntimeOverrides(patch: Partial<NarrativeMemoryConfig>, rootPath?: string): unknown {
+    if (rootPath === undefined) {
+      Object.assign(this.global, patch);
+    } else {
+      this.byRoot.set(rootPath, { ...(this.byRoot.get(rootPath) ?? {}), ...patch });
+    }
+    return { rejected: [] };
+  }
+
+  clearRuntimeOverrides(keys: readonly (keyof NarrativeMemoryConfig)[], rootPath?: string): void {
+    const target = rootPath === undefined ? this.global : this.byRoot.get(rootPath);
+    if (target === undefined) {
+      return;
+    }
+    for (const key of keys) {
+      delete target[key];
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import URI from '@theia/core/lib/common/uri';
-import { parseWikiLinks } from '../common/link-navigation';
+import { parseWikiLinks } from '@ai-focused-editor/narrative-knowledge';
 import { buildNoteIndex, type NoteIndex } from '../common/note-index';
 import type { NarrativeEntity } from '../common/narrative-entity-protocol';
 

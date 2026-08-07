@@ -45,6 +45,7 @@ import {
   type BookDoctorFinding,
   type BookDoctorFix,
   type BookDoctorReport,
+  type EntityCardReferenceRelation,
   type EntityCardRef,
   type EntityTagOccurrence,
   type ObsidianPluginCheckInput,
@@ -60,15 +61,14 @@ import {
   isExcludedDiscoveryDir,
   type DiscoveredManuscriptFile
 } from '../common/manifest-reconstruction';
-import { parseSemanticMarkdown } from '@ai-focused-editor/semantic-markdown';
-import { collectUnlabeledWikiEntityMatches } from '../common/link-navigation';
 import {
-  BASE_ENTITY_TYPES,
-  mergeEntityTypes,
-  parseEntityTypesYaml,
+  collectUnlabeledWikiEntityMatches,
+  NarrativeKnowledgeService,
+  parseSemanticMarkdown,
   type EffectiveEntityType,
-  type EntityTypeProblem
-} from '../common/entity-type-registry';
+  type EntityTypeProblem,
+  type NarrativeKnowledgeService as NarrativeKnowledgeServiceType
+} from '@ai-focused-editor/narrative-knowledge';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
 import { ManuscriptTreeWidget } from './manuscript-tree-widget';
 import { AFE_MANUSCRIPT_SECTION_CONTEXT_KEY } from './manuscript-tree';
@@ -182,6 +182,11 @@ export class BookDoctorContribution
   @inject(PreferenceService)
   protected readonly preferences!: PreferenceService;
 
+  /** TASK-022 WP-7 (UR-007): the three knowledge feeders below delegate here
+   *  instead of scanning `entities/**` or parsing prose themselves. */
+  @inject(NarrativeKnowledgeService)
+  protected readonly knowledge!: NarrativeKnowledgeServiceType;
+
   registerCommands(registry: CommandRegistry): void {
     registry.registerCommand(BookDoctorCommands.DOCTOR, {
       execute: () => this.runDoctor(),
@@ -280,7 +285,12 @@ export class BookDoctorContribution
     // list so the entity checks treat them as known and scan their directories.
     const { types: effectiveEntityTypes, problems: entityTypeProblems } =
       await this.loadEntityTypes(root);
-    const existingEntityCards = await this.collectExistingEntityCards(root, effectiveEntityTypes);
+    const existingEntityCards = await this.collectExistingEntityCards(root);
+    // Typed relations (ownership, card-to-card mentions, …) the entity-tag scan
+    // above cannot see — `entityCardOrphanFindings` uses these so a card whose
+    // ONLY link is e.g. an artifact's `ownership.owner` is not falsely reported
+    // as unreferenced (ISS-369).
+    const entityReferenceRelations = await this.collectEntityReferenceRelations(root);
     const contentHasMarkdown = manuscriptCandidates.some(candidate =>
       normalizeManifestPath(candidate.path).startsWith('content/')
     );
@@ -345,6 +355,7 @@ export class BookDoctorContribution
       existingEntityCards,
       effectiveEntityTypes,
       entityTypeProblems,
+      entityReferenceRelations,
       obsidianPlugin,
       workspaceSettings,
       transcription,
@@ -456,21 +467,19 @@ export class BookDoctorContribution
   }
 
   /**
-   * Load and parse the book's `entities/types.yaml`, folding the author-declared
-   * types onto the built-in set to produce the EFFECTIVE type list plus any
-   * validation problems. A missing/empty file yields just the built-in set and no
-   * problems (the parse is tolerant), so the doctor works unchanged for books that
-   * declare no author types.
+   * The effective entity-type registry plus its validation problems (TASK-022
+   * WP-7). MIGRATED to `NarrativeKnowledgeService.getEntityTypeRegistry` —
+   * tech_spec TECH_SPEC WP-7 §2's new, non-rebuild query, added for exactly
+   * this call site (Book Doctor was the reason the registry needed a cheap
+   * read path at all). Previously this read `entities/types.yaml` and parsed
+   * it itself; that scan is now retired here, same rule as the other two
+   * feeders below.
    */
   protected async loadEntityTypes(
     root: URI
   ): Promise<{ types: EffectiveEntityType[]; problems: EntityTypeProblem[] }> {
-    const text = await this.readTextIfExists(root.resolve('entities/types.yaml'));
-    const parsed = parseEntityTypesYaml(text ?? '');
-    return {
-      types: mergeEntityTypes(BASE_ENTITY_TYPES, parsed.types),
-      problems: parsed.problems
-    };
+    const envelope = await this.knowledge.getEntityTypeRegistry(root.toString());
+    return envelope.data;
   }
 
   /** Probe every candidate path in parallel; return the normalized subset that exists. */
@@ -614,35 +623,54 @@ export class BookDoctorContribution
   }
 
   /**
-   * List the entity cards already present on disk, one `{kind, id}` per
-   * `entities/<dir>/<id>.yaml` file, scanning each EFFECTIVE type's directory
-   * (built-in AND author-declared, so an author type's cards are picked up).
-   * `kind` is the KIND id (e.g. `character`, or an author id like `sloka`), not
-   * the tag kind. A missing `entities/` subtree is a no-op.
+   * The entity cards already present, one `{kind, id}` per card (TASK-022
+   * WP-7). MIGRATED to `NarrativeKnowledgeService.findEntities` — the index
+   * already scanned every effective type's directory (built-in AND
+   * author-declared) while building itself, so this feeder no longer walks
+   * `entities/**` on its own.
+   *
+   * SEMANTIC DELTA, RECORDED RATHER THAN HIDDEN (tech_spec TECH_SPEC WP-7,
+   * "id delta"). The old scan took `id` from the YAML FILE NAME
+   * unconditionally; the index takes it from the card's `id:` FIELD, falling
+   * back to the file name only when that field is absent
+   * (`node-domain-knowledge-service.ts` pre-WP-7 history; the index's own rule
+   * is `narrative-index-maintainer.ts` / extraction). For a card whose `id:`
+   * disagrees with its file name the two paths now report different ids. This
+   * is accepted, not merely tolerated: the id FIELD is what the rest of the
+   * system (mentions, relations, every other consumer) already treats as
+   * authoritative, so the file-name-only rule was the outlier, not the index.
+   *
+   * OBSERVED, NOT JUST CLAIMED (review finding 1 on this task). Every card in
+   * the WP-9b baseline fixture used to have an `id:` field matching its file
+   * name, which made this delta unobservable there and made the fixture's
+   * order assertions unable to tell an id-sorting implementation from a
+   * filename-sorting one — the same "green by coincidence" shape already
+   * fixed twice elsewhere on this task. The fixture now carries
+   * `entities/characters/warrior-4.yaml` with `id: bhima`
+   * (`narrative-consumer-baseline.test.ts`, `seedBaselineRoot`): its
+   * `entity-card-orphan` finding reports `path:
+   * entities/characters/bhima.yaml` — synthesised from `kind`+`id`
+   * (`entityCardPath` below), not the real on-disk file name — which is
+   * exactly this delta made visible in a report field, not merely asserted in
+   * a comment.
    */
-  protected async collectExistingEntityCards(
-    root: URI,
-    effectiveTypes: readonly { id: string; directory: string }[] = BASE_ENTITY_TYPES
-  ): Promise<EntityCardRef[]> {
-    const cards: EntityCardRef[] = [];
-    for (const type of effectiveTypes) {
-      const dir = root.resolve(`entities/${type.directory}`);
-      const stat = await this.fileService.resolve(dir).catch(() => undefined);
-      for (const child of stat?.children ?? []) {
-        if (!child.isFile) {
-          continue;
-        }
-        const base = child.resource.path.base;
-        const lower = base.toLowerCase();
-        if (lower.endsWith('.yaml') || lower.endsWith('.yml')) {
-          const id = base.replace(/\.[^.]+$/, '');
-          if (id) {
-            cards.push({ kind: type.id, id });
-          }
-        }
-      }
-    }
-    return cards;
+  protected async collectExistingEntityCards(root: URI): Promise<EntityCardRef[]> {
+    const envelope = await this.knowledge.findEntities(root.toString());
+    return envelope.data.map(entity => ({ kind: entity.type, id: entity.id }));
+  }
+
+  /**
+   * Every relation the narrative-knowledge index holds for `rootUri`, narrowed
+   * to `{targetId, relType}` (ISS-369). Unfiltered — this reads EVERY `relType`
+   * (`ownership`, `mentions`, `co-occurrence`, any future one); which of them
+   * actually count as a reference for the orphan check is
+   * `entityCardOrphanFindings`'s decision (`ENTITY_CARD_REFERENCE_REL_TYPES` in
+   * `book-doctor.ts`), not this feeder's. Mirrors {@link collectExistingEntityCards}
+   * and {@link loadEntityTypes}: read the already-built index, no rebuild.
+   */
+  protected async collectEntityReferenceRelations(root: URI): Promise<EntityCardReferenceRelation[]> {
+    const envelope = await this.knowledge.getRelations(root.toString());
+    return envelope.data.map(relation => ({ targetId: relation.targetId, relType: relation.relType }));
   }
 
   protected async readManifestRows(uri: URI): Promise<ManifestRow[]> {

@@ -22,8 +22,8 @@
  *  - Every item is de-duplicated by `variable`+`arg`; order is stable.
  */
 
-import { extractEntityMentions } from './entity-mentions';
-import { tagKindToEntityKind } from './entity-type-registry';
+import { extractEntityMentions } from '@ai-focused-editor/narrative-knowledge';
+import { tagKindToEntityKind } from '@ai-focused-editor/narrative-knowledge';
 import type { CitationEntry, SourceExcerpt } from './source-library-protocol';
 
 /** Which chat-context variable a bundle item attaches through. */
