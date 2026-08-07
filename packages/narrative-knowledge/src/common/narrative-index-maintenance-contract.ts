@@ -32,6 +32,7 @@
  */
 
 import { check, deepEqual, equal } from './contract-assertions';
+import { mentionOrderExclusion } from './graph';
 import type { NarrativeIndexStore } from './graph';
 import { NarrativeIndexSession, type IndexableFile } from './narrative-index-session';
 import {
@@ -537,6 +538,133 @@ export const NARRATIVE_MAINTENANCE_CONTRACT: NarrativeMaintenanceContractCase[] 
     }
   },
 
+  {
+    /**
+     * gh#84 — `buildIncluded` ON THE MOVE PATH, which the rebuild tooth cannot
+     * reach.
+     *
+     * The rebuild case proves the writer records the field when it builds a
+     * document from nothing. `moveDocument` is a THIRD writer path — it re-keys
+     * an existing row and re-applies the manifest-derived fields — and it was
+     * covered by nothing. That is exactly the shape of the defect this field
+     * exists to fix: `manifestIncluded` was written in three places, the rule
+     * read the wrong one, and the tooth stayed green because it exercised a
+     * state the indexer never produced.
+     *
+     * THE FIXTURE MOVES A CHAPTER INTO AN EXCLUDED PART. The manifest names
+     * both paths from the start, so nothing about the manifest changes — only
+     * where the file is. Before the move the chapter is the entity's first
+     * appearance; after it, the entity has appearances and NO first appearance,
+     * because a chapter outside the built book cannot be one.
+     */
+    name: 'gh#84 — a chapter RENAMED into an `include: false` part leaves the built book',
+    async run(makeHarness) {
+      const OUTSIDE = CH(1);
+      const INSIDE = 'content/cut/ch-00.md';
+      const files = [
+        file(
+          'manifest.yaml',
+          [
+            'content:',
+            '  - path: content/cut',
+            '    title: Вырезанное',
+            '    include: false',
+            '    children:',
+            `      - path: ${INSIDE}`,
+            '        title: Пролог',
+            `  - path: ${OUTSIDE}`,
+            '    title: Глава первая'
+          ].join('\n')
+        ),
+        file(KRISHNA_CARD, ['id: krishna', 'name: Кришна'].join('\n')),
+        file(OUTSIDE, 'Здесь: [[char:krishna|Кришна]].')
+      ];
+      const built = await build(makeHarness, files);
+
+      // Baseline: the chapter is in the build, so it IS the first appearance.
+      deepEqual(
+        built.store
+          .getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'asc', limit: 1 })
+          .map(mention => mention.evidence.path),
+        [OUTSIDE],
+        'before the move the chapter is in the built book'
+      );
+
+      built.source.move(OUTSIDE, INSIDE);
+      await pushAndSettle(built, { path: OUTSIDE, type: 'deleted' }, { path: INSIDE, type: 'added' });
+
+      const moved = built.store.getDocument(INSIDE);
+      check(moved !== undefined, 'the moved chapter is indexed at its new path');
+      equal(moved.manifestIncluded, true, 'the manifest still LISTS it');
+      equal(moved.buildIncluded, false, 'and the move took it out of the built book');
+      // The whole point: no placeable appearance remains.
+      deepEqual(
+        built.store
+          .getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'asc', limit: 1 })
+          .map(mention => mention.evidence.path),
+        [INSIDE],
+        'the mention is still returned — the rule is about ranking, not hiding'
+      );
+      equal(
+        built.store.getMentions({ entityId: 'krishna' }).length,
+        1,
+        'and it is the same mention, not a duplicate left by the old path'
+      );
+      // Asserted through the shared rule rather than by eye, so this case and
+      // the ordering contract cannot disagree about what "unplaceable" means.
+      equal(
+        mentionOrderExclusion(built.store.getMentions({ entityId: 'krishna' })[0], {
+          ...(moved.chapterOrder === undefined ? {} : { chapterOrder: moved.chapterOrder }),
+          buildIncluded: moved.buildIncluded
+        }),
+        'not-in-built-book',
+        'the moved chapter is unplaceable, and for the right reason'
+      );
+    }
+  },
+  {
+    /**
+     * THE PAIRED POSITIVE, and without it the case above passes on a writer that
+     * sets `buildIncluded: false` on EVERY move.
+     */
+    name: 'gh#84, paired positive — renaming back OUT of the excluded part restores it',
+    async run(makeHarness) {
+      const OUTSIDE = CH(1);
+      const INSIDE = 'content/cut/ch-00.md';
+      const files = [
+        file(
+          'manifest.yaml',
+          [
+            'content:',
+            '  - path: content/cut',
+            '    title: Вырезанное',
+            '    include: false',
+            '    children:',
+            `      - path: ${INSIDE}`,
+            '        title: Пролог',
+            `  - path: ${OUTSIDE}`,
+            '    title: Глава первая'
+          ].join('\n')
+        ),
+        file(KRISHNA_CARD, ['id: krishna', 'name: Кришна'].join('\n')),
+        file(INSIDE, 'Здесь: [[char:krishna|Кришна]].')
+      ];
+      const built = await build(makeHarness, files);
+      equal(built.store.getDocument(INSIDE)?.buildIncluded, false, 'it starts outside the build');
+
+      built.source.move(INSIDE, OUTSIDE);
+      await pushAndSettle(built, { path: INSIDE, type: 'deleted' }, { path: OUTSIDE, type: 'added' });
+
+      equal(built.store.getDocument(OUTSIDE)?.buildIncluded, true, 'the move brought it back into the build');
+      deepEqual(
+        built.store
+          .getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'asc', limit: 1 })
+          .map(mention => mention.evidence.path),
+        [OUTSIDE],
+        'and it is a first appearance again'
+      );
+    }
+  },
   // -- ОВ-3: the move ------------------------------------------------------
   {
     name: 'ОВ-3 tooth 1 — a delete/create pair in ONE window is a MOVE: same doc_id, no trace of the old path',
