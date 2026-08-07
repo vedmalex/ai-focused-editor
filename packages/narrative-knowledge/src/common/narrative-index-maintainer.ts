@@ -595,7 +595,7 @@ export class NarrativeIndexMaintainer {
         return;
       }
       this.warmupDeadline = this.now() + WATCHER_WARMUP_DURATION_MS;
-      void this.sweep('prefiltered', 'warmup-sweep').catch(() => undefined);
+      void this.sweep('prefiltered', 'warmup-sweep').catch(() => this.recordSweepFailure('warmup-sweep'));
       this.armWarmupSweep();
     });
   }
@@ -620,7 +620,7 @@ export class NarrativeIndexMaintainer {
     this.warmupTimer = this.scheduler.schedule(WATCHER_WARMUP_SWEEP_INTERVAL_MS, () => {
       this.warmupTimer = undefined;
       void this.sweep('prefiltered', 'warmup-sweep')
-        .catch(() => undefined)
+        .catch(() => this.recordSweepFailure('warmup-sweep'))
         .finally(() => this.armWarmupSweep());
     });
   }
@@ -632,13 +632,48 @@ export class NarrativeIndexMaintainer {
     this.warmupDeadline = undefined;
   }
 
+  /**
+   * Record a failed background sweep — or deliberately stay quiet (ISS-361, gh#72's sibling gh#71).
+   *
+   * THE ASYMMETRY THIS CLOSES. A watcher-driven pass that rejects records a
+   * failure ({@link onFileChanges}); a sweep that rejected used to swallow the
+   * rejection whole, so the fallback lane — the one that exists precisely for
+   * when the watcher is not delivering — could fail every five minutes with
+   * nothing anywhere saying so. That is the worst of the options gh#71 lists.
+   *
+   * WHY A FOREIGN LOCK IS THE ONE CASE THAT STAYS SILENT, AND WHY THAT IS NOT
+   * THE OLD SWALLOWING. Read-only is ALREADY reported, and by a better channel:
+   * `state()` derives `stale`/`foreign-writer` from `store.lifecycle().readOnly`
+   * fresh on every call, and the status bar renders it as "another process owns
+   * the index, so this window is read-only". Recording a failure on top would
+   * REPLACE that accurate report with a worse one — `failed` means "recovery
+   * REFUSED" (see `IndexStaleReason`'s own doc), a strictly stronger and wrong
+   * claim about a window that is merely not the writer. The silence here is a
+   * deferral to an existing, more precise indicator, not an absence of one.
+   *
+   * `extraction-failed` IS THE HONEST CODE FOR THE REST. `IndexFailureCode` is
+   * closed and has no lock member; the sweep's remaining failure modes are the
+   * same read/extract work the watcher lane already reports under that code.
+   */
+  private recordSweepFailure(trigger: MaintenanceTrigger): void {
+    const state = this.session.state();
+    if (state.state === 'stale' && state.staleReason === 'foreign-writer') {
+      return;
+    }
+    this.session.recordFailure({
+      code: 'extraction-failed',
+      incidentId: `${trigger}-${this.now()}`,
+      occurrences: 1
+    });
+  }
+
   private armSweep(): void {
     this.sweepTimer?.cancel();
     const ttl = this.readConfig().fallbackTtlMs;
     this.sweepTimer = this.scheduler.schedule(ttl, () => {
       this.sweepTimer = undefined;
       void this.enqueue(() => this.runSweep('prefiltered', 'ttl-sweep'))
-        .catch(() => undefined)
+        .catch(() => this.recordSweepFailure('ttl-sweep'))
         .finally(() => {
           if (this.started) {
             this.armSweep();
