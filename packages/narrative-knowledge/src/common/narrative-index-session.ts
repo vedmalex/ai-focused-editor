@@ -586,7 +586,8 @@ export class NarrativeIndexSession {
         contentHash: move.to.contentHash,
         indexedAt,
         ...(chapter !== undefined ? { chapterOrder: chapter.order, title: chapter.title } : {}),
-        manifestIncluded: chapter !== undefined
+        manifestIncluded: chapter !== undefined,
+        buildIncluded: chapter?.buildIncluded ?? true
       });
       documentsMoved.push({ from: move.from, to: move.to.path });
     }
@@ -621,7 +622,9 @@ export class NarrativeIndexSession {
         contentHash: file.contentHash,
         indexedAt,
         ...(chapter !== undefined ? { chapterOrder: chapter.order, title: chapter.title } : {}),
-        ...(classification.kind === 'chapter' ? { manifestIncluded: chapter !== undefined } : {})
+        ...(classification.kind === 'chapter'
+          ? { manifestIncluded: chapter !== undefined, buildIncluded: chapter?.buildIncluded ?? true }
+          : {})
       });
       writer.clearDocumentContent(path);
       for (const mention of extractChapterMentions({ path, text: file.text }, catalog)) {
@@ -699,7 +702,15 @@ export class NarrativeIndexSession {
         // (`manifest-extraction.ts:92`) applies to an ENTRY THAT EXISTS; using
         // it here would invent a heading for a file the manifest never names.
         ...(chapter !== undefined ? { chapterOrder: chapter.order, title: chapter.title } : {}),
-        ...(kind === 'chapter' ? { manifestIncluded: chapter !== undefined } : {})
+        // gh#47: `manifestIncluded` answers "does the manifest LIST this file",
+        // `buildIncluded` answers "is it in the built book". An `include: false`
+        // entry says yes to the first and no to the second — it is listed, and
+        // `manifest-extraction` even gives it an `order`. Deriving the second
+        // from the first (as the first edition of manuscript ordering did) makes
+        // an excluded chapter indistinguishable from an included one.
+        ...(kind === 'chapter'
+          ? { manifestIncluded: chapter !== undefined, buildIncluded: chapter?.buildIncluded ?? true }
+          : {})
       };
       writer.putDocument(input);
     }

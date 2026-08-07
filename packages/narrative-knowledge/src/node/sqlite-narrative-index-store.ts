@@ -40,13 +40,17 @@ import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import {
   NarrativeIndexStoreError,
+  assertQueryLimit,
+  documentOrderExclusion,
   mentionOrderSql,
+  orderDocumentsByChapter,
   type DocumentMoveFreshness,
   type DuplicateEntityRecord,
   type EntityQuery,
   type EvidenceRef,
   type IndexedDocument,
   type IndexedDocumentInput,
+  type MentionDocumentCount,
   type MentionQuery,
   type NarrativeDocumentKind,
   type NarrativeEntity,
@@ -190,6 +194,7 @@ interface DocumentRow {
   chapter_order: number | null;
   title: string | null;
   manifest_included: number;
+  build_included: number;
   indexed_at: number;
   generation: number;
 }
@@ -251,6 +256,7 @@ function toDocument(row: DocumentRow): IndexedDocument {
     mtimeMs: row.mtime_ms,
     contentHash: row.content_hash,
     manifestIncluded: row.manifest_included !== 0,
+    buildIncluded: row.build_included !== 0,
     indexedAt: row.indexed_at,
     generation: row.generation
   };
@@ -862,6 +868,7 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
   }
 
   findEntities(query: EntityQuery = {}): NarrativeEntity[] {
+    assertQueryLimit(query.limit, 'EntityQuery.limit');
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     if (query.type !== undefined) {
@@ -899,7 +906,9 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
     return query.limit === undefined ? entities : entities.slice(0, query.limit);
   }
 
-  getMentions(query: MentionQuery = {}): NarrativeMention[] {
+  /** The WHERE clause of a {@link MentionQuery}, shared by the row query and the
+   *  per-document aggregate so a filter cannot mean two things. */
+  private mentionFilter(query: MentionQuery): { where: string; params: (string | number)[] } {
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     if (query.entityId !== undefined) {
@@ -913,7 +922,12 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
     if (query.brokenOnly === true) {
       clauses.push('m.resolved = 0');
     }
-    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params };
+  }
+
+  getMentions(query: MentionQuery = {}): NarrativeMention[] {
+    assertQueryLimit(query.limit, 'MentionQuery.limit');
+    const { where, params } = this.mentionFilter(query);
     // gh#47. `mention_id ASC` is the insertion order every caller before
     // `orderBy` relied on; the manuscript order is generated from the SAME rule
     // the in-memory adapter runs, so the two cannot drift silently.
@@ -932,6 +946,46 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
       )
       .all(...params) as unknown as MentionRow[];
     return rows.map(toMention);
+  }
+
+  /**
+   * gh#47 — one `GROUP BY` over the join `getMentions` already performs.
+   *
+   * The WHERE clause is built by the same helper, so a filter that narrows the
+   * mentions narrows the counts identically; ordering is done in TypeScript by
+   * the shared document rule rather than in SQL, because the trailing-group
+   * tie-break is by path and both adapters must reach it the same way.
+   */
+  countMentionsByDocument(query: MentionQuery = {}): MentionDocumentCount[] {
+    const { where, params } = this.mentionFilter(query);
+    const rows = this.db
+      .prepare(
+        `SELECT d.rel_path, d.chapter_order, d.title, d.build_included, COUNT(*) AS mention_count
+         FROM mention m JOIN document d ON d.doc_id = m.doc_id ${where}
+         GROUP BY d.doc_id`
+      )
+      .all(...params) as unknown as {
+      rel_path: string;
+      chapter_order: number | null;
+      title: string | null;
+      build_included: number;
+      mention_count: number;
+    }[];
+    return orderDocumentsByChapter(
+      rows.map(row => {
+        const exclusion = documentOrderExclusion({
+          ...(row.chapter_order === null ? {} : { chapterOrder: row.chapter_order }),
+          buildIncluded: row.build_included !== 0
+        });
+        return {
+          relPath: row.rel_path,
+          mentionCount: Number(row.mention_count),
+          ...(row.chapter_order === null ? {} : { chapterOrder: row.chapter_order }),
+          ...(row.title === null ? {} : { title: row.title }),
+          ...(exclusion === undefined ? {} : { orderExclusion: exclusion })
+        };
+      })
+    );
   }
 
   getRelations(query: RelationQuery = {}): NarrativeRelation[] {
@@ -1159,7 +1213,8 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
           this.db
             .prepare(
               `UPDATE document SET kind = ?, size_bytes = ?, mtime_ms = ?, content_hash = ?,
-               chapter_order = ?, title = ?, manifest_included = ?, indexed_at = ?, generation = ?
+               chapter_order = ?, title = ?, manifest_included = ?, build_included = ?,
+               indexed_at = ?, generation = ?
                WHERE doc_id = ?`
             )
             .run(
@@ -1170,6 +1225,7 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
               input.chapterOrder ?? null,
               input.title ?? null,
               (input.manifestIncluded ?? true) ? 1 : 0,
+              (input.buildIncluded ?? true) ? 1 : 0,
               input.indexedAt,
               committedGeneration,
               existing.doc_id
@@ -1179,8 +1235,8 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
         const inserted = this.db
           .prepare(
             `INSERT INTO document (rel_path, kind, size_bytes, mtime_ms, content_hash,
-             chapter_order, title, manifest_included, indexed_at, generation)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             chapter_order, title, manifest_included, build_included, indexed_at, generation)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .run(
             input.relPath,
@@ -1191,6 +1247,7 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
             input.chapterOrder ?? null,
             input.title ?? null,
             (input.manifestIncluded ?? true) ? 1 : 0,
+            (input.buildIncluded ?? true) ? 1 : 0,
             input.indexedAt,
             committedGeneration
           );
@@ -1238,7 +1295,8 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
         this.db
           .prepare(
             `UPDATE document SET rel_path = ?, size_bytes = ?, mtime_ms = ?, content_hash = ?,
-             chapter_order = ?, title = ?, manifest_included = ?, indexed_at = ?, generation = ?
+             chapter_order = ?, title = ?, manifest_included = ?, build_included = ?,
+             indexed_at = ?, generation = ?
              WHERE doc_id = ?`
           )
           .run(
@@ -1249,6 +1307,7 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
             freshness.chapterOrder ?? null,
             freshness.title ?? null,
             (freshness.manifestIncluded ?? true) ? 1 : 0,
+            (freshness.buildIncluded ?? true) ? 1 : 0,
             freshness.indexedAt,
             committedGeneration,
             source.doc_id

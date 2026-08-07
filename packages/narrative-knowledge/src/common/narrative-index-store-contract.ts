@@ -174,12 +174,23 @@ const CHAPTER_TWO = 'manuscript/ordered-02.md';
 const CHAPTER_THREE = 'manuscript/ordered-03.md';
 /** Named by no manifest entry, so it has no `chapterOrder` at all. */
 const UNLISTED_CHAPTER = 'manuscript/ordered-scratch.md';
-/** Listed WITH an order, and excluded from the built book anyway — the two are
- *  independent columns, and a fixture that conflated them would let an adapter
- *  pass by testing the wrong one. */
+/**
+ * LISTED, WITH AN ORDER, AND STILL OUT OF THE BUILT BOOK — the state an
+ * `include: false` manifest entry actually produces.
+ *
+ * THIS FIXTURE IS THE POINT OF THE gh#47 FIX, so it is worth stating what it
+ * used to be. The first edition wrote `manifestIncluded: false` here and left
+ * `buildIncluded` out of the port entirely. That combination is one the indexer
+ * NEVER WRITES: `manifest-extraction` pushes an `include: false` entry into the
+ * walk WITH an `order`, and the session sets `manifestIncluded: chapter !== undefined`,
+ * i.e. `true`. So the exclusion rule was dead in the product while this case
+ * stayed green — the tooth agreed with the code about a state neither would ever
+ * meet. `manifestIncluded` stays `true` here on purpose: anything else would
+ * re-create the fiction.
+ */
 const EXCLUDED_CHAPTER = 'manuscript/ordered-excluded.md';
 
-function orderedChapter(relPath: string, order?: number, manifestIncluded = true) {
+function orderedChapter(relPath: string, order?: number, options: { listed?: boolean; built?: boolean } = {}) {
   return {
     relPath,
     kind: 'chapter' as const,
@@ -187,7 +198,8 @@ function orderedChapter(relPath: string, order?: number, manifestIncluded = true
     mtimeMs: 1_700_000_004_000,
     contentHash: 'c'.repeat(64),
     ...(order === undefined ? {} : { chapterOrder: order }),
-    manifestIncluded,
+    manifestIncluded: options.listed ?? true,
+    buildIncluded: options.built ?? true,
     indexedAt: 1_700_000_005_000
   };
 }
@@ -197,8 +209,12 @@ function seedOrderedChapters(store: NarrativeIndexStore): void {
     writer.putDocument(orderedChapter(CHAPTER_ONE, 0));
     writer.putDocument(orderedChapter(CHAPTER_TWO, 1));
     writer.putDocument(orderedChapter(CHAPTER_THREE, 2));
-    writer.putDocument(orderedChapter(UNLISTED_CHAPTER, undefined, false));
-    writer.putDocument(orderedChapter(EXCLUDED_CHAPTER, 3, false));
+    // Unlisted: no order, and `manifestIncluded` false — the ONE case where the
+    // two columns agree, because a file the manifest never names is in neither.
+    writer.putDocument(orderedChapter(UNLISTED_CHAPTER, undefined, { listed: false, built: false }));
+    // Excluded: listed, ordered, out of the build. The columns DISAGREE, which
+    // is what makes this case able to fail.
+    writer.putDocument(orderedChapter(EXCLUDED_CHAPTER, 3, { listed: true, built: false }));
   });
 }
 
@@ -812,6 +828,77 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
         ['ch2-line5', 'ch1-line2', 'ch1-line9'],
         'renumbering the manifest reorders the answer'
       );
+    }
+  },
+  {
+    // gh#47 — A LIMIT THE TWO ADAPTERS WOULD ANSWER DIFFERENTLY IS REJECTED.
+    //
+    // Both values below are reachable from a preference, and both used to
+    // DIVERGE rather than fail: `-1` means "no limit" to SQLite's `LIMIT ?` and
+    // "drop the last row" to `slice`, while `1.5` made SQLite throw a raw
+    // `datatype mismatch` carrying none of this port's error kinds and made the
+    // in-memory adapter return one row. Divergence is the failure here — the
+    // wrong answer would have been "clamp them into agreement", which invents an
+    // answer to a question nobody asked.
+    name: 'a negative or fractional limit is REJECTED by both adapters, not answered differently',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putEntity(entity('krishna', CARD));
+        writer.putMention(mention('krishna'));
+      });
+      await rejects(() => store.getMentions({ limit: -1 }), 'constraint-violation', 'a negative mention limit');
+      await rejects(() => store.getMentions({ limit: 1.5 }), 'constraint-violation', 'a fractional mention limit');
+      await rejects(() => store.findEntities({ limit: -1 }), 'constraint-violation', 'a negative entity limit');
+      await rejects(() => store.findEntities({ limit: 1.5 }), 'constraint-violation', 'a fractional entity limit');
+      // THE PAIRED POSITIVE, and it carries the real risk: a validator written
+      // as `limit > 0` would reject zero, which is a legitimate answer a caller
+      // can compute from a preference and which both adapters already handle.
+      equal(store.getMentions({ limit: 0 }).length, 0, 'limit 0 is a real answer, not an error');
+      equal(store.findEntities({ limit: 0 }).length, 0, 'limit 0 is a real answer for entities too');
+      equal(store.getMentions({ limit: 1 }).length, 1, 'a valid limit still works');
+    }
+  },
+  {
+    // gh#47 — "which chapters is this character in, and how many".
+    //
+    // THE COUNTS AND THE ROW QUERY MUST AGREE, so the case checks them against
+    // each other rather than against two hand-written expectations: a filter
+    // that narrows one has to narrow the other identically, which is the whole
+    // reason both are built from one `mentionFilter`.
+    name: 'countMentionsByDocument groups the same filter, in ascending manuscript order',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedOrderedChapters(store);
+      seedOrderingMentions(store);
+      const counts = store.countMentionsByDocument({ entityId: 'krishna' });
+      deepEqual(
+        counts.map(row => `${row.relPath}:${row.mentionCount}`),
+        [
+          `${CHAPTER_ONE}:2`,
+          `${CHAPTER_TWO}:1`,
+          `${CHAPTER_THREE}:1`,
+          `${EXCLUDED_CHAPTER}:1`,
+          `${UNLISTED_CHAPTER}:1`
+        ],
+        'chapters in build order, then the unplaceable ones by path'
+      );
+      // The trailing group carries its REASON, not merely its position — the two
+      // documents below are excluded for different reasons and a consumer that
+      // renders "not in the built book" must not say it about an unlisted file.
+      const byPath = new Map(counts.map(row => [row.relPath, row]));
+      equal(byPath.get(CHAPTER_ONE)?.orderExclusion, undefined, 'an ordinary chapter is placeable');
+      equal(byPath.get(EXCLUDED_CHAPTER)?.orderExclusion, 'not-in-built-book', 'listed, ordered, out of the build');
+      equal(byPath.get(UNLISTED_CHAPTER)?.orderExclusion, 'no-chapter-order', 'the manifest never names it');
+      // Totals agree with the row query — the aggregate is a different SHAPE of
+      // the same answer, not a second answer.
+      equal(
+        counts.reduce((sum, row) => sum + row.mentionCount, 0),
+        store.getMentions({ entityId: 'krishna' }).length,
+        'the counts sum to the mentions'
+      );
+      equal(store.countMentionsByDocument({ entityId: 'nobody' }).length, 0, 'no mentions, no rows');
     }
   },
   {

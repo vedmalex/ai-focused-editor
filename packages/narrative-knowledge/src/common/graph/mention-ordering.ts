@@ -29,7 +29,11 @@ import type { NarrativeMention } from './narrative-mention';
  *  so this module stays usable by anything holding those two fields. */
 export interface MentionOrderDocument {
   chapterOrder?: number;
-  manifestIncluded: boolean;
+  /** `IndexedDocument.buildIncluded` — NOT `manifestIncluded`. See
+   *  {@link MentionOrderExclusion}: an `include: false` chapter is still listed,
+   *  so `manifestIncluded` is `true` for it and a rule written against that field
+   *  never fires. */
+  buildIncluded: boolean;
 }
 
 /**
@@ -50,8 +54,8 @@ export function mentionOrderExclusion(
   if (document === undefined || document.chapterOrder === undefined) {
     return 'no-chapter-order';
   }
-  if (!document.manifestIncluded) {
-    return 'not-in-manifest';
+  if (!document.buildIncluded) {
+    return 'not-in-built-book';
   }
   if (mention.evidence.evidenceKind !== 'range') {
     return 'no-position';
@@ -114,6 +118,50 @@ export function orderMentionsByChapter(
 }
 
 /**
+ * Order DOCUMENTS as the manuscript reads, ascending.
+ *
+ * Separate from {@link orderMentionsByChapter} rather than a reuse of it, and
+ * the difference is not a technicality: a document has no line, so the
+ * `no-position` reason cannot arise, and there is nothing below `chapterOrder`
+ * to break a tie with except the path. Folding the two would mean passing a
+ * fake position for every document.
+ */
+export function orderDocumentsByChapter<T extends { chapterOrder?: number; orderExclusion?: unknown; relPath: string }>(
+  documents: readonly T[]
+): T[] {
+  return [...documents].sort((a, b) => {
+    const aOut = a.orderExclusion !== undefined;
+    const bOut = b.orderExclusion !== undefined;
+    if (aOut !== bOut) {
+      return aOut ? 1 : -1;
+    }
+    if (!aOut && a.chapterOrder !== b.chapterOrder) {
+      return (a.chapterOrder ?? 0) - (b.chapterOrder ?? 0);
+    }
+    // Path, by code point — the same tie-break rule `listDocuments` follows, so
+    // the trailing group has a defined order in both adapters rather than
+    // whichever order the rows happened to arrive in (ISS-349).
+    return a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0;
+  });
+}
+
+/**
+ * Why a DOCUMENT cannot be placed in manuscript order, or `undefined`.
+ *
+ * Two of the three {@link MentionOrderExclusion} reasons; see
+ * {@link orderDocumentsByChapter} for why the third cannot occur.
+ */
+export function documentOrderExclusion(document: MentionOrderDocument): MentionOrderExclusion | undefined {
+  if (document.chapterOrder === undefined) {
+    return 'no-chapter-order';
+  }
+  if (!document.buildIncluded) {
+    return 'not-in-built-book';
+  }
+  return undefined;
+}
+
+/**
  * The SQLite spelling of {@link orderMentionsByChapter}, for a query that has
  * already joined `mention m` to `document d`.
  *
@@ -124,7 +172,7 @@ export function orderMentionsByChapter(
  */
 export function mentionOrderSql(direction: 'asc' | 'desc'): string {
   const dir = direction === 'desc' ? 'DESC' : 'ASC';
-  const excluded = `d.chapter_order IS NULL OR d.manifest_included = 0 OR m.evidence_kind <> 'range'`;
+  const excluded = `d.chapter_order IS NULL OR d.build_included = 0 OR m.evidence_kind <> 'range'`;
   // EVERY position key is neutralised for the excluded rows, not just guarded
   // by the flag above. Leaving them to sort naturally is the obvious spelling
   // and it is wrong twice over: SQLite orders NULL FIRST under `ASC`, so the

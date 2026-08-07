@@ -99,6 +99,29 @@ export interface IndexedDocumentInput {
   title?: string;
   /** Whether `manifest.yaml` lists this file. Defaults to `true`. */
   manifestIncluded?: boolean;
+  /**
+   * Whether the chapter is part of the BUILT BOOK — `ManifestChapter.buildIncluded`.
+   *
+   * A SECOND FIELD RATHER THAN A REREADING OF {@link manifestIncluded}, and the
+   * difference is not academic: an `include: false` entry is still LISTED, so it
+   * arrives here with `manifestIncluded: true` and a real {@link chapterOrder}
+   * (`manifest-extraction.ts` records the exclusion in `buildIncluded` and pushes
+   * the entry into the walk regardless). The two answer different questions and
+   * both have callers — `manifestIncluded` is read by `narrative-context` and by
+   * the AI tools' document answer, so quietly redefining it would change what a
+   * model is told about a chapter.
+   *
+   * INHERITED: `include: false` on a part excludes every descendant, so a chapter
+   * can be excluded without saying so itself.
+   *
+   * THIS FIELD EXISTS BECAUSE ITS ABSENCE WAS A LIVE DEFECT. Manuscript order
+   * (gh#47) means order in the book being built, so an excluded chapter must not
+   * be able to become a "first appearance". The first edition expressed that
+   * against `manifestIncluded` — which is never `false` for a listed chapter — so
+   * the rule was dead in the product while its contract tooth stayed green on a
+   * fixture the indexer never writes. Defaults to `true`.
+   */
+  buildIncluded?: boolean;
   /** Epoch ms at which this document was last read. */
   indexedAt: number;
 }
@@ -108,6 +131,7 @@ export interface IndexedDocument extends IndexedDocumentInput {
   /** Store-assigned row id. Stable while the row lives, NOT across rebuilds. */
   docId: number;
   manifestIncluded: boolean;
+  buildIncluded: boolean;
   /**
    * The store generation at which THIS document was last written.
    *
@@ -146,6 +170,12 @@ export interface DocumentMoveFreshness {
   title?: string;
   /** Whether `manifest.yaml` lists the NEW path. Defaults to `true`. */
   manifestIncluded?: boolean;
+  /** Whether the NEW path is in the built book. Travels with the path for the
+   *  same reason `title` and `chapterOrder` do: a chapter renamed into an
+   *  `include: false` part leaves the built book by being renamed. Defaults to
+   *  `true`. See {@link IndexedDocumentInput.buildIncluded} for why this is not
+   *  {@link manifestIncluded}. */
+  buildIncluded?: boolean;
 }
 
 /**
@@ -250,8 +280,11 @@ export interface MentionQuery {
  *  - `no-position` — `evidence.evidenceKind !== 'range'`, so the mention has no
  *    line within its document. The DDL states this as
  *    `CHECK ((evidence_kind = 'range') = (start_line IS NOT NULL))`.
- *  - `not-in-manifest` — the chapter is excluded from the built book, possibly
- *    INHERITED from an `include: false` on a part.
+ *  - `not-in-built-book` — the chapter is excluded from the built book, possibly
+ *    INHERITED from an `include: false` on a part. Read from
+ *    {@link IndexedDocument.buildIncluded}, NOT from `manifestIncluded`: an
+ *    excluded chapter is still LISTED, so the latter is `true` for it and the
+ *    rule expressed against it never fired.
  *
  * WHY THEY TRAIL IN BOTH DIRECTIONS RATHER THAN MIRRORING. Mirroring reads as
  * the symmetric choice and is the worse one: a mention with no position would
@@ -266,7 +299,35 @@ export interface MentionQuery {
  * visible and reversible — flipping `include: true` moves it into the ordering,
  * which is precisely what the author meant by flipping it.
  */
-export type MentionOrderExclusion = 'no-chapter-order' | 'no-position' | 'not-in-manifest';
+export type MentionOrderExclusion = 'no-chapter-order' | 'no-position' | 'not-in-built-book';
+
+/**
+ * One document an entity is mentioned in, with how many times — the answer to
+ * "which chapters is this character in, and how many chapters is that" (gh#47).
+ *
+ * A NAMED AGGREGATE RATHER THAN COUNTING ON THE CALLER'S SIDE, for the same
+ * reason {@link MentionQuery.orderBy} exists: the alternative is fetching every
+ * mention of an entity and grouping them outside, and a hub character in a long
+ * book makes that a large transfer to produce one number. It is one `GROUP BY`
+ * over a join the store already performs.
+ *
+ * ORDERED LIKE THE MENTIONS THEMSELVES: by `chapterOrder`, with the documents
+ * that have no place in the built book TRAILING rather than mixed in. The
+ * per-mention `no-position` reason cannot apply at this level — a document has
+ * no line — so only two of the three exclusion reasons ever appear here.
+ */
+export interface MentionDocumentCount {
+  relPath: string;
+  /** Absent for a file the manifest does not name. */
+  chapterOrder?: number;
+  /** The manifest's title; absent for the same reason `chapterOrder` is. */
+  title?: string;
+  /** Present when this document cannot be placed in manuscript order. */
+  orderExclusion?: MentionOrderExclusion;
+  /** How many mentions matched inside this document. Always at least 1 — a
+   *  document with no matching mention is not a row here. */
+  mentionCount: number;
+}
 
 /** Which end of a relation an entity id is being matched against. */
 export type RelationDirection = 'outgoing' | 'incoming' | 'either';
@@ -382,6 +443,36 @@ export class NarrativeIndexStoreError extends Error {
 /** Narrow an unknown throw to this port's error type. */
 export function isNarrativeIndexStoreError(error: unknown): error is NarrativeIndexStoreError {
   return error instanceof NarrativeIndexStoreError;
+}
+
+/**
+ * Reject a `limit` the two adapters would answer DIFFERENTLY.
+ *
+ * WHAT THIS CLOSES, MEASURED RATHER THAN IMAGINED. `limit: -1` reaches SQLite's
+ * `LIMIT ?`, where a negative value means NO LIMIT — every row — while
+ * `Array.prototype.slice(0, -1)` drops the last one. `limit: 1.5` makes SQLite
+ * throw a raw `datatype mismatch` that carries none of this port's error kinds,
+ * while the in-memory adapter quietly returns one row. Neither input is exotic:
+ * a "recent mentions: N" preference is exactly where a stray value arrives from.
+ *
+ * REJECTING RATHER THAN NORMALISING. Clamping would make the two adapters agree
+ * on an answer to a question the caller did not ask; a `constraint-violation`
+ * says the query was wrong, which is the truth and is the one behaviour that
+ * cannot silently differ.
+ *
+ * `0` IS VALID and means "no rows" in both adapters. It is a real answer, and a
+ * caller computing a limit from a preference can legitimately arrive at it.
+ */
+export function assertQueryLimit(limit: number | undefined, field: string): void {
+  if (limit === undefined) {
+    return;
+  }
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new NarrativeIndexStoreError(
+      'constraint-violation',
+      `${field} must be a non-negative integer, got ${String(limit)}`
+    );
+  }
 }
 
 /**
@@ -505,6 +596,16 @@ export interface NarrativeIndexReader {
   getEntity(entityId: string): NarrativeEntity | undefined;
   findEntities(query?: EntityQuery): NarrativeEntity[];
   getMentions(query?: MentionQuery): NarrativeMention[];
+  /**
+   * The same filter as {@link getMentions}, grouped by document.
+   *
+   * NAMED IN THE PORT for the AD-6 reason `neighbourhood` is: the core cannot
+   * write SQL, so an aggregate that must not drag every mention through memory
+   * has to be expressible here or not at all. `orderBy`/`direction`/`limit` on
+   * the query are IGNORED — they describe an order over mentions, and this is a
+   * different list; the result is always in ascending manuscript order.
+   */
+  countMentionsByDocument(query?: MentionQuery): MentionDocumentCount[];
   getRelations(query?: RelationQuery): NarrativeRelation[];
   /**
    * Relations reachable from an entity within `depth` hops.
