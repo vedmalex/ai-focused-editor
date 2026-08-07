@@ -40,7 +40,6 @@ function appearance(path: string, line: number, overrides: Partial<EntityAppeara
 function base(overrides: Partial<Parameters<typeof buildEntityCard>[0]> = {}) {
   return buildEntityCard({
     entity: entity(),
-    ascending: [],
     descending: [],
     chapterSpread: [],
     relations: [],
@@ -108,7 +107,7 @@ describe('buildEntityCard — first and latest appearance mean the BUILT book', 
       appearance('content/cut.md', 1, { orderExclusion: 'not-in-built-book' }),
       appearance('content/scratch.md', 2, { orderExclusion: 'no-chapter-order' })
     ];
-    const card = base({ ascending: outside, descending: [...outside].reverse() });
+    const card = base({ first: outside[0], descending: [...outside].reverse() });
     expect(card.firstAppearance).toBeUndefined();
     expect(card.latestAppearance).toBeUndefined();
     // Shown, not dropped — the rule is about ranking, not about hiding.
@@ -118,18 +117,17 @@ describe('buildEntityCard — first and latest appearance mean the BUILT book', 
   test('paired positive: with one placeable appearance, it is both first and latest', () => {
     const placeable = appearance('content/ch-01.md', 3);
     const unplaceable = appearance('content/cut.md', 1, { orderExclusion: 'not-in-built-book' });
-    const card = base({
-      ascending: [placeable, unplaceable],
-      descending: [placeable, unplaceable]
-    });
+    const card = base({ first: placeable, descending: [placeable, unplaceable] });
     expect(card.firstAppearance?.mention.raw).toBe('content/ch-01.md:3');
-    expect(card.latestAppearance?.mention.raw).toBe('content/ch-01.md:3');
+    // The LATEST is omitted because it is the SAME PLACE — decided by evidence,
+    // and asserted here so "one appearance" cannot render as two.
+    expect(card.latestAppearance).toBeUndefined();
   });
 
   test('first comes from the ascending list and latest from the descending one', () => {
     const early = appearance('content/ch-01.md', 1);
     const late = appearance('content/ch-09.md', 1);
-    const card = base({ ascending: [early, late], descending: [late, early] });
+    const card = base({ first: early, descending: [late, early] });
     expect(card.firstAppearance?.mention.raw).toBe('content/ch-01.md:1');
     expect(card.latestAppearance?.mention.raw).toBe('content/ch-09.md:1');
   });
@@ -171,7 +169,7 @@ describe('buildEntityCard — honesty about what is not known', () => {
       },
       orderExclusion: 'no-position'
     };
-    const card = base({ ascending: [wholeFile], descending: [wholeFile] });
+    const card = base({ first: wholeFile, descending: [wholeFile] });
     expect(card.recentAppearances).toHaveLength(1);
     expect(card.firstAppearance).toBeUndefined();
   });
@@ -195,5 +193,62 @@ describe('shouldFollowCursor — pinning resists the cursor, not the author', ()
 
   test('nothing shown yet: the first entity under the caret is taken', () => {
     expect(shouldFollowCursor(false, undefined, 'krishna')).toBe(true);
+  });
+});
+
+describe('first vs latest is decided by WHERE, never by the tag text', () => {
+  /**
+   * THE CASE A REALISTIC FIXTURE IS REQUIRED FOR, and the reason the earlier
+   * fixtures in this file are not enough: they give every mention a unique
+   * `raw` (`path:line`), which is convenient and WRONG. `NarrativeMention.raw`
+   * is the whole tag — `[[персонаж:кришна|Кришна]]` — so an author who writes
+   * the same reference in chapter 1 and chapter 9 produces two mentions with
+   * IDENTICAL `raw`. An implementation comparing `raw` drops the latest
+   * appearance in the commonest case there is, and a unique-`raw` fixture hides
+   * it completely. This one uses the real shape.
+   */
+  const TAG = '[[персонаж:кришна|Кришна]]';
+
+  function at(path: string, line: number): EntityAppearance {
+    return {
+      mention: {
+        entityId: 'krishna',
+        raw: TAG,
+        resolved: true,
+        evidence: rangeEvidence(path, { start: { line, character: 0 }, end: { line, character: TAG.length } })
+      }
+    };
+  }
+
+  test('the same tag text in two chapters still yields BOTH a first and a latest', () => {
+    const first = at('content/ch-01.md', 4);
+    const latest = at('content/ch-09.md', 2);
+    const card = base({ first, descending: [latest, first] });
+    expect(card.firstAppearance?.mention.evidence.path).toBe('content/ch-01.md');
+    expect(card.latestAppearance?.mention.evidence.path).toBe('content/ch-09.md');
+  });
+
+  test('PAIRED NEGATIVE: one appearance is not reported twice', () => {
+    const only = at('content/ch-01.md', 4);
+    const card = base({ first: only, descending: [only] });
+    expect(card.firstAppearance).toBeDefined();
+    expect(card.latestAppearance).toBeUndefined();
+  });
+
+  test('two mentions on the same LINE but different columns are different places', () => {
+    const first = at('content/ch-01.md', 4);
+    const second: EntityAppearance = {
+      mention: {
+        entityId: 'krishna',
+        raw: TAG,
+        resolved: true,
+        evidence: rangeEvidence('content/ch-01.md', {
+          start: { line: 4, character: 40 },
+          end: { line: 4, character: 40 + TAG.length }
+        })
+      }
+    };
+    const card = base({ first, descending: [second, first] });
+    expect(card.latestAppearance?.mention.evidence.range?.start.character).toBe(40);
   });
 });

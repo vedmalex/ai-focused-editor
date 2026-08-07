@@ -20,9 +20,9 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { NarrativeIndexSession } from '../../lib/common/index.js';
+import { NodeNarrativeKnowledgeService } from '../../lib/node/node-narrative-knowledge-service.js';
 import { SqliteNarrativeIndexStore } from '../../lib/node/sqlite-narrative-index-store.js';
 import { hashContent } from '../../lib/node/narrative-workspace-scan.js';
-import { readVerifiedDocument, sliceExcerpt } from '../../lib/node/evidence-excerpt.js';
 import { NARRATIVE_INDEX_SCHEMA_VERSION } from '../../lib/node/narrative-index-schema.js';
 import { makeWorkspace } from './harness.mts';
 
@@ -68,79 +68,97 @@ function buildIndex(): { session: NarrativeIndexSession; root: string; store: Sq
   return { session, root: workspace.root, store };
 }
 
-/** The composition the service performs, with the same one-read-per-document
- *  rule. Kept here rather than imported because the service needs Theia DI. */
-async function appearancesWith(session: NarrativeIndexSession, root: string, direction: 'asc' | 'desc') {
-  const answer = session.getMentions({ entityId: 'krishna', orderBy: 'chapter', direction });
-  const texts = new Map<string, Awaited<ReturnType<typeof readVerifiedDocument>>>();
-  const out: { path: string; excerpt?: string; unavailable?: string }[] = [];
-  for (const mention of answer.data) {
-    const relPath = mention.evidence.path;
-    const document = session.getDocument(relPath);
-    assert.ok(document, `document row for ${relPath}`);
-    const key = `${relPath}::${document.contentHash}`;
-    let verified = texts.get(key);
-    if (verified === undefined) {
-      verified = await readVerifiedDocument(root, relPath, document.contentHash);
-      texts.set(key, verified);
-    }
-    if (verified.text === undefined) {
-      out.push({ path: relPath, unavailable: verified.unavailable });
-      continue;
-    }
-    const excerpt = sliceExcerpt(verified.text, mention.evidence);
-    out.push({ path: relPath, ...(excerpt.text === undefined ? { unavailable: excerpt.unavailable } : { excerpt: excerpt.text }) });
+/**
+ * The REAL service, with its one dependency replaced.
+ *
+ * THE EARLIER EDITION OF THIS FILE DID NOT DO THIS, and that was the ninth
+ * "green by coincidence" of this task: it reimplemented the composition here and
+ * asserted against its own copy, so mutating `getEntityAppearances` — the cache
+ * key, the `withExcerpt` branch, the exclusion remap, the way `spread` and
+ * `first` are folded into the envelope — reddened nothing at all. The class is
+ * property-injected, so overriding the ONE seam it needs is enough to exercise
+ * the shipped method.
+ */
+class TestKnowledgeService extends NodeNarrativeKnowledgeService {
+  // A plain field, not a parameter property: node's strip-only TypeScript mode
+  // (which is how this lane runs) does not implement the latter.
+  readonly bound: NarrativeIndexSession;
+
+  constructor(bound: NarrativeIndexSession) {
+    super();
+    this.bound = bound;
   }
-  return { out, reads: texts.size, state: answer.state };
+
+  protected override session(): NarrativeIndexSession {
+    return this.bound;
+  }
 }
 
-test('two appearances in ONE chapter are read once and still quote DIFFERENT passages', async () => {
+test('two appearances in ONE chapter quote DIFFERENT passages', async () => {
   const { session, root } = buildIndex();
-  const { out, reads } = await appearancesWith(session, root, 'asc');
+  const service = new TestKnowledgeService(session);
+  const answer = await service.getEntityAppearances(root, 'krishna', { direction: 'asc', withExcerpt: true });
 
-  assert.equal(reads, 2, 'one read per DOCUMENT, not per appearance');
-  // The failure this refuses: a cache keyed by document that stored the finished
-  // excerpt would make these two identical, and both would look plausible.
-  const first = out.filter(entry => entry.path === CH1);
-  assert.equal(first.length, 2);
-  assert.notEqual(first[0].excerpt, first[1].excerpt, 'the two mentions in one chapter are different passages');
-  assert.equal(first[0].excerpt, '[[char:krishna|Кришна]]');
-  assert.equal(first[1].excerpt, '[[char:krishna|Говинда]]');
+  // The failure this refuses: caching the finished excerpt per document would
+  // make these two identical, and both would look plausible on screen.
+  const inFirst = answer.data.appearances.filter(entry => entry.mention.evidence.path === CH1);
+  assert.equal(inFirst.length, 2);
+  assert.equal(inFirst[0].excerpt, '[[char:krishna|Кришна]]');
+  assert.equal(inFirst[1].excerpt, '[[char:krishna|Говинда]]');
 });
 
 test('ascending really is manuscript order, and descending is its mirror', async () => {
   const { session, root } = buildIndex();
-  const ascending = await appearancesWith(session, root, 'asc');
-  const descending = await appearancesWith(session, root, 'desc');
-  assert.deepEqual(ascending.out.map(entry => entry.path), [CH1, CH1, CH2]);
-  assert.deepEqual(descending.out.map(entry => entry.path), [CH2, CH1, CH1]);
+  const service = new TestKnowledgeService(session);
+  const ascending = await service.getEntityAppearances(root, 'krishna', { direction: 'asc' });
+  const descending = await service.getEntityAppearances(root, 'krishna', { direction: 'desc' });
+  assert.deepEqual(ascending.data.appearances.map(entry => entry.mention.evidence.path), [CH1, CH1, CH2]);
+  assert.deepEqual(descending.data.appearances.map(entry => entry.mention.evidence.path), [CH2, CH1, CH1]);
 });
 
-test('the spread counts documents and agrees with the mention rows', async () => {
-  const { session } = buildIndex();
-  const spread = session.countMentionsByDocument({ entityId: 'krishna' });
+test('first, the recent list and the spread arrive in ONE envelope', async () => {
+  const { session, root } = buildIndex();
+  const service = new TestKnowledgeService(session);
+  const answer = await service.getEntityAppearances(root, 'krishna', {
+    direction: 'desc',
+    limit: 2,
+    withExcerpt: true,
+    withSpread: true,
+    withFirst: true
+  });
+  // The whole reason the result is a composite: a card showing "first seen"
+  // beside "mentioned in N chapters" must not build them from two generations.
+  assert.equal(answer.data.first?.mention.evidence.path, CH1);
+  assert.equal(answer.data.appearances.length, 2, 'the recent list is capped');
   assert.deepEqual(
-    spread.map(row => `${row.relPath}:${row.mentionCount}`),
-    [`${CH1}:2`, `${CH2}:1`]
+    answer.data.spread?.map(row => `${row.relPath}:${row.mentionCount}`),
+    [`${CH1}:2`, `${CH2}:1`],
+    'and the spread is NOT capped by the same limit'
   );
-  assert.equal(
-    spread.reduce((sum, row) => sum + row.mentionCount, 0),
-    session.getMentions({ entityId: 'krishna' }).data.length
-  );
+  // `first` is quoted like any other appearance — one projection, not two.
+  assert.equal(answer.data.first?.excerpt, '[[char:krishna|Кришна]]');
+});
+
+test('the parts are opt-in: without the flags there is no first and no spread', async () => {
+  const { session, root } = buildIndex();
+  const service = new TestKnowledgeService(session);
+  const answer = await service.getEntityAppearances(root, 'krishna', { direction: 'desc' });
+  assert.equal(answer.data.first, undefined);
+  assert.equal(answer.data.spread, undefined);
+  assert.equal(answer.data.appearances[0].excerpt, undefined, 'and no file was read for a quotation');
 });
 
 test('a chapter edited after indexing yields no quotation, and says why', async () => {
   const { session, root } = buildIndex();
-  // Lines inserted ABOVE, so the stored coordinates still resolve — onto text
-  // that is real and is not the mention.
   writeFileSync(join(root, CH1), `Новый заголовок\n\n${CH1_TEXT}`, 'utf8');
-  const { out } = await appearancesWith(session, root, 'asc');
-  for (const entry of out.filter(item => item.path === CH1)) {
+  const service = new TestKnowledgeService(session);
+  const answer = await service.getEntityAppearances(root, 'krishna', { direction: 'asc', withExcerpt: true });
+  for (const entry of answer.data.appearances.filter(item => item.mention.evidence.path === CH1)) {
     assert.equal(entry.excerpt, undefined, 'a shifted chapter must not be quoted');
-    assert.equal(entry.unavailable, 'document-changed');
+    assert.equal(entry.excerptUnavailable, 'document-changed');
   }
   // PAIRED POSITIVE in the same run: the untouched chapter still quotes, so the
-  // assertion above is refusing a stale read rather than reporting a broken one.
-  const untouched = out.find(item => item.path === CH2);
+  // assertion above refuses a stale read rather than reporting a broken one.
+  const untouched = answer.data.appearances.find(item => item.mention.evidence.path === CH2);
   assert.equal(untouched?.excerpt, '[[char:krishna|Кришна]]');
 });

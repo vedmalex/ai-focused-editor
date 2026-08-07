@@ -309,10 +309,96 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
     // cannot straddle a rebuild the way two RPC round trips could — see
     // `EntityAppearanceResult`.
     const spread = query.withSpread === true ? session.countMentionsByDocument({ entityId }) : undefined;
+    // The first appearance is read from the SAME session in the SAME call, so
+    // the card's two headline facts cannot come from two generations. Asked for
+    // explicitly, because a caller listing recent appearances does not need it.
+    const firstMention =
+      query.withFirst === true
+        ? session.getMentions({ entityId, orderBy: 'chapter', direction: 'asc', limit: 1 }).data[0]
+        : undefined;
+    const first =
+      firstMention === undefined
+        ? undefined
+        : await this.toAppearance(firstMention, session, rootPath, query.withExcerpt === true, texts, documents);
     // The envelope of the ORIGINAL read: state and generation describe the index
     // the mentions came from. Rebuilding one here would report the state at the
     // end of the file reads instead, which is a different and later claim.
-    return { ...answer, data: { appearances, ...(spread === undefined ? {} : { spread }) } };
+    return {
+      ...answer,
+      data: {
+        appearances,
+        ...(first === undefined ? {} : { first }),
+        ...(spread === undefined ? {} : { spread })
+      }
+    };
+  }
+
+  /**
+   * One mention, projected into an appearance.
+   *
+   * SHARED BY THE LIST AND BY `EntityAppearanceResult.first`, on purpose: the
+   * first appearance is not a different kind of thing, and two projections
+   * would be two chances for the excerpt rule or the exclusion reason to differ
+   * between the value a card puts in its headline and the ones it lists below.
+   *
+   * The caches are passed IN rather than owned here, so a first appearance that
+   * repeats a chapter already read costs no second read.
+   */
+  protected async toAppearance(
+    mention: NarrativeMention,
+    session: NarrativeIndexSession,
+    rootPath: string,
+    withExcerpt: boolean,
+    texts: Map<string, VerifiedDocument>,
+    documents: Map<string, NarrativeDocumentSummary | undefined>
+  ): Promise<EntityAppearance> {
+    const relPath = mention.evidence.path;
+    if (!documents.has(relPath)) {
+      documents.set(relPath, session.getDocument(relPath));
+    }
+    const document = documents.get(relPath);
+    const orderExclusion =
+      document === undefined
+        ? 'no-chapter-order'
+        : mentionOrderExclusion(mention, {
+            ...(document.chapterOrder === undefined ? {} : { chapterOrder: document.chapterOrder }),
+            buildIncluded: document.buildIncluded
+          });
+    const appearance: EntityAppearance = {
+      mention,
+      ...(document?.title === undefined ? {} : { chapterTitle: document.title }),
+      ...(document?.chapterOrder === undefined ? {} : { chapterOrder: document.chapterOrder }),
+      ...(orderExclusion === undefined ? {} : { orderExclusion })
+    };
+    if (!withExcerpt) {
+      return appearance;
+    }
+    if (document === undefined) {
+      appearance.excerptUnavailable = 'unreadable';
+      return appearance;
+    }
+    // The TEXT is cached, never the finished excerpt: two appearances in one
+    // chapter have different ranges, so caching the quotation would serve the
+    // second one the first one's passage. Keyed by path AND hash, so a document
+    // re-indexed mid-call is a different document for quoting purposes rather
+    // than a cache hit the new hash never vouched for.
+    const key = `${relPath}::${document.contentHash}`;
+    let verified = texts.get(key);
+    if (verified === undefined) {
+      verified = await readVerifiedDocument(rootPath, relPath, document.contentHash);
+      texts.set(key, verified);
+    }
+    if (verified.text === undefined) {
+      appearance.excerptUnavailable = verified.unavailable ?? 'unreadable';
+      return appearance;
+    }
+    const excerpt = sliceExcerpt(verified.text, mention.evidence);
+    if (excerpt.text === undefined) {
+      appearance.excerptUnavailable = excerpt.unavailable ?? 'unreadable';
+    } else {
+      appearance.excerpt = excerpt.text;
+    }
+    return appearance;
   }
 
   /**

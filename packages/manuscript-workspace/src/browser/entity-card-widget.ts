@@ -227,8 +227,13 @@ export class EntityCardWidget extends ReactWidget {
     if (first !== undefined) {
       children.push(this.renderAppearance('first', nls.localize(`${KEY}-first`, 'First appearance'), first));
     }
+    // NO SAMENESS CHECK HERE: the model already omits `latestAppearance` when it
+    // is the same place as the first. Deciding it again in the renderer is how
+    // the first edition compared `mention.raw` — the tag TEXT, equal across
+    // chapters — and silently dropped the latest appearance in the commonest
+    // case there is.
     const latest = card.latestAppearance;
-    if (latest !== undefined && latest.mention.raw !== first?.mention.raw) {
+    if (latest !== undefined) {
       children.push(this.renderAppearance('latest', nls.localize(`${KEY}-latest`, 'Latest appearance'), latest));
     }
     for (const [index, appearance] of card.recentAppearances.entries()) {

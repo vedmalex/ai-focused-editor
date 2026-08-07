@@ -53,13 +53,11 @@ export class EntityCardService {
   /**
    * Assemble the card for `entityId`.
    *
-   * THREE CALLS, AND THE SPLIT IS DELIBERATE. The entity and its relations are
-   * one question each; appearances are the third, and the ascending and
-   * descending views come from ONE call apiece because a single call cannot be
-   * both — `direction` orders the whole result. The per-document spread rides
-   * with the descending call rather than being asked for separately, so the
-   * spread and the list a card shows beside it come from one generation
-   * (`EntityAppearanceResult`).
+   * ONE CALL FOR EVERYTHING ABOUT APPEARANCES. First, latest, the recent list
+   * and the per-document spread are four views of the same rows, and a card
+   * showing them together must not assemble them from two generations — see
+   * `EntityAppearanceResult`. The entity itself and its relations are separate
+   * questions and stay separate calls.
    *
    * A CARD FOR AN ENTITY THE INDEX DOES NOT KNOW IS NOT AN ERROR. An author can
    * write `[[char:someone]]` before creating the card; the panel says so, and
@@ -75,20 +73,19 @@ export class EntityCardService {
     if (entity === undefined) {
       return { kind: 'unknown-entity', entityId, indexState: entityAnswer.state };
     }
-    const [ascending, descending, relations, registry] = await Promise.all([
-      // ONE appearance is enough ascending: the first appearance is the only
-      // thing this direction answers, and asking for more would read files for
-      // quotations the card never shows.
-      this.knowledge.getEntityAppearances(rootUri, entityId, {
-        direction: 'asc',
-        limit: 1,
-        withExcerpt: true
-      }),
+    const [appearances, relations, registry] = await Promise.all([
+      // ONE call, and that is the composite-response rule of the architecture
+      // rather than a saving: the first appearance, the recent list and the
+      // spread are three views of the same rows, and a card that shows them
+      // side by side must not assemble them from two generations. The first
+      // edition of this method issued an ascending call and a descending one,
+      // which broke the rule this very task had just written down.
       this.knowledge.getEntityAppearances(rootUri, entityId, {
         direction: 'desc',
         limit: recentLimit,
         withExcerpt: true,
-        withSpread: true
+        withSpread: true,
+        withFirst: true
       }),
       this.knowledge.getRelations(rootUri, { entityId, direction: 'either' }),
       this.knowledge.getEntityTypeRegistry(rootUri)
@@ -99,13 +96,13 @@ export class EntityCardService {
       card: buildEntityCard({
         entity,
         ...(descriptor === undefined ? {} : { type: descriptor }),
-        ascending: ascending.data.appearances,
-        descending: descending.data.appearances,
-        chapterSpread: descending.data.spread ?? [],
+        ...(appearances.data.first === undefined ? {} : { first: appearances.data.first }),
+        descending: appearances.data.appearances,
+        chapterSpread: appearances.data.spread ?? [],
         relations: relations.data,
-        // The state of the APPEARANCE read, which is where first/latest come
-        // from — the value the card's headline facts depend on.
-        indexState: descending.state
+        // The state of the APPEARANCE read, which is where first, latest and the
+        // spread all come from — now provably one generation.
+        indexState: appearances.state
       })
     };
   }

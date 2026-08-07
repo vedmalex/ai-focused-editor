@@ -110,6 +110,20 @@ export interface EntityAppearanceResult {
   /** In the requested order, capped by `limit`. */
   appearances: EntityAppearance[];
   /**
+   * The FIRST appearance in the built book, when one was asked for.
+   *
+   * IN THIS RESULT RATHER THAN A SECOND CALL, and the reason is the same rule
+   * this type states: a card shows "first seen in chapter 2" beside "last seen
+   * in chapter 9", and two calls can straddle a rebuild and disagree. The first
+   * edition of the card did exactly that — an ascending call for the first and a
+   * descending one for the latest — which satisfied the rule's letter for the
+   * spread and broke it for the pair of values the headline is made of.
+   *
+   * ABSENT when nothing placeable exists: an entity seen only in chapters
+   * outside the built book HAS appearances and has no first appearance.
+   */
+  first?: EntityAppearance;
+  /**
    * Every document holding a mention, in ascending book order, with counts.
    *
    * PRESENT ONLY WHEN ASKED FOR: unlike {@link appearances} it is never capped,
@@ -123,6 +137,9 @@ export interface EntityAppearanceResult {
 export interface EntityAppearanceQuery {
   /** Also return the per-document spread — see {@link EntityAppearanceResult.spread}. */
   withSpread?: boolean;
+  /** Also return the first appearance in the built book, from THIS envelope —
+   *  see {@link EntityAppearanceResult.first}. */
+  withFirst?: boolean;
   /** `asc` for first appearances, `desc` for the most recent. Default `asc`. */
   direction?: 'asc' | 'desc';
   /** Hard cap, applied after ordering. */

@@ -117,8 +117,16 @@ export function shouldFollowCursor(
 export interface EntityCardInput {
   entity: NarrativeEntity;
   type?: EffectiveEntityType;
-  /** Ascending manuscript order, as `getEntityAppearances` returns it. */
-  ascending: readonly EntityAppearance[];
+  /**
+   * The first appearance in the built book, from THE SAME envelope as
+   * {@link descending}.
+   *
+   * NOT A SECOND ASCENDING CALL, which is what the first edition did: two calls
+   * can straddle a rebuild, so the card's two headline facts could be computed
+   * from different generations — the exact failure the composite-result rule was
+   * written to prevent, broken by the code that wrote it.
+   */
+  first?: EntityAppearance;
   /** Descending manuscript order — the recent list AND the latest appearance. */
   descending: readonly EntityAppearance[];
   chapterSpread: readonly MentionDocumentCount[];
@@ -135,6 +143,35 @@ export interface EntityCardInput {
  * facts the author wrote about their character.
  */
 const FACT_FIELDS = ['summary', 'backstory', 'arc', 'speechPatterns', 'notes'] as const;
+
+/**
+ * Do two appearances point at the SAME place?
+ *
+ * Identity is the evidence — path plus range — because that is what "the same
+ * appearance" means. Anything derived from the mention's text is a different
+ * question wearing the same shape.
+ */
+export function sameAppearance(a: EntityAppearance | undefined, b: EntityAppearance | undefined): boolean {
+  if (a === undefined || b === undefined) {
+    return false;
+  }
+  const left = a.mention.evidence;
+  const right = b.mention.evidence;
+  if (left.path !== right.path || left.evidenceKind !== right.evidenceKind) {
+    return false;
+  }
+  if (left.range === undefined || right.range === undefined) {
+    // Two whole-file references to one document ARE the same place: neither
+    // names a position, so there is nothing further to tell them apart by.
+    return left.range === right.range;
+  }
+  return (
+    left.range.start.line === right.range.start.line &&
+    left.range.start.character === right.range.start.character &&
+    left.range.end.line === right.range.end.line &&
+    left.range.end.character === right.range.end.character
+  );
+}
 
 /** Blank is absent. A field the author left as spaces is not a fact. */
 function present(value: string | undefined): value is string {
@@ -195,7 +232,8 @@ export function buildEntityCard(input: EntityCardInput): EntityCardViewModel {
   // entity first appears. That is precisely the defect the ordering fix closed
   // at the port level; repeating the check here is deliberate, because this is
   // the layer that names the value "first appearance".
-  const firstAppearance = input.ascending.find(entry => entry.orderExclusion === undefined);
+  const firstAppearance =
+    input.first !== undefined && input.first.orderExclusion === undefined ? input.first : undefined;
   const latestAppearance = input.descending.find(entry => entry.orderExclusion === undefined);
 
   return {
@@ -204,7 +242,16 @@ export function buildEntityCard(input: EntityCardInput): EntityCardViewModel {
     explicitFacts,
     otherNames,
     ...(firstAppearance === undefined ? {} : { firstAppearance }),
-    ...(latestAppearance === undefined ? {} : { latestAppearance }),
+    // ABSENT WHEN IT IS THE SAME APPEARANCE, decided by WHERE the mention is and
+    // never by its text. `NarrativeMention.raw` is the whole tag —
+    // `[[персонаж:кришна|Кришна]]` — so two chapters that spell a reference the
+    // same way have EQUAL `raw`, and a card whose first appearance is chapter 1
+    // and whose latest is chapter 9 would silently drop the latter. The first
+    // edition compared `raw`, and its fixture hid the defect by making `raw`
+    // unique per appearance.
+    ...(latestAppearance === undefined || sameAppearance(firstAppearance, latestAppearance)
+      ? {}
+      : { latestAppearance }),
     recentAppearances: [...input.descending],
     chapterSpread: [...input.chapterSpread],
     chapterCount: input.chapterSpread.length,
