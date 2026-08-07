@@ -58,6 +58,7 @@ import { FootnoteLinkContribution } from './footnote-link-contribution';
 import { SemanticLinkContribution } from './semantic-link-contribution';
 import { SemanticEntityHoverContribution } from './semantic-entity-hover-contribution';
 import { EntityCardService } from './entity-card-service';
+import { NarrativeSaveReindexContribution } from './narrative-save-reindex-contribution';
 import { EntityCardViewContribution } from './entity-card-view-contribution';
 import { EntityCardWidget } from './entity-card-widget';
 import { EntityCardsViewContribution } from './entity-cards-view-contribution';
@@ -206,6 +207,11 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
   // service — it contributes nothing to the shell on its own; the contextual
   // widget (WP-4) and the commands (WP-5) consume it.
   bind(EntityCardService).toSelf().inSingletonScope();
+  // gh#47 WP-5 / architecture F2-6: an in-IDE save of a file the index reads is
+  // re-indexed at once instead of waiting for the fallback sweep. See the
+  // contribution for why this is NOT a fix for the silent watcher.
+  bind(NarrativeSaveReindexContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(NarrativeSaveReindexContribution);
   // gh#47 WP-5. The widget factory plus BOTH bindings the panel needs to be
   // FOUND rather than merely openable — see the contribution's own doc for why
   // `bindViewContribution` alone is not enough.
