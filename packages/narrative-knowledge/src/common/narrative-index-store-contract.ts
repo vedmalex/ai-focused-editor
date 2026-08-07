@@ -228,6 +228,15 @@ function seedOrderingMentions(store: NarrativeIndexStore): void {
     });
   store.transaction(writer => {
     writer.putMention(at(CHAPTER_TWO, 5, 'ch2-line5'));
+    // TWO ON ONE LINE, so the THIRD sort key has to decide. Every other fixture
+    // here sits at character 0, which left `start_char` unbitten by any case —
+    // an adapter that dropped it from its ORDER BY passed the whole suite.
+    writer.putMention(
+      mention('krishna', {
+        raw: 'ch1-line2-col40',
+        evidence: rangeEvidence(CHAPTER_ONE, { start: { line: 2, character: 40 }, end: { line: 2, character: 48 } })
+      })
+    );
     writer.putMention(at(CHAPTER_ONE, 9, 'ch1-line9'));
     writer.putMention(at(CHAPTER_ONE, 2, 'ch1-line2'));
     writer.putMention(mention('krishna', { raw: 'ch3-whole-file', evidence: wholeFileEvidence(CHAPTER_THREE) }));
@@ -729,9 +738,9 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
       seedOrderingMentions(store);
       const ordered = store.getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'asc' });
       deepEqual(
-        ordered.slice(0, 3).map(m => m.raw),
-        ['ch1-line2', 'ch1-line9', 'ch2-line5'],
-        'ascending manuscript order'
+        ordered.slice(0, 4).map(m => m.raw),
+        ['ch1-line2', 'ch1-line2-col40', 'ch1-line9', 'ch2-line5'],
+        'ascending manuscript order, and column decides within a line'
       );
     }
   },
@@ -746,9 +755,9 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
       seedOrderingMentions(store);
       const ordered = store.getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'desc' });
       deepEqual(
-        ordered.slice(0, 3).map(m => m.raw),
-        ['ch2-line5', 'ch1-line9', 'ch1-line2'],
-        'descending manuscript order'
+        ordered.slice(0, 4).map(m => m.raw),
+        ['ch2-line5', 'ch1-line9', 'ch1-line2-col40', 'ch1-line2'],
+        'descending manuscript order, column included'
       );
     }
   },
@@ -773,9 +782,9 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
       const unplaceable = ['ch3-whole-file', 'scratch-line1', 'excluded-line1'];
       for (const direction of ['asc', 'desc'] as const) {
         const ordered = store.getMentions({ entityId: 'krishna', orderBy: 'chapter', direction });
-        equal(ordered.length, 6, `every mention is still returned (${direction})`);
+        equal(ordered.length, 7, `every mention is still returned (${direction})`);
         deepEqual(
-          ordered.slice(3).map(m => m.raw),
+          ordered.slice(4).map(m => m.raw),
           unplaceable,
           `unplaceable mentions trail, in insertion order (${direction})`
         );
@@ -815,7 +824,15 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
       seedOrderingMentions(store);
       deepEqual(
         store.getMentions({ entityId: 'krishna' }).map(m => m.raw),
-        ['ch2-line5', 'ch1-line9', 'ch1-line2', 'ch3-whole-file', 'scratch-line1', 'excluded-line1'],
+        [
+          'ch2-line5',
+          'ch1-line2-col40',
+          'ch1-line9',
+          'ch1-line2',
+          'ch3-whole-file',
+          'scratch-line1',
+          'excluded-line1'
+        ],
         'without orderBy the result is insertion order'
       );
       // Renumber the manifest: ch-02 now comes first. Only DOCUMENT rows change.
@@ -824,8 +841,8 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
         writer.putDocument({ ...orderedChapter(CHAPTER_TWO, 0) });
       });
       deepEqual(
-        store.getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'asc' }).slice(0, 3).map(m => m.raw),
-        ['ch2-line5', 'ch1-line2', 'ch1-line9'],
+        store.getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'asc' }).slice(0, 4).map(m => m.raw),
+        ['ch2-line5', 'ch1-line2', 'ch1-line2-col40', 'ch1-line9'],
         'renumbering the manifest reorders the answer'
       );
     }
@@ -876,7 +893,7 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
       deepEqual(
         counts.map(row => `${row.relPath}:${row.mentionCount}`),
         [
-          `${CHAPTER_ONE}:2`,
+          `${CHAPTER_ONE}:3`,
           `${CHAPTER_TWO}:1`,
           `${CHAPTER_THREE}:1`,
           `${EXCLUDED_CHAPTER}:1`,

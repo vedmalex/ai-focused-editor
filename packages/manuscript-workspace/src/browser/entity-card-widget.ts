@@ -240,6 +240,33 @@ export class EntityCardWidget extends ReactWidget {
       children.push(this.renderAppearance(`recent-${index}`, '', appearance));
     }
 
+    // RELATIONS. The service pays for this query on every refresh, so not
+    // rendering it was a dead round trip AND a silent narrowing of what the
+    // issue says a card shows. The type is printed VERBATIM and never mapped
+    // through a table of known kinds: today the product has one authored
+    // relation type, and gh#57 makes the vocabulary the author's — a renderer
+    // with a hard-coded label would start lying on the day that lands.
+    for (const [index, relation] of card.relations.entries()) {
+      const other = relation.sourceId === card.entity.id ? relation.targetId : relation.sourceId;
+      const outgoing = relation.sourceId === card.entity.id;
+      children.push(
+        React.createElement(
+          'div',
+          { className: 'afe-entity-card-relation', key: `relation-${index}` },
+          React.createElement('span', { className: 'afe-entity-card-relation-type' }, relation.relType),
+          React.createElement(
+            'span',
+            { className: 'afe-entity-card-relation-end' },
+            `${outgoing ? '→' : '←'} ${other}`
+          ),
+          // Origin is shown because the issue requires author-written facts to be
+          // distinguishable from AI candidates, and because a derived
+          // co-occurrence edge is a much weaker claim than an authored one.
+          React.createElement('span', { className: `afe-entity-card-origin afe-origin-${relation.origin}` }, relation.origin)
+        )
+      );
+    }
+
     return React.createElement('div', { className: 'afe-entity-card' }, ...children);
   }
 

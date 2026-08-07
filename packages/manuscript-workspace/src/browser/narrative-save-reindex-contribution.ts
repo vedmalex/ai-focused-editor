@@ -51,6 +51,7 @@ import {
   NarrativeKnowledgeService,
   type NarrativeKnowledgeService as NarrativeKnowledgeServiceType
 } from '@ai-focused-editor/narrative-knowledge';
+import { shouldReindexOnSave } from '../common';
 
 /** Long enough to swallow a "save all" burst, short enough that the author does
  *  not notice waiting. Deliberately far below the five-minute fallback it is
@@ -111,8 +112,9 @@ export class NarrativeSaveReindexContribution implements FrontendApplicationCont
     );
   }
 
-  /** Whether the saved file is under a workspace root at all. */
+  /** Whether the saved file is under a workspace root at all. The decision
+   *  itself is a pure function with its own teeth — see `shouldReindexOnSave`. */
   protected isInsideWorkspace(uri: string): boolean {
-    return this.workspaceService.tryGetRoots().some(root => uri.startsWith(`${root.resource.toString()}/`));
+    return shouldReindexOnSave(uri, this.workspaceService.tryGetRoots().map(root => root.resource.toString()));
   }
 }

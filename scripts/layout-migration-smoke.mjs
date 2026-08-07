@@ -56,7 +56,11 @@ const sampleBookSource = join(repoRoot, 'examples/sample-book');
 
 const WIDGETS = [
   { id: 'ai-focused-editor.narrative-map', label: 'Narrative Map' },
-  { id: 'ai-focused-editor.entity-cards', label: 'Knowledge Cards' }
+  { id: 'ai-focused-editor.entity-cards', label: 'Knowledge Cards' },
+  // gh#47: the UR-040 backfill for a saved layout older than THIS panel needs
+  // the same guard, or the migration is only enforced for the panels that
+  // happened to exist when the check was written.
+  { id: 'ai-focused-editor.entity-card', label: 'Knowledge Card' }
 ];
 const WIDGET_IDS = WIDGETS.map(w => w.id);
 const WIDGET_FACTORY_IDS = new Set(WIDGET_IDS);

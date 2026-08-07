@@ -58,6 +58,7 @@ import { FootnoteLinkContribution } from './footnote-link-contribution';
 import { SemanticLinkContribution } from './semantic-link-contribution';
 import { SemanticEntityHoverContribution } from './semantic-entity-hover-contribution';
 import { EntityCardService } from './entity-card-service';
+import { EntityCardCursorContribution } from './entity-card-cursor-contribution';
 import { NarrativeSaveReindexContribution } from './narrative-save-reindex-contribution';
 import { EntityCardViewContribution } from './entity-card-view-contribution';
 import { EntityCardWidget } from './entity-card-widget';
@@ -210,6 +211,10 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
   // gh#47 WP-5 / architecture F2-6: an in-IDE save of a file the index reads is
   // re-indexed at once instead of waiting for the fallback sweep. See the
   // contribution for why this is NOT a fix for the silent watcher.
+  // gh#47 F-47-1: the caret path. Without it the panel has no way to show an
+  // entity at all, which is the workflow the issue is written about.
+  bind(EntityCardCursorContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(EntityCardCursorContribution);
   bind(NarrativeSaveReindexContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(NarrativeSaveReindexContribution);
   // gh#47 WP-5. The widget factory plus BOTH bindings the panel needs to be

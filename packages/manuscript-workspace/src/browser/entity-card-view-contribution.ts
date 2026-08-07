@@ -22,6 +22,12 @@ import { nls } from '@theia/core/lib/common/nls';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { StorageService } from '@theia/core/lib/browser/storage-service';
+import { QuickInputService, type QuickPickItem } from '@theia/core/lib/browser';
+import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
+import {
+  NarrativeKnowledgeService,
+  type NarrativeKnowledgeService as NarrativeKnowledgeServiceType
+} from '@ai-focused-editor/narrative-knowledge';
 import type { FrontendApplication, FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { EntityCardWidget } from './entity-card-widget';
 import { AiFocusedEditorMenus } from './ai-focused-editor-menu';
@@ -37,6 +43,14 @@ export namespace EntityCardCommands {
     { id: 'ai-focused-editor.entities.pinCard', label: 'AI Focused Editor: Pin Current Knowledge Card' },
     'ai-focused-editor/entities/pin-card'
   );
+
+  /** gh#47 AC-1's second half: a card reachable BY SEARCH, not only by the
+   *  caret. An author who remembers a name but not where they last wrote it has
+   *  no caret to put on anything. */
+  export const FIND: Command = Command.toLocalizedCommand(
+    { id: 'ai-focused-editor.entities.findCard', label: 'AI Focused Editor: Find Knowledge Card' },
+    'ai-focused-editor/entities/find-card'
+  );
 }
 
 @injectable()
@@ -44,6 +58,15 @@ export class EntityCardViewContribution extends AbstractViewContribution<EntityC
   implements FrontendApplicationContribution {
   @inject(StorageService)
   protected readonly storageService!: StorageService;
+
+  @inject(QuickInputService)
+  protected readonly quickInputService!: QuickInputService;
+
+  @inject(WorkspaceService)
+  protected readonly workspaceService!: WorkspaceService;
+
+  @inject(NarrativeKnowledgeService)
+  protected readonly knowledge!: NarrativeKnowledgeServiceType;
 
   constructor() {
     super({
@@ -79,6 +102,36 @@ export class EntityCardViewContribution extends AbstractViewContribution<EntityC
 
   override registerCommands(commands: CommandRegistry): void {
     super.registerCommands(commands);
+    commands.registerCommand(EntityCardCommands.FIND, {
+      execute: async () => {
+        const rootUri = this.workspaceService.tryGetRoots()[0]?.resource.toString();
+        if (rootUri === undefined) {
+          return;
+        }
+        const answer = await this.knowledge.findEntities(rootUri);
+        const items: QuickPickItem[] = answer.data.map(entity => ({
+          label: entity.name,
+          // The id is the DESCRIPTION rather than the label: the author searches
+          // by the name they wrote, and sees the id that disambiguates two
+          // characters who share one.
+          description: entity.id,
+          detail: entity.type
+        }));
+        if (items.length === 0) {
+          return;
+        }
+        const picked = await this.quickInputService.showQuickPick(items, {
+          placeholder: nls.localize('ai-focused-editor/entities/find-card-placeholder', 'Search entities by name')
+        });
+        if (picked?.description === undefined) {
+          return;
+        }
+        // `reveal: true` here and NOT on the caret path: this is an explicit
+        // request, so bringing the panel forward is what the author asked for.
+        const widget = await this.openView({ activate: false, reveal: true });
+        await widget.showEntity(picked.description);
+      }
+    });
     commands.registerCommand(EntityCardCommands.PIN, {
       execute: async () => {
         const widget = await this.openView({ activate: false, reveal: true });
@@ -90,6 +143,7 @@ export class EntityCardViewContribution extends AbstractViewContribution<EntityC
   override registerMenus(menus: MenuModelRegistry): void {
     super.registerMenus(menus);
     menus.registerMenuAction(AiFocusedEditorMenus.KNOWLEDGE, { commandId: EntityCardCommands.OPEN.id });
+    menus.registerMenuAction(AiFocusedEditorMenus.KNOWLEDGE, { commandId: EntityCardCommands.FIND.id });
     menus.registerMenuAction(AiFocusedEditorMenus.KNOWLEDGE, { commandId: EntityCardCommands.PIN.id });
   }
 }
