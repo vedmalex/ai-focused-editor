@@ -42,7 +42,7 @@ import {
   suggestEntityName,
   uniqueRelativePath
 } from '../common/entity-creation';
-import type { NarrativeEntityTagKindFromRegistry } from '../common/entity-type-registry';
+import type { NarrativeEntityTagKindFromRegistry } from '@ai-focused-editor/narrative-knowledge';
 import { normalizeRange } from '../common/text-range';
 
 /** Semantic tag kinds the wrap quick-actions operate on (registry tag kinds). */

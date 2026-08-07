@@ -37,7 +37,16 @@ import { join, sep } from 'path';
 export const INVENTORY_SOURCE_ROOTS: readonly string[] = [
   'packages/manuscript-workspace/src/**/*.ts',
   'packages/ai-connect-theia/src/**/*.ts',
-  'packages/document-preview-theia/src/**/*.ts'
+  'packages/document-preview-theia/src/**/*.ts',
+  // TASK-022 WP-0. A new package inherits NO repository-wide gate: without
+  // this line the commands and preference keys the narrative-knowledge
+  // package will contribute (WP-5, WP-6) would simply not be inventoried, and
+  // `docs:drift` would stay silent about documentation that does not exist —
+  // green because it is looking away, which is the failure mode plan R-9 is
+  // about. Each gate is widened where it gets its first guarded object; the
+  // localisation `RU_DIR` gate is widened in WP-5, where the package's first
+  // ru bundle appears.
+  'packages/narrative-knowledge/src/**/*.ts'
 ];
 
 /**

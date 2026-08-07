@@ -27,6 +27,7 @@ import {
   transcriptionSettingFindings,
   transcriptionToolchainFindings,
   THEIA_SETTINGS_GITIGNORE_ENTRY,
+  type EntityCardReferenceRelation,
   type EntityCardRef,
   type EntityTagOccurrence,
   type TranscriptionCheckInput,
@@ -37,7 +38,7 @@ import {
   mergeEntityTypes,
   parseEntityTypesYaml,
   type EntityTypeProblem
-} from './entity-type-registry';
+} from '@ai-focused-editor/narrative-knowledge';
 
 /**
  * Effective type list (built-in + one author-declared `sloka` type) shared by the
@@ -388,6 +389,46 @@ describe('entityCardOrphanFindings', () => {
     // character card boromir stays orphaned.
     const occ: EntityTagOccurrence[] = [{ kind: 'term', id: 'boromir', count: 1, firstPath: 'content/a.md' }];
     expect(entityCardOrphanFindings(occ, cards)).toHaveLength(1);
+  });
+
+  // ISS-369: a card referenced ONLY through a typed relation (no manuscript-text
+  // tag at all) — the tag scan can never see these (an artifact's
+  // `ownership.owner`, or a mention inside another card's free text, both live
+  // under `entities/`, which the tag walk excludes).
+  describe('relation-referenced cards (ISS-369)', () => {
+    test('is silent when the card is referenced only via an `ownership` relation', () => {
+      // Mirrors gandiva.yaml's `ownership: [{owner: varuna}, ...]` — the owner
+      // card (varuna) is the relation's targetId, gandiva (the artifact) is the
+      // sourceId; entityCardOrphanFindings only needs the target.
+      const relations: EntityCardReferenceRelation[] = [{ targetId: 'boromir', relType: 'ownership' }];
+      expect(entityCardOrphanFindings([], cards, undefined, relations)).toEqual([]);
+    });
+
+    test('is silent when the card is referenced only via a `mentions` (card-to-card) relation', () => {
+      const relations: EntityCardReferenceRelation[] = [{ targetId: 'boromir', relType: 'mentions' }];
+      expect(entityCardOrphanFindings([], cards, undefined, relations)).toEqual([]);
+    });
+
+    test('still reports the card when no relation targets it either (no tag, no relation)', () => {
+      const relations: EntityCardReferenceRelation[] = [{ targetId: 'someone-else', relType: 'ownership' }];
+      const findings = entityCardOrphanFindings([], cards, undefined, relations);
+      expect(findings).toHaveLength(1);
+      expect(findings[0].code).toBe('entity-card-orphan');
+    });
+
+    test('still reports the card when the ONLY relation targeting it is a non-reference relType (co-occurrence)', () => {
+      // `co-occurrence` is DERIVED from already-resolved mentions on both ends —
+      // it is deliberately excluded from the reference set, so an id match on
+      // relType alone must not exonerate the card.
+      const relations: EntityCardReferenceRelation[] = [{ targetId: 'boromir', relType: 'co-occurrence' }];
+      const findings = entityCardOrphanFindings([], cards, undefined, relations);
+      expect(findings).toHaveLength(1);
+      expect(findings[0].code).toBe('entity-card-orphan');
+    });
+
+    test('defaults to no relations when the 4th argument is omitted — byte-identical to pre-ISS-369 behaviour', () => {
+      expect(entityCardOrphanFindings([], cards)).toHaveLength(1);
+    });
   });
 });
 

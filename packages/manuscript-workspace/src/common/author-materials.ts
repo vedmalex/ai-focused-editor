@@ -1,7 +1,7 @@
 import type { ManuscriptNode } from './manuscript-workspace-protocol';
 import type { NarrativeEntity } from './narrative-entity-protocol';
-import { BASE_ENTITY_TYPES, mergeEntityTypes } from './entity-type-registry';
-import type { EffectiveEntityType, EntityTypeProblem } from './entity-type-registry';
+import { BASE_ENTITY_TYPES, mergeEntityTypes } from '@ai-focused-editor/narrative-knowledge';
+import type { EffectiveEntityType, EntityTypeProblem } from '@ai-focused-editor/narrative-knowledge';
 import type { CitationEntry, SourceLibraryItem } from './source-library-protocol';
 import { formatProgressChip } from './proofreading-model';
 import { formatTranscriptProgressChip } from './transcript-set-model';

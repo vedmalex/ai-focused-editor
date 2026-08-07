@@ -31,7 +31,7 @@ import { parse } from 'yaml';
 // thematic break, surfacing the front-matter keys as literal prose). Imported
 // directly (not via the `../common` barrel, which does not re-export it) so
 // this stays a read-only reuse with zero edits to `common/chapter-front-matter.ts`.
-import { parseChapterFrontMatter } from '../common/chapter-front-matter';
+import { parseChapterFrontMatter } from '@ai-focused-editor/narrative-knowledge';
 import type {
   BookBuildChapter,
   BookBuildFormat,

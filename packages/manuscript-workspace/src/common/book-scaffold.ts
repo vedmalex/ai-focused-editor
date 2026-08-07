@@ -19,6 +19,10 @@
 
 import { stringify } from 'yaml';
 import {
+  NARRATIVE_MEMORY_QUERY_SKILL_NAME,
+  narrativeMemoryQuerySkillFile
+} from '@ai-focused-editor/narrative-knowledge';
+import {
   CREATABLE_ENTITY_KINDS,
   ENTITY_KIND_DIRECTORY,
   ENTITY_KIND_LABEL,
@@ -365,6 +369,27 @@ export function bookScaffoldEntries(options?: NewBookOptions): BookScaffoldEntry
     level: 'recommended',
     seed: STARTER_STYLE_GUIDE_SKILL_MD,
     description: 'Seed style-guide skill: frontmatter (name/description) plus a body explaining how skills work.'
+  });
+  // The narrative-memory-query skill (TASK-022 WP-7, tech_spec TECH_SPEC WP-7
+  // §6): `@ai-focused-editor/narrative-knowledge` already defines the file's
+  // path and content (`NARRATIVE_MEMORY_QUERY_SKILL_PATH`/
+  // `narrativeMemoryQuerySkillFile()`) but no scaffold entry referenced it — a
+  // gap this migration closes rather than defers, since the two baseline lists
+  // this touches (`narrative-consumer-baseline.test.ts` create-folder/create-file
+  // order) are already being edited in this same pass for the `outside-content.md`
+  // fixture.
+  entries.push({
+    path: `.prompts/skills/${NARRATIVE_MEMORY_QUERY_SKILL_NAME}`,
+    kind: 'folder',
+    level: 'recommended',
+    description: 'Skill folder for the narrative-memory-query skill: how to query the narrative index and read its answers.'
+  });
+  entries.push({
+    path: `.prompts/skills/${NARRATIVE_MEMORY_QUERY_SKILL_NAME}/SKILL.md`,
+    kind: 'file',
+    level: 'recommended',
+    seed: narrativeMemoryQuerySkillFile(),
+    description: 'Seed narrative-memory-query skill: how to read the four-state index answers and their evidence.'
   });
 
   // Proofreading working copies. Each proofreading "set" is a

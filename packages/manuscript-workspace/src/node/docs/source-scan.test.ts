@@ -17,12 +17,19 @@ import {
  */
 const TEST_ROOT = join(tmpdir(), 'source-scan-test');
 
-/** The three package roots the traversal declares, as bare directory paths. */
-const PACKAGE_SOURCE_DIRS = [
-  'packages/manuscript-workspace/src',
-  'packages/ai-connect-theia/src',
-  'packages/document-preview-theia/src'
-];
+/**
+ * The package roots the traversal declares, as bare directory paths — DERIVED
+ * from {@link INVENTORY_SOURCE_ROOTS}, not restated.
+ *
+ * It used to be a hand-kept copy, and TASK-022 WP-0 showed what that costs:
+ * adding one root to the real declaration failed 164 tests here, because every
+ * fixture repo was built from the stale copy and `listInventorySources`
+ * rightly rejects a declared-but-absent root. That is precisely the "two
+ * sources of one truth" defect the module header of `source-scan.ts` exists to
+ * prevent — reproduced in its own test file. Deriving it means the next root
+ * costs one line in one place.
+ */
+const PACKAGE_SOURCE_DIRS = INVENTORY_SOURCE_ROOTS.map(root => root.replace(/\/\*\*\/\*\.ts$/, ''));
 
 async function write(repoRoot: string, relativePath: string, contents: string): Promise<void> {
   const absolutePath = join(repoRoot, relativePath);
@@ -62,13 +69,20 @@ afterEach(async () => {
 });
 
 describe('declared traversal', () => {
-  test('roots are the three product packages — theia-git-fork is out by design', () => {
+  test('roots are the four product packages — theia-git-fork is out by design', () => {
     expect(INVENTORY_SOURCE_ROOTS).toEqual([
       'packages/manuscript-workspace/src/**/*.ts',
       'packages/ai-connect-theia/src/**/*.ts',
-      'packages/document-preview-theia/src/**/*.ts'
+      'packages/document-preview-theia/src/**/*.ts',
+      // TASK-022 WP-0: a new package inherits no repository-wide gate, so the
+      // docs inventory has to be told about it explicitly.
+      'packages/narrative-knowledge/src/**/*.ts'
     ]);
     expect(INVENTORY_SOURCE_ROOTS.join(' ')).not.toContain('theia-git-fork');
+    // The fixture builder derives from this list; if it ever stops matching,
+    // every fixture repo below is built against a different declaration than
+    // the one under test.
+    expect(PACKAGE_SOURCE_DIRS).toHaveLength(INVENTORY_SOURCE_ROOTS.length);
   });
 
   test('excludes are the five of §C.1', () => {

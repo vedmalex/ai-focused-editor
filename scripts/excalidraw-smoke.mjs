@@ -1,16 +1,30 @@
-// Excalidraw render smoke: launches the browser app against examples/sample-book,
-// opens sources/world-map.excalidraw, and asserts the Excalidraw canvas mounts with
-// self-hosted assets (no CDN fetch, no 404). Run on demand: node scripts/excalidraw-smoke.mjs
+// Excalidraw render smoke: launches the browser app against an isolated copy
+// of examples/sample-book, opens sources/world-map.excalidraw, and asserts
+// the Excalidraw canvas mounts with self-hosted assets (no CDN fetch, no
+// 404). Run on demand: node scripts/excalidraw-smoke.mjs
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import net from 'node:net';
 import { chromium } from 'playwright';
 import { readFileSync, writeFileSync } from 'node:fs';
+import {
+  createIsolatedSampleWorkspace,
+  removeIsolatedSampleWorkspace
+} from './narrative-knowledge-round-trip.mjs';
 
 const repoRoot = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
 const appDir = join(repoRoot, 'apps/browser');
-const sampleRoot = join(repoRoot, 'examples/sample-book');
+const sampleBookSource = join(repoRoot, 'examples/sample-book');
+// TASK-022 ISS-365: drive an isolated, disposable copy of the fixture
+// manuscript, never examples/sample-book itself — this runner opens the
+// same directory Theia mounts, and previously mounted it live: `theia start`
+// against examples/sample-book contends for the narrative-index database
+// lock with any real editor that has the sample book open
+// (`foreign-writer`), and this script also rewrites the opened .excalidraw
+// fixture's `source` field in place. See createIsolatedSampleWorkspace's doc
+// comment in narrative-knowledge-round-trip.mjs for the full rationale.
+const { workspaceDir: smokeWorkspaceDir, sampleRoot } = await createIsolatedSampleWorkspace(sampleBookSource);
 // Opening the file rewrites its `source` field (Theia autoSave + Excalidraw's
 // mount-time onChange), so snapshot and restore it to keep the tree clean.
 const fixturePath = join(sampleRoot, 'sources/world-map.excalidraw');
@@ -98,4 +112,5 @@ try {
   await browser?.close().catch(() => {});
   server.kill('SIGTERM');
   try { writeFileSync(fixturePath, fixtureBackup); } catch {}
+  await removeIsolatedSampleWorkspace(smokeWorkspaceDir);
 }

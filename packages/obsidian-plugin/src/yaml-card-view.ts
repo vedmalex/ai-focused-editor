@@ -13,7 +13,7 @@
 import { TextFileView, type WorkspaceLeaf } from 'obsidian';
 import { parse } from 'yaml';
 import type { BookContext } from './book-context';
-import type { EffectiveEntityType } from '@ai-focused-editor/manuscript-workspace/src/common/entity-type-registry';
+import type { EffectiveEntityType } from '@ai-focused-editor/narrative-knowledge/src/common/entity-type-registry';
 import type { Translator } from './i18n';
 import { cssKind } from './manuscript-view';
 

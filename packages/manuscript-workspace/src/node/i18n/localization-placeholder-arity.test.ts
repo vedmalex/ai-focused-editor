@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { Localization } from '@theia/core/lib/common/i18n/localization';
@@ -67,7 +67,55 @@ import { TYPOGRAPHY_RULES } from '../../common/typography/typography-rules';
 
 const HERE = import.meta.dir;
 const REPO_ROOT = join(HERE, '../../../../..');
+
+/** This package's own dictionaries. Named separately because one test below
+ *  reaches into a specific file of it by name. */
 const RU_DIR = join(HERE, 'ru');
+
+/**
+ * EVERY package's Russian dictionaries, not just this one (TASK-022 WP-5,
+ * plan AD-1 / UR-010(2)).
+ *
+ * THE GATE WAS SILENTLY NARROW. The source scan above has always covered
+ * `packages` and `apps` whole (`DEFAULT_SCAN_ROOTS`), but the DICTIONARY side
+ * read one directory — this package's. The three `ai-connect-theia` bundles
+ * (`ai-config.json`, `ai-log.json`, `ai-usage.json`), registered through
+ * `AiConnectRuLocalizationContribution`, were therefore never checked against
+ * a single call site: not for an over-running `{N}`, not for an invented
+ * number, not for orphanhood. That is the failure mode plan R-9 is about — a
+ * gate that stays green because it is looking away — and it is the reason a
+ * new package inherits NO repository-wide guard for free.
+ *
+ * DISCOVERED, NOT LISTED. An explicit array would have to be extended by
+ * whoever adds the next package's bundle, which is exactly the step that was
+ * missed for `ai-connect-theia`; a walk closes the CLASS instead of the two
+ * instances known today. The floor case below turns a walk that finds nothing
+ * — a moved convention, a renamed directory — into a red test rather than a
+ * vacuous green.
+ */
+function russianDictionaryDirs(): string[] {
+  const packagesRoot = join(REPO_ROOT, 'packages');
+  const found: string[] = [];
+  for (const entry of readdirSync(packagesRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const candidate = join(packagesRoot, entry.name, 'src', 'node', 'i18n', 'ru');
+    // `existsSync` FIRST, and no `try`/`catch` around the `statSync`. The
+    // obvious shape here is a broad `catch` treating any throw as "this package
+    // has no dictionaries" — and it silently swallowed a missing import while
+    // this widening was being written, leaving the walk finding ZERO
+    // directories and every check below vacuously green. The floor case
+    // ("really found every package's dictionaries") is what caught it; the
+    // narrow form is what stops it recurring.
+    if (existsSync(candidate) && statSync(candidate).isDirectory()) {
+      found.push(candidate);
+    }
+  }
+  return found.sort();
+}
+
+const RU_DIRS = russianDictionaryDirs();
 
 /** Namespaces this repository OWNS (and therefore may assert English-side arity on). */
 const OWNED_KEY_PREFIXES = ['ai-focused-editor/', 'ai-connect/'];
@@ -312,13 +360,20 @@ interface Translation {
   readonly file: string;
 }
 
-function loadRussianDictionaries(): Translation[] {
+function loadRussianDictionaries(dirs: readonly string[] = RU_DIRS): Translation[] {
   const out: Translation[] = [];
-  for (const file of readdirSync(RU_DIR).filter(name => name.endsWith('.json'))) {
-    const flat = new Map<string, string>();
-    flatten(JSON.parse(readFileSync(join(RU_DIR, file), 'utf8')), '', flat);
-    for (const [key, text] of flat) {
-      out.push({ key, text, file });
+  for (const dir of dirs) {
+    for (const name of readdirSync(dir).filter(entry => entry.endsWith('.json'))) {
+      const absolute = join(dir, name);
+      const flat = new Map<string, string>();
+      flatten(JSON.parse(readFileSync(absolute, 'utf8')), '', flat);
+      for (const [key, text] of flat) {
+        // REPO-RELATIVE, not the bare basename. With one directory a basename
+        // identified the file; across packages two of them could be called
+        // `ai-log.json`, and an offender message naming an ambiguous file sends
+        // the reader to the wrong one.
+        out.push({ key, text, file: relative(REPO_ROOT, absolute) });
+      }
     }
   }
   return out;
@@ -471,6 +526,85 @@ describe('localized strings — the scan itself is not vacuous', () => {
       expect(calls.has(key)).toBe(true);
       expect(translations.some(entry => entry.key === key)).toBe(true);
     }
+  });
+
+  test('the dictionary walk really found EVERY package\'s bundles (TASK-022 WP-5, UR-010(2))', () => {
+    // THE FLOOR THAT MADE THE WIDENING REAL. Replacing one directory with a
+    // walk is exactly the kind of change that can end in a walk finding
+    // nothing, and every "assert no offenders" check above would then pass
+    // louder than before. It is not hypothetical: while this was being written
+    // the walk threw on a missing import, the `catch` treated it as "no
+    // dictionaries here", and this case is what turned the resulting silence
+    // red.
+    expect(RU_DIRS.length).toBeGreaterThanOrEqual(3);
+    for (const owner of ['manuscript-workspace', 'ai-connect-theia', 'narrative-knowledge']) {
+      expect(RU_DIRS.some(dir => dir.includes(`/packages/${owner}/`))).toBe(true);
+    }
+
+    // And the CONTENT of the newly covered bundles really entered the checks —
+    // a directory found but read as empty would be the same vacuum one level
+    // down. One key from each of the three `ai-connect-theia` dictionaries
+    // (never guarded until now) and one from the new package's.
+    for (const key of [
+      'ai-focused-editor/ai-config/tt-alias',
+      'ai-focused-editor/narrative-memory/index-failure-internal'
+    ]) {
+      expect(translations.some(entry => entry.key === key)).toBe(true);
+    }
+    for (const bundle of ['ai-config.json', 'ai-log.json', 'ai-usage.json', 'narrative-memory.json']) {
+      expect(translations.some(entry => entry.file.endsWith(bundle))).toBe(true);
+    }
+  });
+});
+
+describe('localized strings — the widened dictionary walk has teeth (TASK-022 WP-5)', () => {
+  /**
+   * The plan's readiness block asks for the guard to be "зелёный на расширенном
+   * списке И красный при намеренно сломанном плейсхолдере в НОВОМ бандле".
+   * Green on the widened list is every check above. Red on a deliberately
+   * broken phrase is here — and it is fed to the SAME production functions the
+   * real dictionaries go through, against the REAL scanned call sites, so a
+   * pass proves the actual check bites rather than a re-implementation of it.
+   */
+  const NARRATIVE = 'packages/narrative-knowledge/src/node/i18n/ru/narrative-memory.json';
+
+  test('a placeholder smuggled into an arity-0 narrative-memory phrase is CAUGHT', () => {
+    // `status-ready` is rendered through the package's phrase CATALOG, so its
+    // key never appears as a literal at an `nls.localize(` call site and the
+    // arity comparisons have nothing to compare it against. That silence is
+    // precisely what `unscannedPlaceholderOffenders` exists to make loud.
+    const broken: Translation[] = [
+      {
+        key: 'ai-focused-editor/narrative-memory/status-ready',
+        text: 'Индекс рукописи: готов {0}',
+        file: NARRATIVE
+      }
+    ];
+    expect(unscannedPlaceholderOffenders(calls, broken)).not.toEqual([]);
+    // The same phrase WITHOUT the placeholder is clean — otherwise the case
+    // above would pass on a check that flags everything.
+    expect(
+      unscannedPlaceholderOffenders(calls, [{ ...broken[0], text: 'Индекс рукописи: готов' }])
+    ).toEqual([]);
+  });
+
+  test('an over-running index in a TEMPLATED narrative-memory phrase is CAUGHT', () => {
+    // The other half of the package's phrase split: a phrase that needs a
+    // substitution is written as a literal call site in `src/browser`, so the
+    // scan DOES see it, and the ordinary arity comparison applies. Production
+    // passes one argument, so `{1}` is a phantom.
+    const key = 'ai-focused-editor/narrative-memory/diagnostic-broken-mention';
+    expect(calls.has(key)).toBe(true);
+    const broken: Translation[] = [
+      { key, text: 'В рукописи нет сущности с именем «{0}» в файле {1}.', file: NARRATIVE }
+    ];
+    expect(overIndexOffenders(calls, broken)).not.toEqual([]);
+    expect(subsetOffenders(calls, broken)).not.toEqual([]);
+    // And the shipped text passes both, so the case above is about the break
+    // rather than about the key.
+    const shipped = translations.find(entry => entry.key === key)!;
+    expect(overIndexOffenders(calls, [shipped])).toEqual([]);
+    expect(subsetOffenders(calls, [shipped])).toEqual([]);
   });
 });
 

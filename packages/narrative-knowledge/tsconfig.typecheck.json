@@ -1,0 +1,40 @@
+{
+  // Typecheck-only pass that DOES include the tests.
+  //
+  // `tsconfig.json` excludes `*.test.ts` so they never reach `lib`, and
+  // `bun test` only strips types — so between the two, nothing in this
+  // repository ever typechecks a test file. That is normally a tolerable gap,
+  // but TASK-022 WP-1 owns a tooth that is PURELY type-level: tech_spec ОВ-5
+  // requires that `NarrativeEntity` has no `kind`/`label`/`uri`, "checked with
+  // `@ts-expect-error`, not by eye". An unchecked `@ts-expect-error` is an
+  // assertion that cannot fail, which is indistinguishable from an absent one —
+  // and this pass is what makes it fail. If the removed fields ever come back,
+  // the directive becomes unused and `tsc` errors on it.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // `rootDir` only constrains emit, and there is none here. Widening it is
+    // what lets `test/` — which sits beside `src/`, not under it — into the
+    // same program.
+    "rootDir": ".",
+    // The tests run under `bun`, so the program needs `bun:test` and
+    // `import.meta` — neither of which the commonjs product build wants.
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    // The node-only tests (TASK-022 WP-3) import each other by their real file
+    // names — `./harness.mts` — because that is what Node's type stripping
+    // requires: it follows ESM resolution, where a relative specifier keeps its
+    // extension. There is no emit here, so this is safe by the compiler's own
+    // rule for the flag.
+    "allowImportingTsExtensions": true,
+    "types": [
+      "node",
+      "bun"
+    ]
+  },
+  "include": [
+    "src",
+    "test"
+  ],
+  "exclude": []
+}

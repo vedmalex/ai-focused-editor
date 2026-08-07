@@ -60,7 +60,7 @@
  * that never reaches this loop at all.
  */
 
-import { parseWikiLinks } from './link-navigation';
+import { parseWikiLinks } from '@ai-focused-editor/narrative-knowledge';
 
 /** Resolution outcome for one note-class `[[...]]` token (plan §2/§3 chain, minus the entity step — this only ever sees note-class tokens). */
 export type NoteLinkStatus = 'resolved' | 'unresolved' | 'ambiguous';

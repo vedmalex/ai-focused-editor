@@ -4,12 +4,16 @@ import { homedir } from 'os';
 import { isAllowedMaterialFile } from '../common/author-materials';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { FileUri } from '@theia/core/lib/common/file-uri';
-import { injectable } from '@theia/core/shared/inversify';
+import { inject, injectable } from '@theia/core/shared/inversify';
 import { parse } from 'yaml';
+import {
+  NarrativeKnowledgeService,
+  toLegacyNarrativeEntity,
+  type NarrativeKnowledgeService as NarrativeKnowledgeServiceType
+} from '@ai-focused-editor/narrative-knowledge';
 import {
   AI_MODE_APPLY_KINDS,
   AI_MODE_CONTEXTS,
-  BASE_ENTITY_TYPES,
   AiMode,
   AiModeApply,
   AiModeContext,
@@ -17,15 +21,10 @@ import {
   AiModeOrigin,
   AiModeRegistryBackendService,
   AiModeRegistrySnapshot,
-  EffectiveEntityType,
   layerModes,
-  mergeEntityTypes,
-  parseEntityTypesYaml,
   ResolvedAiMode,
   CitationEntry,
-  NarrativeEntity,
   NarrativeEntityBackendService,
-  NarrativeEntityKind,
   NarrativeEntitySnapshot,
   SourceExcerpt,
   SourceLibraryBackendService,
@@ -34,35 +33,6 @@ import {
   SourceTextExtraction,
   WorkspaceDiagnostic
 } from '../common';
-
-interface EntityDirectoryConfig {
-  /**
-   * The entity kind id. Built-ins are the base literals; author (`book`-origin)
-   * types widen this to an arbitrary string at RUNTIME. It is stored on
-   * {@link NarrativeEntity.kind} via a cast at the snapshot boundary.
-   */
-  kind: string;
-  /** `entities/<dir>` scan path. */
-  directory: string;
-  /** YAML property key holding the display label (`name` for most, `term` for terms). */
-  labelField: string;
-}
-
-/** Workspace-relative path of the author entity-type declaration file. */
-const ENTITY_TYPES_PATH = 'entities/types.yaml';
-
-/**
- * Build the effective per-directory scan configs for a resolved entity-type
- * list (built-in + author). Each config points at `entities/<dir>` and reads
- * the type's `role: 'label'` field as the display-label YAML key.
- */
-function entityDirectoryConfigs(types: readonly EffectiveEntityType[]): EntityDirectoryConfig[] {
-  return types.map(type => ({
-    kind: type.id,
-    directory: `entities/${type.directory}`,
-    labelField: type.fields.find(field => field.role === 'label')?.name ?? 'name'
-  }));
-}
 
 interface CitationDocument {
   citations?: unknown;
@@ -134,12 +104,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map(item => item.trim())
-    : [];
 }
 
 /**
@@ -254,155 +218,73 @@ function asLineNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+/**
+ * Thin adapter over `NarrativeKnowledgeService` (TASK-022 WP-7, UR-007).
+ *
+ * IT USED TO BE THE SCAN. Before WP-7 this class walked `entities/**` itself —
+ * see the diff this class replaces for the ~150 lines that did it. That was a
+ * SECOND, INDEPENDENT source of narrative knowledge, competing with the index
+ * `packages/narrative-knowledge` now builds; UR-007 requires exactly one, and
+ * this is the seam where the second one is retired. Frozen in tech_spec
+ * TECH_SPEC WP-7 §1: this class stays (its ELEVEN untouched downstream
+ * consumers keep injecting `NarrativeEntityService` and receiving
+ * `LegacyNarrativeEntity`-shaped data), but it now DELEGATES rather than
+ * scans.
+ *
+ * WHAT IS DELIBERATELY NOT REPRODUCED. The old scan emitted an `info`
+ * diagnostic per missing entity directory and a `warning`/`error` diagnostic
+ * per unreadable or malformed entity CARD. Those are `cardProblems` on the
+ * index side (`NarrativeRebuildReport.problems.cards`) and, unlike
+ * `typeProblems` (TECH_SPEC WP-7 §2's `getEntityTypeRegistry`), there is no
+ * cheap non-rebuild query for them yet — adding one is out of this work
+ * package's scope (recorded, not silently dropped). `typeProblems` — the
+ * warning this class DID reliably show for a broken `entities/types.yaml` —
+ * is fully preserved via `getEntityTypeRegistry`.
+ */
 @injectable()
 export class NodeNarrativeEntityService implements NarrativeEntityBackendService {
-  getSnapshot(rootUri?: string): Promise<NarrativeEntitySnapshot> {
+  @inject(NarrativeKnowledgeService)
+  protected readonly knowledge!: NarrativeKnowledgeServiceType;
+
+  async getSnapshot(rootUri?: string): Promise<NarrativeEntitySnapshot> {
     if (!rootUri) {
-      return Promise.resolve({
+      return {
         entities: [],
         diagnostics: [{
           severity: 'info',
           source: 'narrative-entities',
           message: 'Open a manuscript workspace to view entity cards.'
         }]
-      });
+      };
     }
 
-    return this.scan(toRootPath(rootUri));
+    const [entitiesEnvelope, registryEnvelope] = await Promise.all([
+      this.knowledge.findEntities(rootUri),
+      this.knowledge.getEntityTypeRegistry(rootUri)
+    ]);
+
+    const diagnostics: WorkspaceDiagnostic[] = registryEnvelope.data.problems.map(problem => ({
+      severity: 'warning',
+      source: 'entity-types',
+      message: `entities/types.yaml: ${problem.message}`
+    }));
+
+    return {
+      rootUri: FileUri.create(toRootPath(rootUri)).toString(),
+      // `toLegacyNarrativeEntity` (narrative-knowledge, ОВ-5) is structurally
+      // IDENTICAL to this package's own `NarrativeEntity` — both derive from
+      // the same pre-rename shape — so no further mapping happens here. That
+      // identity is exactly what makes this class a THIN adapter rather than
+      // a second place translating field names.
+      entities: entitiesEnvelope.data.map(toLegacyNarrativeEntity),
+      diagnostics,
+      effectiveEntityTypes: registryEnvelope.data.types,
+      typeProblems: registryEnvelope.data.problems
+    };
   }
 
   refresh(rootUri?: string): Promise<NarrativeEntitySnapshot> {
     return this.getSnapshot(rootUri);
-  }
-
-  protected async scan(rootPath: string): Promise<NarrativeEntitySnapshot> {
-    const diagnostics: WorkspaceDiagnostic[] = [];
-    const entities: NarrativeEntity[] = [];
-
-    // STAGE 2: load author-declared entity types and walk the EFFECTIVE
-    // directory list (built-in dirs + author dirs). types.yaml lives under
-    // entities/, so the frontend's existing `/entities/` file watcher already
-    // triggers a rescan when it changes.
-    const typesPath = join(rootPath, ENTITY_TYPES_PATH);
-    const typesText = await readTextIfExists(typesPath);
-    const { types: authorTypes, problems: typeProblems } = parseEntityTypesYaml(typesText ?? '');
-    const effectiveEntityTypes = mergeEntityTypes(BASE_ENTITY_TYPES, authorTypes);
-
-    const typesUri = FileUri.create(typesPath).toString();
-    for (const problem of typeProblems) {
-      diagnostics.push({
-        severity: 'warning',
-        source: 'entity-types',
-        uri: typesUri,
-        message: `entities/types.yaml: ${problem.message}`
-      });
-    }
-
-    for (const config of entityDirectoryConfigs(effectiveEntityTypes)) {
-      entities.push(...await this.readEntityDirectory(rootPath, config, diagnostics));
-    }
-
-    return {
-      rootUri: FileUri.create(rootPath).toString(),
-      entities,
-      diagnostics,
-      effectiveEntityTypes,
-      typeProblems
-    };
-  }
-
-  protected async readEntityDirectory(
-    rootPath: string,
-    config: EntityDirectoryConfig,
-    diagnostics: WorkspaceDiagnostic[]
-  ): Promise<NarrativeEntity[]> {
-    const directoryPath = join(rootPath, config.directory);
-    const stat = await statIfExists(directoryPath);
-    if (!stat?.isDirectory()) {
-      diagnostics.push({
-        severity: 'info',
-        source: 'narrative-entities',
-        uri: FileUri.create(directoryPath).toString(),
-        message: `No ${config.kind} entity directory found at ${config.directory}/.`
-      });
-      return [];
-    }
-
-    const children = (await fs.readdir(directoryPath, { withFileTypes: true }))
-      .filter(child => child.isFile() && (child.name.endsWith('.yaml') || child.name.endsWith('.yml')))
-      .sort((left, right) => left.name.localeCompare(right.name));
-
-    const entities: NarrativeEntity[] = [];
-    for (const child of children) {
-      const entity = await this.readEntityFile(rootPath, join(directoryPath, child.name), child.name, config, diagnostics);
-      if (entity) {
-        entities.push(entity);
-      }
-    }
-    return entities;
-  }
-
-  protected async readEntityFile(
-    rootPath: string,
-    filePath: string,
-    fileName: string,
-    config: EntityDirectoryConfig,
-    diagnostics: WorkspaceDiagnostic[]
-  ): Promise<NarrativeEntity | undefined> {
-    const uri = FileUri.create(filePath).toString();
-    const text = await readTextIfExists(filePath);
-    if (text === undefined) {
-      diagnostics.push({
-        severity: 'warning',
-        source: 'narrative-entities',
-        uri,
-        message: `Could not read ${config.kind} entity file.`
-      });
-      return undefined;
-    }
-
-    let document: unknown;
-    try {
-      document = parse(text);
-    } catch (error) {
-      diagnostics.push({
-        severity: 'error',
-        source: 'narrative-entities',
-        uri,
-        message: `Invalid ${config.kind} YAML: ${error instanceof Error ? error.message : String(error)}`
-      });
-      return undefined;
-    }
-
-    if (!isRecord(document)) {
-      diagnostics.push({
-        severity: 'error',
-        source: 'narrative-entities',
-        uri,
-        message: `${config.kind} entity YAML must be an object.`
-      });
-      return undefined;
-    }
-
-    const id = asString(document.id) || fileName.replace(/\.(ya?ml)$/i, '');
-    const label = asString(document[config.labelField]) || id;
-    return {
-      // Author (`book`-origin) kinds are arbitrary strings at runtime; the
-      // declared union is kept for base-consumer ergonomics (see the
-      // NarrativeEntity.kind seam note).
-      kind: config.kind as NarrativeEntityKind,
-      id,
-      label,
-      path: toWorkspacePath(rootPath, filePath),
-      uri,
-      summary: asString(document.summary),
-      aliases: asStringArray(document.aliases),
-      epithets: asStringArray(document.epithets),
-      backstory: asString(document.backstory),
-      arc: asString(document.arc),
-      speechPatterns: asStringArray(document.speechPatterns),
-      notes: asString(document.notes)
-    };
   }
 }
 

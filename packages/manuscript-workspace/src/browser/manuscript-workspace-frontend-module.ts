@@ -58,6 +58,7 @@ import { FootnoteLinkContribution } from './footnote-link-contribution';
 import { SemanticLinkContribution } from './semantic-link-contribution';
 import { SemanticEntityHoverContribution } from './semantic-entity-hover-contribution';
 import { EntityCardsViewContribution } from './entity-cards-view-contribution';
+import { NarrativeMemoryCheckEntryPointsContribution } from './narrative-memory-check-entry-points-contribution';
 import { EntityCardsWidget } from './entity-cards-widget';
 import { GitActionsContribution } from './git-actions-contribution';
 import { ManuscriptAiContextAssembler } from './manuscript-ai-context-assembler';
@@ -74,6 +75,7 @@ import {
   ManuscriptListChaptersTool,
   ManuscriptWriteNoteTool
 } from './manuscript-tools-contribution';
+import { AiWriteConfirmationService, DialogAiWriteConfirmationService } from './ai-write-confirmation';
 import { DiagramAuthorPromptFragmentContribution } from './diagram-author-prompt-fragment-contribution';
 import { MarkdownLanguageContribution } from './markdown-language-contribution';
 import { AiModePromptFragmentContribution } from './ai-mode-prompt-fragment-contribution';
@@ -198,6 +200,19 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
   bind(FrontendApplicationContribution).toService(ManuscriptTreeViewContribution);
   bind(TabBarToolbarContribution).toService(ManuscriptTreeViewContribution);
   bindViewContribution(bind, EntityCardsViewContribution);
+  // UR-039: without this, `EntityCardsViewContribution.initializeLayout` is
+  // never invoked — `FrontendApplication.createDefaultLayout()` only calls
+  // `initializeLayout` on instances bound as `FrontendApplicationContribution`,
+  // and `bindViewContribution` does not add that binding on its own (see
+  // `ManuscriptTreeViewContribution`/`NarrativeMapViewContribution`, which
+  // both bind it explicitly for the same reason).
+  bind(FrontendApplicationContribution).toService(EntityCardsViewContribution);
+  // The remaining two "Check for Changes Now" entry points not owned by the
+  // command's own package (TASK-022 UR-036 part 1, UR-037): the toolbar icon
+  // on Entity Cards and Narrative Map, and the main-menu item.
+  bind(NarrativeMemoryCheckEntryPointsContribution).toSelf().inSingletonScope();
+  bind(MenuContribution).toService(NarrativeMemoryCheckEntryPointsContribution);
+  bind(TabBarToolbarContribution).toService(NarrativeMemoryCheckEntryPointsContribution);
   bindViewContribution(bind, SourceLibraryViewContribution);
   bindViewContribution(bind, SemanticMarkdownPreviewContribution);
   bind(TabBarToolbarContribution).toService(SemanticMarkdownPreviewContribution);
@@ -215,6 +230,10 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
   bindToolProvider(ManuscriptFindEntitiesTool, bind);
   bindToolProvider(ManuscriptListChaptersTool, bind);
   bindToolProvider(ManuscriptGetChapterTool, bind);
+  // TASK-022 WP-8 (UR-008). Bound BEFORE the three writing tools that inject
+  // it: without this binding they resolve nothing and refuse every write,
+  // which is the intended failure direction but not a shipping state.
+  bind(AiWriteConfirmationService).to(DialogAiWriteConfirmationService).inSingletonScope();
   bindToolProvider(ManuscriptCreateEntityTool, bind);
   bindToolProvider(ManuscriptWriteNoteTool, bind);
   bindToolProvider(ManuscriptCreateDiagramTool, bind);

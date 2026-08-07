@@ -1,0 +1,42 @@
+/**
+ * The graph core's node type (AD-6 / UR-029, TASK-022 WP-0).
+ *
+ * This folder is the SEPARABLE graph core: it must be liftable into a
+ * standalone module by moving the folder, with nothing else coming along.
+ * Prohibition (e) of the layer rule (plan.md, "Слои пакета и правило
+ * импортов") states that boundary BY COMPLEMENT and closes it on BOTH sides —
+ * this folder may import NOTHING except other modules inside this folder.
+ *
+ * The practical consequence is visible right here: identity is a plain
+ * `string`, never a `URI`. `URI` lives in `@theia/core/lib/common`, which
+ * prohibition (c) would allow into `src/common` but prohibition (e) forbids
+ * here, because a module that drags `@theia/core` in cannot be published on
+ * its own. Conversion between `string` and `URI` belongs on the boundary
+ * (the node adapter, the browser proxy) — never in this folder.
+ *
+ * WP-0 delivers the node and edge types only. The domain types
+ * (`NarrativeEntity`, `NarrativeMention`, `NarrativeRelation`, `EvidenceRef`),
+ * the `NarrativeIndexStore` port and the subgraph types move IN here in later
+ * work packages (WP-1/WP-3), per tech_spec "Граница графового ядра". The
+ * folder is created non-empty on purpose: prohibition (e) would have nothing
+ * to check over an empty folder and the gate would be green by vacuity (R-9).
+ */
+
+/**
+ * One node of the narrative graph.
+ *
+ * `id` is the stable cross-rebuild identity of the thing the node stands for
+ * (an entity id today); `type` is an OPAQUE string — the graph core does not
+ * own, and does not validate, the vocabulary of node types.
+ */
+export interface NarrativeGraphNode {
+  /** Stable identity, unique per `type`. Never a URI — see the module note. */
+  id: string;
+  /** Opaque node-type discriminator. The core never validates it. */
+  type: string;
+}
+
+/** Composite identity of a node: the pair (`type`, `id`), rendered as a key. */
+export function graphNodeKey(node: NarrativeGraphNode): string {
+  return `${node.type}\u0000${node.id}`;
+}

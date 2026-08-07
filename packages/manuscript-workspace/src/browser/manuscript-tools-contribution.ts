@@ -3,19 +3,20 @@ import { nls } from '@theia/core/lib/common/nls';
 import type { ToolProvider, ToolRequest } from '@theia/ai-core';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import URI from '@theia/core/lib/common/uri';
+import {
+  NarrativeKnowledgeService,
+  type NarrativeKnowledgeService as NarrativeKnowledgeServiceType
+} from '@ai-focused-editor/narrative-knowledge';
 import type {
   ManuscriptNode,
-  NarrativeEntityService as NarrativeEntityServiceType,
   ManuscriptWorkspaceService as ManuscriptWorkspaceServiceType
 } from '../common';
 import {
   diagramSpecToSkeleton,
   entityTypeById,
-  ManuscriptWorkspaceService,
-  NarrativeEntityService
+  ManuscriptWorkspaceService
 } from '../common';
 import {
-  buildEntityYaml,
   createSemanticEntityId,
   CREATABLE_ENTITY_KINDS,
   ENTITY_KIND_TAG,
@@ -25,9 +26,46 @@ import {
   uniqueRelativePath,
   type CreatableEntityKind
 } from '../common/entity-creation';
+import {
+  buildAiEntityCardYaml,
+  decideAiWriteProvenance,
+  provenanceRecord,
+  withProvenanceFrontMatter,
+  type AiWriteProvenance
+} from '../common/ai-write-provenance';
+import {
+  AiWriteConfirmationService,
+  type AiWriteConfirmationService as AiWriteConfirmationServiceType
+} from './ai-write-confirmation';
 import { loadExcalidrawCanvasModule } from './excalidraw-editor-widget';
 
 const MAX_CHAPTER_CHARS = 16000;
+
+/**
+ * Shared description of the `evidence` parameter the three WRITE tools accept
+ * (TASK-022 WP-8, UR-008).
+ *
+ * Stated once because it is one contract, and because the whole point of the
+ * work package is that the three tools cannot drift apart on it.
+ */
+const EVIDENCE_PARAMETER_DESCRIPTION =
+  'Where in the manuscript this is read from: a workspace-relative path string, or '
+    + '{ "path": "content/chapter-01.md", "range"?: { "start": { "line", "character" }, "end": { "line", "character" } } } '
+    + '(zero-based). WITH evidence the result is recorded as origin "explicit"; WITHOUT it, as an unconfirmed '
+    + '"ai-candidate". Either way the author is asked to approve the write. Cite a real file — a path that does not '
+    + 'exist is refused.';
+
+/**
+ * The `evidence` parameter, declared once for the tools that accept it.
+ *
+ * `anyOf` rather than a single `type`: the accepted forms really are two (a
+ * bare path string and a `{ path, range? }` object), and declaring only one of
+ * them would advertise a contract narrower than the parser honours.
+ */
+const EVIDENCE_PARAMETER = {
+  anyOf: [{ type: 'string' as const }, { type: 'object' as const }],
+  description: EVIDENCE_PARAMETER_DESCRIPTION
+};
 
 /**
  * Resolve the open manuscript workspace root URI, or `undefined` when no
@@ -79,17 +117,96 @@ function parseObjectArgs(argString: string): Record<string, unknown> {
   }
 }
 
+/* ------------------------------------------------------------------------- */
+/* The AI write gate (TASK-022 WP-8, UR-008)                                  */
+/*                                                                            */
+/* An AI creates CANDIDATES, NOT FACTS. Everything below exists so that a file */
+/* the model creates carries WHO PROPOSED IT and WHAT IT WAS READ FROM, and so */
+/* that it is created only because the author said yes. The decision itself is */
+/* in the Theia-free `../common/ai-write-provenance`; these helpers are the    */
+/* two things that need the filesystem and the author: proving a citation      */
+/* points at a real file, and asking.                                         */
+/* ------------------------------------------------------------------------- */
+
+/** A refusal carrying the reason, or a go-ahead. */
+type WriteGate = { ok: true } | { ok: false; error: string };
+
+/**
+ * Prove that a citation points at a file that actually exists.
+ *
+ * WITHOUT THIS THE WHOLE WORK PACKAGE IS BYPASSABLE. `origin: 'explicit'` is
+ * granted for supplying evidence; if nobody checks the path, a model that
+ * invents `content/chapter-07.md` gets its guess recorded as an authored fact —
+ * the exact substitution UR-008 exists to prevent, reached by the shortest
+ * possible route. The shape checks live in the pure module; only existence
+ * needs the disk, so only existence is here.
+ */
+async function verifyEvidenceExists(
+  fileService: FileService,
+  root: URI,
+  provenance: AiWriteProvenance
+): Promise<WriteGate> {
+  const evidence = provenance.evidence;
+  if (!evidence) {
+    return { ok: true };
+  }
+  const exists = await fileService.exists(root.resolve(evidence.path)).catch(() => false);
+  return exists
+    ? { ok: true }
+    : { ok: false, error: `Evidence path "${evidence.path}" does not exist in this workspace. Cite a file that is really there, or omit evidence and the result will be marked as an unconfirmed candidate.` };
+}
+
+/**
+ * Ask the author, and treat an unavailable gate as a REFUSAL.
+ *
+ * The missing-gate branch is the important one. UR-008 asks for EXPLICIT
+ * confirmation, so "there was nobody to ask" cannot mean "go ahead" — that is
+ * how a required approval quietly becomes a default. Under normal DI the
+ * service is always bound and this branch is unreachable; it is here so that
+ * any construction path that forgets it FAILS CLOSED instead of writing.
+ */
+async function confirmWrite(
+  confirmation: AiWriteConfirmationServiceType | undefined,
+  request: { toolId: string; artifactLabel: string; path: string; provenance: AiWriteProvenance }
+): Promise<WriteGate> {
+  if (!confirmation) {
+    return { ok: false, error: 'Refused: this write needs the author\'s confirmation and no confirmation service is available.' };
+  }
+  const approved = await confirmation.confirm(request);
+  return approved
+    ? { ok: true }
+    : { ok: false, error: `Refused by the author: ${request.path} was not created.` };
+}
+
 /**
  * Theia AI tools for the Manuscript chat agent (spec §3.5 Tools/Function
  * Calling): entity lookup and chapter access, referenced from the agent's
  * prompt template via ~{tool_id}.
  */
+/**
+ * TASK-022 WP-7 (UR-007): migrated onto `NarrativeKnowledgeService` directly —
+ * per tech_spec TECH_SPEC WP-7 §1 this tool may NOT be a thin adapter over the
+ * legacy `NarrativeEntityService`/`LegacyNarrativeEntity` bridge.
+ *
+ * MATCHING SEMANTICS ARE KEPT, NOT `EntityQuery.namePrefix`'S (§3 of the same
+ * decision). `EntityQuery.namePrefix` is a case-insensitive PREFIX over `name`
+ * + `aliases` only; this tool's baseline (`narrative-consumer-baseline.test.ts`,
+ * "manuscript_find_entities") pins a case-insensitive SUBSTRING over
+ * `id`+`label`+`aliases`+`epithets` — an epithet match in particular that
+ * `namePrefix` cannot express at all. So `findEntities(rootUri, {})` is called
+ * UNFILTERED and the old substring filter runs here, client-side, exactly as
+ * it did against `entities.getSnapshot()` before this migration — only the
+ * data source moved.
+ */
 @injectable()
 export class ManuscriptFindEntitiesTool implements ToolProvider {
   static readonly ID = 'manuscript_find_entities';
 
-  @inject(NarrativeEntityService)
-  protected readonly entities!: NarrativeEntityServiceType;
+  @inject(NarrativeKnowledgeService)
+  protected readonly knowledge!: NarrativeKnowledgeServiceType;
+
+  @inject(ManuscriptWorkspaceService)
+  protected readonly workspace!: ManuscriptWorkspaceServiceType;
 
   getTool(): ToolRequest {
     return {
@@ -117,11 +234,15 @@ export class ManuscriptFindEntitiesTool implements ToolProvider {
       },
       handler: async (argString: string) => {
         const args = this.parseArgs(argString);
-        const snapshot = await this.entities.getSnapshot();
+        const root = await resolveWorkspaceRoot(this.workspace);
+        if (!root) {
+          return JSON.stringify([]);
+        }
+        const envelope = await this.knowledge.findEntities(root.toString());
         const query = (args.query ?? '').toLowerCase();
         const kind = (args.kind ?? '').toLowerCase();
-        const matches = snapshot.entities.filter(entity => {
-          if (kind && entity.kind !== kind) {
+        const matches = envelope.data.filter(entity => {
+          if (kind && entity.type !== kind) {
             return false;
           }
           if (!query) {
@@ -129,16 +250,19 @@ export class ManuscriptFindEntitiesTool implements ToolProvider {
           }
           const haystack = [
             entity.id,
-            entity.label,
+            entity.name,
             ...entity.aliases,
             ...(entity.epithets ?? [])
           ].join('\n').toLowerCase();
           return haystack.includes(query);
         });
         return JSON.stringify(matches.map(entity => ({
-          kind: entity.kind,
+          // Wire contract keys are `kind`/`label` — the tool's OWN JSON shape,
+          // unrelated to `LegacyNarrativeEntity` (that bridge is reserved for
+          // the frozen thin-adapter list, tech_spec TECH_SPEC WP-7 §1).
+          kind: entity.type,
           id: entity.id,
-          label: entity.label,
+          label: entity.name,
           aliases: entity.aliases,
           epithets: entity.epithets,
           summary: entity.summary,
@@ -266,6 +390,17 @@ export class ManuscriptGetChapterTool implements ToolProvider {
  * The `kind` is validated against the entity-type registry; `id` defaults to the
  * transliterated slug of `name`; an existing file is REFUSED (never overwritten).
  * Returns a concise JSON result and never throws (errors → `{ ok:false, error }`).
+ *
+ * PROVENANCE (TASK-022 WP-8, UR-008). The card carries `origin:` and, when the
+ * model cited one, `evidence:`. A card the model could not source lands as
+ * `ai-candidate`; a sourced one as `explicit`. Either way the author confirms
+ * first, and the confirmation shows the exact stamp that will be in the file.
+ *
+ * THE MARK IS DURABLE HERE, which is why marking is the right answer for this
+ * tool. `EntityEditorWidget` edits cards through the `yaml` Document API and
+ * preserves keys outside its schema verbatim
+ * (`entity-editor-widget.ts:178`, `:393`), so an author opening and saving a
+ * candidate card does not erase its stamp.
  */
 @injectable()
 export class ManuscriptCreateEntityTool implements ToolProvider {
@@ -277,6 +412,9 @@ export class ManuscriptCreateEntityTool implements ToolProvider {
   @inject(FileService)
   protected readonly fileService!: FileService;
 
+  @inject(AiWriteConfirmationService)
+  protected readonly confirmation!: AiWriteConfirmationServiceType;
+
   getTool(): ToolRequest {
     return {
       id: ManuscriptCreateEntityTool.ID,
@@ -285,6 +423,7 @@ export class ManuscriptCreateEntityTool implements ToolProvider {
         'ai-focused-editor/workspace/tool-create-entity-description',
         'Create a knowledge-base entity card (character, term, artifact, or location) as an entities/<dir>/<id>.yaml file. '
           + 'The id defaults to a slug of the name (Cyrillic is transliterated). Refuses to overwrite an existing card. '
+          + 'The author confirms every card before it is created, and the card records where it came from. '
           + 'Returns the created workspace-relative path.'
       ),
       parameters: {
@@ -305,10 +444,16 @@ export class ManuscriptCreateEntityTool implements ToolProvider {
           summary: {
             type: 'string',
             description: 'Optional one-paragraph summary stored on the card.'
-          }
+          },
+          evidence: EVIDENCE_PARAMETER
         },
         required: ['kind', 'name']
       },
+      // Theia's own guard against the chat's "Always Allow" quietly turning
+      // these three tools into unattended file creation. The dialog below is
+      // the author's confirmation; this keeps the chat UI from offering to skip
+      // asking in the first place.
+      confirmAlwaysAllow: true,
       handler: async (argString: string) => {
         try {
           const args = parseObjectArgs(argString);
@@ -323,9 +468,20 @@ export class ManuscriptCreateEntityTool implements ToolProvider {
             return JSON.stringify({ ok: false, error: 'Provide a non-empty entity name.' });
           }
 
+          const decision = decideAiWriteProvenance(args.evidence);
+          if (!decision.ok) {
+            return JSON.stringify({ ok: false, error: decision.error });
+          }
+          const provenance = decision.provenance;
+
           const root = await resolveWorkspaceRoot(this.manuscriptWorkspace);
           if (!root) {
             return JSON.stringify({ ok: false, error: 'No manuscript workspace is open.' });
+          }
+
+          const evidenceGate = await verifyEvidenceExists(this.fileService, root, provenance);
+          if (!evidenceGate.ok) {
+            return JSON.stringify({ ok: false, error: evidenceGate.error });
           }
 
           const kindId = kind as CreatableEntityKind;
@@ -338,9 +494,23 @@ export class ManuscriptCreateEntityTool implements ToolProvider {
             return JSON.stringify({ ok: false, error: `Entity already exists at ${relPath} (refusing to overwrite).` });
           }
 
+          // The bytes are built BEFORE the author is asked, so the confirmation
+          // and the file are two views of one already-decided value rather than
+          // two chances to compute the stamp differently.
+          const content = buildAiEntityCardYaml({ id, name, summary }, provenance);
+          const approval = await confirmWrite(this.confirmation, {
+            toolId: ManuscriptCreateEntityTool.ID,
+            artifactLabel: nls.localize('ai-focused-editor/workspace/ai-write-artifact-entity', 'an entity card'),
+            path: relPath,
+            provenance
+          });
+          if (!approval.ok) {
+            return JSON.stringify({ ok: false, error: approval.error });
+          }
+
           await ensureFolder(this.fileService, fileUri.parent);
-          await this.fileService.create(fileUri, buildEntityYaml({ id, name, summary }), { overwrite: false });
-          return JSON.stringify({ ok: true, kind: kindId, id, path: relPath });
+          await this.fileService.create(fileUri, content, { overwrite: false });
+          return JSON.stringify({ ok: true, kind: kindId, id, path: relPath, ...provenanceRecord(provenance) });
         } catch (error) {
           return JSON.stringify({ ok: false, error: errorDetail(error) });
         }
@@ -354,6 +524,12 @@ export class ManuscriptCreateEntityTool implements ToolProvider {
  * (or `knowledge/<slug>.md` at the root). The slug is derived from the title and
  * unique-suffixed on collision, so a note is never overwritten. The markdown body
  * may embed `$$...$$` KaTeX formulas. Errors → `{ ok:false, error }`; never throws.
+ *
+ * PROVENANCE (TASK-022 WP-8, UR-008). The stamp goes into the note's YAML front
+ * matter — the note's own "in the YAML itself". Nothing in this editor rewrites
+ * a note programmatically (it is edited as text), and the preview already reads
+ * and renders front matter, so the mark is both durable and VISIBLE to the
+ * author rather than buried.
  */
 @injectable()
 export class ManuscriptWriteNoteTool implements ToolProvider {
@@ -364,6 +540,9 @@ export class ManuscriptWriteNoteTool implements ToolProvider {
 
   @inject(FileService)
   protected readonly fileService!: FileService;
+
+  @inject(AiWriteConfirmationService)
+  protected readonly confirmation!: AiWriteConfirmationServiceType;
 
   getTool(): ToolRequest {
     return {
@@ -389,10 +568,12 @@ export class ManuscriptWriteNoteTool implements ToolProvider {
           markdown: {
             type: 'string',
             description: 'Full Markdown body of the note. May embed $$...$$ formulas (KaTeX).'
-          }
+          },
+          evidence: EVIDENCE_PARAMETER
         },
         required: ['title', 'markdown']
       },
+      confirmAlwaysAllow: true,
       handler: async (argString: string) => {
         try {
           const args = parseObjectArgs(argString);
@@ -408,9 +589,24 @@ export class ManuscriptWriteNoteTool implements ToolProvider {
             return JSON.stringify({ ok: false, error: `Unknown category "${category}". Use one of: ${KNOWLEDGE_CATEGORIES.join(', ')} (or omit for the root).` });
           }
 
+          const decision = decideAiWriteProvenance(args.evidence);
+          if (!decision.ok) {
+            return JSON.stringify({ ok: false, error: decision.error });
+          }
+          const provenance = decision.provenance;
+          const stamped = withProvenanceFrontMatter(markdown, provenance);
+          if (!stamped.ok) {
+            return JSON.stringify({ ok: false, error: stamped.error });
+          }
+
           const root = await resolveWorkspaceRoot(this.manuscriptWorkspace);
           if (!root) {
             return JSON.stringify({ ok: false, error: 'No manuscript workspace is open.' });
+          }
+
+          const evidenceGate = await verifyEvidenceExists(this.fileService, root, provenance);
+          if (!evidenceGate.ok) {
+            return JSON.stringify({ ok: false, error: evidenceGate.error });
           }
 
           const relDir = category ? `knowledge/${category}` : 'knowledge';
@@ -418,12 +614,22 @@ export class ManuscriptWriteNoteTool implements ToolProvider {
           const relPath = uniqueRelativePath(knowledgeNoteRelativePath(category, title), candidate => existing.has(candidate));
           const fileUri = root.resolve(relPath);
 
+          const approval = await confirmWrite(this.confirmation, {
+            toolId: ManuscriptWriteNoteTool.ID,
+            artifactLabel: nls.localize('ai-focused-editor/workspace/ai-write-artifact-note', 'a knowledge note'),
+            path: relPath,
+            provenance
+          });
+          if (!approval.ok) {
+            return JSON.stringify({ ok: false, error: approval.error });
+          }
+
           await ensureFolder(this.fileService, root.resolve('knowledge'));
           if (category) {
             await ensureFolder(this.fileService, root.resolve(relDir));
           }
-          await this.fileService.create(fileUri, markdown, { overwrite: false });
-          return JSON.stringify({ ok: true, path: relPath });
+          await this.fileService.create(fileUri, stamped.content, { overwrite: false });
+          return JSON.stringify({ ok: true, path: relPath, ...provenanceRecord(provenance) });
         } catch (error) {
           return JSON.stringify({ ok: false, error: errorDetail(error) });
         }
@@ -439,6 +645,31 @@ export class ManuscriptWriteNoteTool implements ToolProvider {
  * centers, and texts become free labels; a node with an `entity` links to that
  * entity's card (`afe-entity://kind/id`), strengthening the world map. Errors →
  * `{ ok:false, error }`; never throws.
+ *
+ * PROVENANCE (TASK-022 WP-8, UR-008): THIS TOOL REQUIRES EVIDENCE, and that is
+ * the one place the three write tools deliberately differ.
+ *
+ * The reason is in the file format, not in taste. The other two artifacts can
+ * WEAR a candidate mark for as long as it matters: an entity card is edited
+ * through the `yaml` Document API, which preserves keys outside its schema, and
+ * a note is edited as text. A `.excalidraw` scene cannot. When the author opens
+ * a diagram and saves it, `ExcalidrawEditorWidget.save` rebuilds the file from
+ * `serializeAsJSON(elements, appState, files, 'local')`
+ * (`excalidraw-editor-widget.ts:341-345`) — it is handed the elements, the app
+ * state and the files, and NOTHING ELSE, so any top-level key we wrote is gone,
+ * silently, on the author's first save.
+ *
+ * A mark that disappears on its own is worse than no mark: the diagram would
+ * become indistinguishable from an authored one WITHOUT anyone deciding that it
+ * should. UR-008 offers two branches — require evidence, or mark the result —
+ * and the plan's readiness block for WP-8 spells out the same disjunction
+ * ("either refused, or lands with `origin: 'ai-candidate'`"). Where marking
+ * cannot hold, the honest branch is to require. So an unsourced diagram is not
+ * created at all, and a sourced one is `explicit`, which needs no durable mark.
+ *
+ * The scene still records the stamp under a top-level `provenance` key: it is
+ * true at creation, it is what the author approved, and its erasure coincides
+ * exactly with the author taking the diagram over by editing it.
  */
 @injectable()
 export class ManuscriptCreateDiagramTool implements ToolProvider {
@@ -450,6 +681,9 @@ export class ManuscriptCreateDiagramTool implements ToolProvider {
   @inject(FileService)
   protected readonly fileService!: FileService;
 
+  @inject(AiWriteConfirmationService)
+  protected readonly confirmation!: AiWriteConfirmationServiceType;
+
   getTool(): ToolRequest {
     return {
       id: ManuscriptCreateDiagramTool.ID,
@@ -460,7 +694,8 @@ export class ManuscriptCreateDiagramTool implements ToolProvider {
           + 'The spec is: { "nodes": [{ "id", "label", "entity"?: { "kind", "id" } }], "edges"?: [{ "from", "to", "label"? }], "texts"?: [{ "text", "x"?, "y"? }] }. '
           + 'Nodes are boxes on an auto grid; edges are arrows between node centers (from/to reference node ids); a node with an entity links to its card. '
           + 'Example: { "title": "Kurukshetra", "spec": { "nodes": [ { "id": "a", "label": "Arjuna", "entity": { "kind": "character", "id": "arjuna" } }, { "id": "k", "label": "Krishna", "entity": { "kind": "character", "id": "krishna" } } ], "edges": [ { "from": "k", "to": "a", "label": "advises" } ] } }. '
-          + 'Returns the created workspace-relative path.'
+          + 'Evidence is REQUIRED for this tool: name the chapter or card the diagram depicts. The author confirms the '
+          + 'diagram before it is created. Returns the created workspace-relative path.'
       ),
       parameters: {
         type: 'object',
@@ -472,10 +707,12 @@ export class ManuscriptCreateDiagramTool implements ToolProvider {
           spec: {
             type: 'object',
             description: 'Structured scene: { nodes: [{ id, label, entity?: { kind, id } }], edges?: [{ from, to, label? }], texts?: [{ text, x?, y? }] }.'
-          }
+          },
+          evidence: EVIDENCE_PARAMETER
         },
-        required: ['title', 'spec']
+        required: ['title', 'spec', 'evidence']
       },
+      confirmAlwaysAllow: true,
       handler: async (argString: string) => {
         try {
           const args = parseObjectArgs(argString);
@@ -486,6 +723,23 @@ export class ManuscriptCreateDiagramTool implements ToolProvider {
           if (typeof args.spec !== 'object' || args.spec === null) {
             return JSON.stringify({ ok: false, error: 'Provide a "spec" object describing nodes/edges/texts.' });
           }
+
+          // Evidence is REQUIRED here — see the class note. Checked BEFORE the
+          // absent branch reaches `decideAiWriteProvenance`, so the refusal
+          // says what this tool needs instead of producing a candidate mark the
+          // file format cannot keep.
+          if (args.evidence === undefined || args.evidence === null) {
+            return JSON.stringify({
+              ok: false,
+              error: 'This tool requires "evidence": the workspace-relative path (optionally with a range) of the chapter or card the diagram depicts. '
+                + 'A diagram file cannot carry a durable "unconfirmed candidate" mark, so an unsourced diagram is not created.'
+            });
+          }
+          const decision = decideAiWriteProvenance(args.evidence);
+          if (!decision.ok) {
+            return JSON.stringify({ ok: false, error: decision.error });
+          }
+          const provenance = decision.provenance;
 
           // Pure translation FIRST — invalid specs fail before any file work.
           let built: ReturnType<typeof diagramSpecToSkeleton>;
@@ -498,6 +752,11 @@ export class ManuscriptCreateDiagramTool implements ToolProvider {
           const root = await resolveWorkspaceRoot(this.manuscriptWorkspace);
           if (!root) {
             return JSON.stringify({ ok: false, error: 'No manuscript workspace is open.' });
+          }
+
+          const evidenceGate = await verifyEvidenceExists(this.fileService, root, provenance);
+          if (!evidenceGate.ok) {
+            return JSON.stringify({ ok: false, error: evidenceGate.error });
           }
 
           const module = await loadExcalidrawCanvasModule();
@@ -521,13 +780,34 @@ export class ManuscriptCreateDiagramTool implements ToolProvider {
             type: 'excalidraw',
             version: 2,
             source: 'ai-focused-editor',
+            // True at creation; NOT preserved by the widget's own save — see the
+            // class note for why that is acceptable here and why it is exactly
+            // the reason evidence is required rather than optional.
+            provenance: provenanceRecord(provenance),
             elements,
             appState: { gridSize: null, viewBackgroundColor: '#ffffff' },
             files: {}
           };
+          const content = `${JSON.stringify(scene, undefined, 2)}\n`;
+
+          const approval = await confirmWrite(this.confirmation, {
+            toolId: ManuscriptCreateDiagramTool.ID,
+            artifactLabel: nls.localize('ai-focused-editor/workspace/ai-write-artifact-diagram', 'a diagram'),
+            path: relPath,
+            provenance
+          });
+          if (!approval.ok) {
+            return JSON.stringify({ ok: false, error: approval.error });
+          }
+
           await ensureFolder(this.fileService, root.resolve('sources'));
-          await this.fileService.create(fileUri, `${JSON.stringify(scene, undefined, 2)}\n`, { overwrite: false });
-          return JSON.stringify({ ok: true, path: relPath, nodes: built.skeletons.filter(s => s.type === 'rectangle').length });
+          await this.fileService.create(fileUri, content, { overwrite: false });
+          return JSON.stringify({
+            ok: true,
+            path: relPath,
+            nodes: built.skeletons.filter(s => s.type === 'rectangle').length,
+            ...provenanceRecord(provenance)
+          });
         } catch (error) {
           return JSON.stringify({ ok: false, error: errorDetail(error) });
         }

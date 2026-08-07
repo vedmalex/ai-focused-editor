@@ -5,6 +5,7 @@ import {
 } from '@theia/core/lib/browser';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { nls } from '@theia/core/lib/common/nls';
+import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import {
   inject,
   injectable,
@@ -12,28 +13,63 @@ import {
 } from '@theia/core/shared/inversify';
 import React from '@theia/core/shared/react';
 import {
+  compareEntitiesForDisplay,
+  NarrativeIndexChangeWatcher,
+  NarrativeKnowledgeService,
+  type NarrativeEntity,
+  type NarrativeIndexChangedEvent,
+  type NarrativeIndexChangeWatcher as NarrativeIndexChangeWatcherType,
+  type NarrativeKnowledgeService as NarrativeKnowledgeServiceType
+} from '@ai-focused-editor/narrative-knowledge';
+import {
   EntityMention,
-  NarrativeEntity,
-  NarrativeEntityKind,
-  NarrativeEntityService,
-  NarrativeEntitySnapshot,
+  WorkspaceDiagnostic,
   splitEntityMentions
 } from '../common';
+
+/**
+ * The two things this widget renders that `NarrativeEntity` alone does not
+ * carry (TASK-022 WP-7): `diagnostics` come from `getEntityTypeRegistry`'s
+ * `typeProblems`, exactly as they did through the pre-migration
+ * `NarrativeEntitySnapshot`. Per-card and per-directory read diagnostics
+ * (malformed YAML, a missing entity directory) are NOT reproduced here — see
+ * `NodeNarrativeEntityService`'s doc comment for the same, deliberate,
+ * recorded gap; there is no cheap index query for them yet.
+ */
+interface EntityCardsSnapshot {
+  entities: NarrativeEntity[];
+  diagnostics: WorkspaceDiagnostic[];
+}
 
 @injectable()
 export class EntityCardsWidget extends ReactWidget {
   static readonly ID = 'ai-focused-editor.entity-cards';
   static readonly LABEL = 'Knowledge Cards';
 
-  @inject(NarrativeEntityService)
-  protected readonly entityService!: NarrativeEntityService;
+  @inject(NarrativeKnowledgeService)
+  protected readonly knowledge!: NarrativeKnowledgeServiceType;
+
+  @inject(NarrativeIndexChangeWatcher)
+  protected readonly indexChangeWatcher!: NarrativeIndexChangeWatcherType;
+
+  @inject(WorkspaceService)
+  protected readonly workspaceService!: WorkspaceService;
 
   @inject(OpenerService)
   protected readonly openerService!: OpenerService;
 
-  protected snapshot: NarrativeEntitySnapshot | undefined;
+  protected snapshot: EntityCardsSnapshot | undefined;
   /** Lookup for resolving `[[kind:id|label]]` / `[[id]]` mentions to entities. */
   protected mentionIndex = new Map<string, NarrativeEntity>();
+  /** The workspace root the last snapshot was fetched for — needed to derive a
+   *  navigable URI from `entity.sourcePath` (TECH_SPEC WP-7 §4: `sourceUri` is
+   *  stale after a rename in both store adapters, so it is never read here). */
+  protected rootUri: URI | undefined;
+  /** Set when an index-changed push arrives while this widget is closed or
+   *  scrolled out of view (TASK-022 UR-043): a hidden panel must not pull
+   *  data for nothing, but it must still catch up the moment it is shown
+   *  again, rather than going on showing whatever it last rendered. */
+  protected pendingRefresh = false;
 
   @postConstruct()
   protected init(): void {
@@ -43,12 +79,81 @@ export class EntityCardsWidget extends ReactWidget {
     this.title.iconClass = 'fa fa-address-card';
     this.title.closable = true;
     this.addClass('afe-entity-cards-widget');
+    // UR-043: redraw on the backend's own push instead of only on the
+    // "Refresh" button and the initial load below. `this.toDispose` is the
+    // SAME `DisposableCollection` `BaseWidget.dispose()` already drains, so
+    // this subscription is released exactly when ISS-359 found one was not —
+    // no second disposal path to forget.
+    this.toDispose.push(this.indexChangeWatcher.onDidIndexChange(event => this.onIndexChanged(event)));
+    this.toDispose.push(this.onDidChangeVisibility(visible => {
+      if (visible && this.pendingRefresh) {
+        this.pendingRefresh = false;
+        void this.refresh();
+      }
+    }));
     void this.refresh();
   }
 
+  /**
+   * React to the backend's debounced "generation advanced" push (TASK-022
+   * UR-043).
+   *
+   * FILTERED BY PLAIN STRING EQUALITY against `this.rootUri`, THE SAME
+   * `file:` STRING {@link refresh} ALREADY PASSES THE BACKEND — no
+   * canonicalisation needed on this side of the RPC boundary (see
+   * `NodeNarrativeKnowledgeService`'s own doc for why the backend hands back
+   * exactly this string rather than the canonical path it uses internally).
+   * Before the first successful `refresh()`, `this.rootUri` is `undefined`
+   * and every push is ignored — there is nothing yet to compare it against,
+   * and the pending `refresh()` already in flight will pick up the change on
+   * its own once it resolves.
+   */
+  protected onIndexChanged(event: NarrativeIndexChangedEvent): void {
+    if (this.rootUri === undefined || event.rootUri !== this.rootUri.toString()) {
+      return;
+    }
+    if (this.isVisible) {
+      void this.refresh();
+    } else {
+      this.pendingRefresh = true;
+    }
+  }
+
   async refresh(): Promise<void> {
-    this.snapshot = await this.entityService.refresh();
+    const rootUri = await this.getRootUri();
+    if (!rootUri) {
+      this.rootUri = undefined;
+      this.snapshot = {
+        entities: [],
+        diagnostics: [{
+          severity: 'info',
+          source: 'narrative-entities',
+          message: 'Open a manuscript workspace to view entity cards.'
+        }]
+      };
+      this.update();
+      return;
+    }
+    this.rootUri = new URI(rootUri);
+    const [entitiesEnvelope, registryEnvelope] = await Promise.all([
+      this.knowledge.findEntities(rootUri),
+      this.knowledge.getEntityTypeRegistry(rootUri)
+    ]);
+    this.snapshot = {
+      entities: entitiesEnvelope.data,
+      diagnostics: registryEnvelope.data.problems.map(problem => ({
+        severity: 'warning' as const,
+        source: 'entity-types',
+        message: `entities/types.yaml: ${problem.message}`
+      }))
+    };
     this.update();
+  }
+
+  protected async getRootUri(): Promise<string | undefined> {
+    await this.workspaceService.ready;
+    const root = this.workspaceService.tryGetRoots()[0] ?? (await this.workspaceService.roots)[0];
+    return root?.resource.toString();
   }
 
   protected render(): React.ReactNode {
@@ -57,11 +162,28 @@ export class EntityCardsWidget extends ReactWidget {
       return React.createElement('div', { className: 'afe-entity-cards' }, nls.localize('ai-focused-editor/entities/loading-cards', 'Loading knowledge cards...'));
     }
 
+    // `buildMentionIndex` reads `snapshot.entities` UNSORTED (index/code-point
+    // order): it is a first-match-wins lookup keyed by id, and sorting it would
+    // silently change which card a duplicated bare `[[id]]` resolves to for no
+    // display reason. The sort below is a SEPARATE, presentation-only
+    // projection built for the four groups rendered underneath.
     this.mentionIndex = this.buildMentionIndex(snapshot);
-    const characters = snapshot.entities.filter(entity => entity.kind === 'character');
-    const terms = snapshot.entities.filter(entity => entity.kind === 'term');
-    const artifacts = snapshot.entities.filter(entity => entity.kind === 'artifact');
-    const locations = snapshot.entities.filter(entity => entity.kind === 'location');
+    // UR-032: a list of entity NAMES read by a person is ordered FOR A READER,
+    // the same standing rule WP-6 already applied to the narrative graph and
+    // the four `narrative_*` AI tools (`compareEntitiesForDisplay`, an
+    // explicit `Intl.Collator('ru', …)` — never a bare `localeCompare()`,
+    // which reads the HOST locale and would make the same manuscript sort
+    // differently on two machines). THE INDEX ITSELF IS UNCHANGED: `.sort()`
+    // runs on a COPY, here, in the display layer only —
+    // `NarrativeKnowledgeService.findEntities` keeps returning code point
+    // (reproducibility; ISS-349; `narrative-memory-tools.ts`'s "Display
+    // order" section). `.filter()` after a `.sort()` preserves the sorted
+    // relative order, so each group below comes out reader-ordered too.
+    const displayOrdered = [...snapshot.entities].sort(compareEntitiesForDisplay);
+    const characters = displayOrdered.filter(entity => entity.type === 'character');
+    const terms = displayOrdered.filter(entity => entity.type === 'term');
+    const artifacts = displayOrdered.filter(entity => entity.type === 'artifact');
+    const locations = displayOrdered.filter(entity => entity.type === 'location');
 
     return React.createElement(
       'div',
@@ -87,7 +209,7 @@ export class EntityCardsWidget extends ReactWidget {
     );
   }
 
-  protected renderDiagnostics(snapshot: NarrativeEntitySnapshot): React.ReactNode {
+  protected renderDiagnostics(snapshot: EntityCardsSnapshot): React.ReactNode {
     if (snapshot.diagnostics.length === 0) {
       return undefined;
     }
@@ -108,7 +230,7 @@ export class EntityCardsWidget extends ReactWidget {
 
   protected renderEntityGroup(
     title: string,
-    kind: NarrativeEntityKind,
+    kind: string,
     entities: NarrativeEntity[]
   ): React.ReactNode {
     return React.createElement(
@@ -131,14 +253,16 @@ export class EntityCardsWidget extends ReactWidget {
     return React.createElement(
       'article',
       {
-        key: entity.uri,
-        className: `afe-entity-card ${entity.kind}`
+        // `entity.id` rather than `entity.sourceUri`: the id is stable across a
+        // rename, `sourceUri` is not (TECH_SPEC WP-7 §4).
+        key: entity.id,
+        className: `afe-entity-card ${entity.type}`
       },
       React.createElement(
         'div',
         { className: 'afe-entity-card-title' },
-        React.createElement('strong', undefined, entity.label),
-        React.createElement('span', { className: 'afe-entity-kind' }, entity.kind)
+        React.createElement('strong', undefined, entity.name),
+        React.createElement('span', { className: 'afe-entity-kind' }, entity.type)
       ),
       React.createElement('div', { className: 'afe-entity-id' }, entity.id),
       entity.aliases.length > 0
@@ -148,14 +272,14 @@ export class EntityCardsWidget extends ReactWidget {
         ? React.createElement('div', { className: 'afe-entity-epithets' }, nls.localize('ai-focused-editor/entities/epithets-line', 'Epithets: {0}', epithets.join(', ')))
         : undefined,
       entity.summary
-        ? React.createElement('p', { className: 'afe-entity-summary' }, ...this.renderMentionText(entity.summary, `${entity.uri}-summary`))
+        ? React.createElement('p', { className: 'afe-entity-summary' }, ...this.renderMentionText(entity.summary, `${entity.id}-summary`))
         : undefined,
       entity.arc
         ? React.createElement(
           'div',
           { className: 'afe-entity-arc' },
           React.createElement('span', { className: 'afe-entity-field-label' }, nls.localize('ai-focused-editor/entities/arc-label', 'Arc: ')),
-          ...this.renderMentionText(entity.arc, `${entity.uri}-arc`)
+          ...this.renderMentionText(entity.arc, `${entity.id}-arc`)
         )
         : undefined,
       speechPatterns.length > 0
@@ -166,12 +290,12 @@ export class EntityCardsWidget extends ReactWidget {
         ))
         : undefined,
       entity.backstory
-        ? this.renderCollapsible(nls.localize('ai-focused-editor/entities/field-backstory', 'Backstory'), React.createElement('p', { className: 'afe-entity-backstory' }, ...this.renderMentionText(entity.backstory, `${entity.uri}-backstory`)))
+        ? this.renderCollapsible(nls.localize('ai-focused-editor/entities/field-backstory', 'Backstory'), React.createElement('p', { className: 'afe-entity-backstory' }, ...this.renderMentionText(entity.backstory, `${entity.id}-backstory`)))
         : undefined,
       entity.notes
-        ? this.renderCollapsible(nls.localize('ai-focused-editor/entities/field-notes', 'Notes'), React.createElement('p', { className: 'afe-entity-notes' }, ...this.renderMentionText(entity.notes, `${entity.uri}-notes`)))
+        ? this.renderCollapsible(nls.localize('ai-focused-editor/entities/field-notes', 'Notes'), React.createElement('p', { className: 'afe-entity-notes' }, ...this.renderMentionText(entity.notes, `${entity.id}-notes`)))
         : undefined,
-      React.createElement('code', { className: 'afe-entity-path' }, entity.path),
+      React.createElement('code', { className: 'afe-entity-path' }, entity.sourcePath),
       React.createElement(
         'button',
         {
@@ -200,11 +324,11 @@ export class EntityCardsWidget extends ReactWidget {
    * Index every entity under both its real `kind:id` and the `char` shorthand,
    * plus a bare `id:` key so `[[id]]` fallbacks resolve to the first match.
    */
-  protected buildMentionIndex(snapshot: NarrativeEntitySnapshot): Map<string, NarrativeEntity> {
+  protected buildMentionIndex(snapshot: EntityCardsSnapshot): Map<string, NarrativeEntity> {
     const index = new Map<string, NarrativeEntity>();
     for (const entity of snapshot.entities) {
-      index.set(`${entity.kind}:${entity.id}`, entity);
-      index.set(`${this.toTagKind(entity.kind)}:${entity.id}`, entity);
+      index.set(`${entity.type}:${entity.id}`, entity);
+      index.set(`${this.toTagKind(entity.type)}:${entity.id}`, entity);
       const bareKey = `id:${entity.id}`;
       if (!index.has(bareKey)) {
         index.set(bareKey, entity);
@@ -213,7 +337,7 @@ export class EntityCardsWidget extends ReactWidget {
     return index;
   }
 
-  protected toTagKind(kind: NarrativeEntityKind): string {
+  protected toTagKind(kind: string): string {
     return kind === 'character' ? 'char' : kind;
   }
 
@@ -234,7 +358,7 @@ export class EntityCardsWidget extends ReactWidget {
       }
       const { mention } = segment;
       const entity = this.resolveMention(mention);
-      const display = mention.label ?? entity?.label ?? mention.id;
+      const display = mention.label ?? entity?.name ?? mention.id;
       const key = `${keyPrefix}-${index}`;
       if (!entity) {
         return React.createElement('span', {
@@ -246,7 +370,7 @@ export class EntityCardsWidget extends ReactWidget {
       return React.createElement('span', {
         key,
         className: 'afe-entity-mention',
-        title: nls.localize('ai-focused-editor/entities/open-entity', 'Open {0}: {1}', entity.kind, entity.label),
+        title: nls.localize('ai-focused-editor/entities/open-entity', 'Open {0}: {1}', entity.type, entity.name),
         role: 'link',
         tabIndex: 0,
         onClick: () => this.openEntity(entity),
@@ -260,7 +384,20 @@ export class EntityCardsWidget extends ReactWidget {
     });
   }
 
+  /**
+   * Navigate to the card's YAML file.
+   *
+   * DERIVED FROM `sourcePath` + workspace root, NEVER FROM `entity.sourceUri`
+   * (TECH_SPEC WP-7 §4). `sourceUri` is a known-stale field after a rename in
+   * both store adapters — neither repairs it on `moveDocument` — and the two
+   * existing consumers that navigate off the index (`narrative-memory-tool-answers.ts`,
+   * `narrative-memory-markers.ts`) already made this same call for the same
+   * reason; this widget follows the same rule rather than inventing a second one.
+   */
   protected async openEntity(entity: NarrativeEntity): Promise<void> {
-    await open(this.openerService, new URI(entity.uri));
+    if (!this.rootUri) {
+      return;
+    }
+    await open(this.openerService, this.rootUri.resolve(entity.sourcePath));
   }
 }

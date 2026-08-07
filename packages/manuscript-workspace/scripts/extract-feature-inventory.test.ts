@@ -1,15 +1,65 @@
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { computeSourceFingerprint } from '../src/node/docs/source-scan';
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from 'bun:test';
+import { computeSourceFingerprint, INVENTORY_SOURCE_ROOTS } from '../src/node/docs/source-scan';
+
+/**
+ * The per-test budget, STATED rather than inherited (ISS: flaky `verify`).
+ *
+ * Bun's default is 5000 ms, calibrated for an in-process unit test. Every test
+ * in this file instead BOOTS A `bun` SUBPROCESS and runs the real CLI end to
+ * end — deliberately, so the build path itself is what is under test (see
+ * {@link runExtractor}). That is a different cost class, and the default does
+ * not fit it.
+ *
+ * Measured at HEAD `adaff12`, 8-core machine:
+ *
+ *   - idle: ~0.15 s per fixture test, essentially all of it interpreter
+ *     startup (`bun` boot plus loading the 9 MB `typescript` lib); the whole
+ *     44-test file is ~6.7 s, of which ~85% is those 44 process spawns.
+ *   - the real-tree case adds ~0.5 s of actual work, ~80% of it
+ *     `ts.createSourceFile` over 381 files / 3.73 MB.
+ *   - under load average ~110, that ~0.15 s spawn floor inflates past 1.5 s,
+ *     and THREE separate tests here hit the 5000 ms wall — the real-tree case,
+ *     `is stable without edits and moves after one` (3 spawns) and `output is
+ *     deterministic` (2 spawns). The exposure is the whole file, not one case.
+ *
+ * So the number is sized against the LOAD MULTIPLIER (measured 1x to >30x),
+ * not against tree growth: 60 s is ~85x the idle real-tree cost and ~12x the
+ * worst loaded observation. For tree growth to consume that margin the walked
+ * source set would have to grow from 381 files to roughly 32 000.
+ *
+ * The cost of the number is honest and small: a genuine HANG now takes 60 s to
+ * report instead of 5 s, once, in a file that already runs for ~7 s. What it
+ * buys is that a red `verify` means the inventory actually broke — which is the
+ * whole value of the gate, since this repository has no CI and `verify` is it.
+ */
+const SUBPROCESS_TEST_TIMEOUT_MS = 60_000;
+
+jest.setTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 /**
  * Fixture trees and extractor output live in the OS temp directory, never in the
  * working tree: a test that leaves an artefact behind shows up in `git status`,
  * misleads the next reader and invites an accidental commit.
+ *
+ * PER PROCESS (`process.pid`), because the path used to be a FIXED name shared
+ * by every run of this file at once. `afterEach` removes TEST_ROOT wholesale,
+ * so two overlapping runs — `bun run verify` in one terminal and `bun test` in
+ * another, or two agents on one machine — deleted each other's fixtures
+ * mid-test. The generator/extractor subprocess then failed on a repo that had
+ * evaporated under it and the run came back with a dozen assertion failures
+ * that had nothing to do with any code change. Observed three times while
+ * diagnosing the timeout flake, and it is the same disease: a gate going red
+ * for a reason unrelated to the edit under test.
+ *
+ * The trade is that a run killed mid-flight now leaves its directory behind
+ * instead of having the next run reclaim the fixed name. That is the OS temp
+ * directory's job, and an orphaned scratch directory is a far cheaper failure
+ * than a false red on the only gate this repository has.
  */
-const TEST_ROOT = join(tmpdir(), 'afe-extract-inventory-test');
+const TEST_ROOT = join(tmpdir(), `afe-extract-inventory-test-${process.pid}`);
 
 const SCRIPT_PATH = join(import.meta.dir, 'extract-feature-inventory.mjs');
 
@@ -19,11 +69,15 @@ let outCounter = 0;
 /** …/packages/manuscript-workspace/scripts → the repository root. */
 const REPO_ROOT = join(import.meta.dir, '../../..');
 
-const PACKAGE_SOURCE_DIRS = [
-  'packages/manuscript-workspace/src',
-  'packages/ai-connect-theia/src',
-  'packages/document-preview-theia/src'
-];
+/**
+ * The declared traversal roots as bare directories — DERIVED from
+ * {@link INVENTORY_SOURCE_ROOTS}, for the same reason the twin list in
+ * `src/node/docs/source-scan.test.ts` is: this was the SECOND hand-kept copy of
+ * one declaration, and adding a root in TASK-022 WP-0 broke both. The extractor
+ * rejects a declared-but-absent root, so a fixture repo that does not create
+ * every declared root fails for a reason that has nothing to do with the test.
+ */
+const PACKAGE_SOURCE_DIRS = INVENTORY_SOURCE_ROOTS.map(root => root.replace(/\/\*\*\/\*\.ts$/, ''));
 
 /** Where a fixture's own sources go, so a test never depends on the real tree. */
 const FIXTURE_SOURCE_DIR = 'packages/manuscript-workspace/src/browser';
@@ -878,11 +932,12 @@ export const A: Command = { id: 'ai-focused-editor.a', label: 'A' };
 
     const inventory = await extract(repoRoot);
     expect(inventory.version).toBe(2);
-    expect(inventory.packages).toEqual([
-      'manuscript-workspace',
-      'ai-connect-theia',
-      'document-preview-theia'
-    ]);
+    // Derived from the declaration for the same reason PACKAGE_SOURCE_DIRS is:
+    // the artifact lists exactly the traversed packages, so restating them here
+    // would be a third copy of one list.
+    expect(inventory.packages).toEqual(
+      PACKAGE_SOURCE_DIRS.map(dir => dir.replace(/^packages\//, '').replace(/\/src$/, ''))
+    );
     expect(inventory.sourceFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 
@@ -989,28 +1044,62 @@ export const A: Command = { id: 'ai-focused-editor.a', label: 'A' };
 });
 
 describe('control numbers on the REAL tree (§F.2/§F.9)', () => {
-  let cached: Promise<Inventory> | undefined;
-  const realInventory = (): Promise<Inventory> => (cached ??= extract(REPO_ROOT));
+  /**
+   * ONE walk of the real tree for the whole block, in a HOOK rather than
+   * memoised into whichever test happens to run first.
+   *
+   * The previous shape was `cached ??= extract(REPO_ROOT)` called from each
+   * test. It shared the walk correctly, but it charged the entire shared cost
+   * to the individual 5000 ms budget of one arbitrary test, and when that test
+   * ran out of budget bun killed the dangling child (SIGTERM, exit 143), the
+   * memoised promise settled REJECTED, and the other seven tests failed
+   * instantly against the poisoned cache — every one of them reporting
+   * `expect(exitCode).toBe(0) / Received: 143`, none of them naming the actual
+   * cause. One slow walk, eight red tests, and a diagnostic that points at the
+   * wrong thing: precisely the shape that teaches a reader to re-run `verify`
+   * instead of investigating it.
+   *
+   * As a hook the cost is paid once, under a budget stated at the call site,
+   * and a failure is reported ONCE as a setup failure.
+   */
+  let inventory: Inventory;
 
-  test('commands >= 165 and preferences === 22 (§C.2/§C.3)', async () => {
-    const inventory = await realInventory();
+  beforeAll(async () => {
+    // `beforeAll` runs after the preceding block's `afterEach` has removed
+    // TEST_ROOT, and the extractor writes its artifact there without creating
+    // parent directories — so this hook has to establish the directory the way
+    // `beforeEach` does for every other test.
+    await fs.mkdir(TEST_ROOT, { recursive: true });
+    inventory = await extract(REPO_ROOT);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test('commands >= 165 and preferences === 27 (§C.2/§C.3)', () => {
     expect(inventory.commands.length).toBeGreaterThanOrEqual(165);
-    expect(inventory.preferences).toHaveLength(22);
+    // 22 → 27 in TASK-022 WP-5: the five `narrativeMemory.*` keys of AD-5,
+    // contributed by `packages/narrative-knowledge/src/browser/narrative-memory-preferences.ts`.
+    // The count stays EXACT rather than becoming a floor. Its job is to notice
+    // that the extractor's reach changed, and a floor would notice growth while
+    // staying silent about the failure that actually matters — a schema the
+    // walk stops seeing, which is what `docs:drift` then goes green about.
+    expect(inventory.preferences).toHaveLength(27);
   });
 
-  test('all three packages contribute, and both namespaces are present (П2)', async () => {
-    const inventory = await realInventory();
+  test('all four packages contribute, and both namespaces are present (П2)', () => {
     const packages = new Set(inventory.commands.map(command => command.file.split('/')[1]));
+    // `narrative-knowledge` joined in TASK-022 WP-5. WP-0 put it in
+    // `INVENTORY_SOURCE_ROOTS` ahead of time — a package inherits no
+    // repository-wide gate for free — but it declared no command until now, so
+    // this list held at three while the root was already four.
     expect([...packages].sort()).toEqual([
       'ai-connect-theia',
       'document-preview-theia',
-      'manuscript-workspace'
+      'manuscript-workspace',
+      'narrative-knowledge'
     ]);
     expect(inventory.commands.some(command => command.id.startsWith('ai-connect.'))).toBe(true);
   });
 
-  test('three skipped declarations: the dynamic command, the dynamic prompt-fragment site, and the runtime typography schema (§C.6, WP-U3-2, ISS-239)', async () => {
-    const inventory = await realInventory();
+  test('three skipped declarations: the dynamic command, the dynamic prompt-fragment site, and the runtime typography schema (§C.6, WP-U3-2, ISS-239)', () => {
     // Sorted by file then line: `ai-mode-dynamic` precedes `ai-mode-prompt-fragment`,
     // and both precede `typography/typography-frontend-module` alphabetically.
     // The command line tracks the current source position (the A2 refactor that
@@ -1045,8 +1134,7 @@ describe('control numbers on the REAL tree (§F.2/§F.9)', () => {
     ]);
   });
 
-  test('dynamicPrefixes covers all three dynamic families — the subject for kind:"dynamic" (F-D7-1, WP-U3-2, ISS-239)', async () => {
-    const inventory = await realInventory();
+  test('dynamicPrefixes covers all three dynamic families — the subject for kind:"dynamic" (F-D7-1, WP-U3-2, ISS-239)', () => {
     expect(inventory.dynamicPrefixes).toEqual([
       'ai-focused-editor.mode.run.',
       'ai-focused-editor.project-mode.',
@@ -1054,8 +1142,7 @@ describe('control numbers on the REAL tree (§F.2/§F.9)', () => {
     ]);
   });
 
-  test('codeReferencedIds covers the two Theia settings commands — the subject for usedBy:"code" (§C.8)', async () => {
-    const inventory = await realInventory();
+  test('codeReferencedIds covers the two Theia settings commands — the subject for usedBy:"code" (§C.8)', () => {
     expect(inventory.codeReferencedIds).toEqual(expect.arrayContaining([
       'preferences:open',
       'workbench.action.openGlobalSettings'
@@ -1064,8 +1151,7 @@ describe('control numbers on the REAL tree (§F.2/§F.9)', () => {
     expect(inventory.codeReferencedIds.some(id => id.startsWith('ai-focused-editor.'))).toBe(false);
   });
 
-  test('every preference key is reported at a real schema, and none is a legacy const', async () => {
-    const inventory = await realInventory();
+  test('every preference key is reported at a real schema, and none is a legacy const', () => {
     expect(inventory.preferences.every(preference => !!preference.schema)).toBe(true);
     expect(inventory.preferences.some(preference => preference.key.includes('legacy'))).toBe(false);
     expect(inventory.preferences.map(preference => preference.key)).toContain(
@@ -1073,8 +1159,7 @@ describe('control numbers on the REAL tree (§F.2/§F.9)', () => {
     );
   });
 
-  test('the three entity families are exposed (WP-U3-2/3/4)', async () => {
-    const inventory = await realInventory();
+  test('the three entity families are exposed (WP-U3-2/3/4)', () => {
     expect(inventory.promptFragments.map(fragment => fragment.id)).toContain(
       'ai-focused-editor.diagram-author'
     );
@@ -1085,8 +1170,7 @@ describe('control numbers on the REAL tree (§F.2/§F.9)', () => {
     expect(inventory.skills.map(skill => skill.id)).toContain('skill:docs-workflow');
   });
 
-  test('no id from outside our namespaces slipped in (П1)', async () => {
-    const inventory = await realInventory();
+  test('no id from outside our namespaces slipped in (П1)', () => {
     const foreign = inventory.commands.filter(
       command =>
         !command.id.startsWith('ai-focused-editor.') && !command.id.startsWith('ai-connect.')

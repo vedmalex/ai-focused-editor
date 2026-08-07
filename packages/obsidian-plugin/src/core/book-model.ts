@@ -22,7 +22,7 @@ import {
   parseEntityTypesYaml,
   type EffectiveEntityType,
   type EntityTypeProblem
-} from '@ai-focused-editor/manuscript-workspace/src/common/entity-type-registry';
+} from '@ai-focused-editor/narrative-knowledge/src/common/entity-type-registry';
 
 /** One entry in the flat entity index (one narrative entity card). */
 export interface EntityIndexEntry {

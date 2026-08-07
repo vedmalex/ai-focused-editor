@@ -11,7 +11,7 @@ Local content map. Managed sections are auto-updated by update-index.ts. Add cus
 <!-- LLM_WIKI_INDEX_MANAGED — DO NOT EDIT BETWEEN MARKERS; use llm-wiki-router scripts -->
 ---
 node: /Users/vedmalex/work/ai-editor-3/.llm-wiki
-updated: 2026-07-18T03:42:49.471Z
+updated: 2026-07-21T15:34:37.194Z
 ---
 
 # Index — .llm-wiki
@@ -22,9 +22,11 @@ updated: 2026-07-18T03:42:49.471Z
 |------|---------|------|----------|
 | [theia-extensions-vs-plugins](./pages/theia-extensions-vs-plugins.md) | Eclipse Theia offers **four complementary extension mechanisms**, each targeting | summary | 2026-07-09 |
 | [theia-ai](./pages/theia-ai.md) | Theia AI is a framework for integrating tailored AI capabilities into Theia-base | summary | 2026-07-09 |
+| [ai-editor-ai-connect-architecture](./pages/ai-editor-ai-connect-architecture.md) | Пакет `@ai-focused-editor/ai-connect-theia` осуществляет интеграцию внешних и ло | concept | 2026-07-21 |
 | [preferences-system](./pages/preferences-system.md) | Theia's preferences system lets an extension contribute type-safe configuration: | concept | 2026-07-17 |
 | [ai-focused-editor-feature-map](./pages/ai-focused-editor-feature-map.md) | A complete, code-accurate map of the **AI Focused Editor**, a [Theia](https://th | concept | 2026-07-18 |
 | [theia-preferences](./pages/theia-preferences.md) | Theia's preferences system lets extensions contribute configuration options, shi | summary | 2026-07-09 |
+| [ai-editor-monaco-decorations](./pages/ai-editor-monaco-decorations.md) | В пакете `@ai-focused-editor/manuscript-workspace` реализована динамическая отри | concept | 2026-07-21 |
 | [theia-architecture-overview](./pages/theia-architecture-overview.md) | Theia runs a single codebase across three deployment targets — native desktop (E | summary | 2026-07-09 |
 | [theia-ai-agents](./pages/theia-ai-agents.md) | Theia AI is Theia's native, framework-level subsystem for building tailored AI c | concept | 2026-07-09 |
 | [dependency-injection](./pages/dependency-injection.md) | Dependency injection (DI) is the mechanism through which every part of a Theia a | concept | 2026-07-09 |
@@ -37,6 +39,7 @@ updated: 2026-07-18T03:42:49.471Z
 | [theia-extensions](./pages/theia-extensions.md) | A Theia extension is a modular **npm package** that resides inside a Theia appli | concept | 2026-07-09 |
 | [theia-composing-applications](./pages/theia-composing-applications.md) | Theia is a framework for building custom IDE-style applications and developer to | summary | 2026-07-09 |
 | [theia-platform-overview](./pages/theia-platform-overview.md) | Eclipse Theia is an **open, extensible platform for building custom cloud and de | summary | 2026-07-09 |
+| [ai-editor-theia-integration](./pages/ai-editor-theia-integration.md) | В кодовой базе `ai-editor-3` используется Eclipse Theia платформы **1.73.1**. Ин | concept | 2026-07-21 |
 | [contribution-points](./pages/contribution-points.md) | A contribution point is an extensibility hook expressed as an interface: a *defi | concept | 2026-07-09 |
 | [theia-services-and-contributions](./pages/theia-services-and-contributions.md) | Theia extensions interact through two decoupled mechanisms — **services** and ** | summary | 2026-07-09 |
 <!-- INDEX_PAGES_END -->

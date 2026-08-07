@@ -6,7 +6,7 @@ import {
   parseEntityTypesYaml,
   type EntityFieldDescriptor,
   type EntityTypeDescriptor
-} from './entity-type-registry';
+} from '@ai-focused-editor/narrative-knowledge';
 
 function capitalize(value: string): string {
   return value.length > 0 ? value.charAt(0).toUpperCase() + value.slice(1) : value;

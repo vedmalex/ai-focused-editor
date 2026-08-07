@@ -1,7 +1,7 @@
 # TEMPORARY FORK — `@ai-focused-editor/git`
 
 > **This package is a temporary vendored fork. Delete it as soon as upstream
-> `@theia/git` ships a release built against Theia platform `1.73.x`.**
+> `@theia/git` ships a release built against Theia platform `1.74.x`.**
 
 ## Origin
 
@@ -172,3 +172,24 @@ directory walk (`.git` folder discovery, depth ≤ 6, dot/system dirs skipped)
 — identical behavior for writing workspaces, zero native code, both targets
 build in any order. When dropping this fork for upstream `@theia/git`, no
 special native handling remains to undo.
+
+## Fork change: rebuilt against Theia platform 1.74.0 (2026-08-07)
+
+Platform-wide bump from `1.73.1` (#70). Dependencies in `package.json` moved
+`1.73.1 → 1.74.0` (`@theia/monaco-editor-core` unchanged — its own line, not
+tied to platform numbering).
+
+**No source changes were needed.** The "1.60 → 1.73 API drift fixes" below
+still cover every incompatibility that matters: `tsc` type-checks clean
+against the bumped `@theia/*` types, and the fork was confirmed to actually
+initialize at runtime — a browser-target build boots with the fork wired in
+and `DefaultGitInit` logs `Using Git [2.43.0] from the PATH`, i.e. the dugite
+backend resolved the system git and came up. Nothing new opened up between
+1.73 and 1.74 for this extension.
+
+Upstream `@theia/git` is still frozen at `1.60.2` and officially deprecated
+(`npm view @theia/git deprecated` — "no longer maintained, use the built-in
+VS Code Git extension instead"), so the top-of-file drop condition is
+effectively unreachable: it will not be a *newer* `@theia/git` that retires
+this fork, but the migration to the VS Code built-in Git extension described
+under "How to drop this fork".

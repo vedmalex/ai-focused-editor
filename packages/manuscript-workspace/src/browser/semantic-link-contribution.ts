@@ -21,17 +21,19 @@ import * as monaco from '@theia/monaco-editor-core';
 import type { NarrativeEntity } from '../common';
 import { NarrativeEntityService } from '../common';
 import {
+  parseWikiLinks,
+  type WikiLinkMatch,
+  type WikiLinkOffsetRange
+} from '@ai-focused-editor/narrative-knowledge';
+import {
   findHeadingLine,
   noteCreateContent,
   noteCreatePath,
-  parseWikiLinks,
   resolveNoteLink,
   resolveRelativeLink,
   tagKindToEntityKind,
   type ResolvedNoteLink,
-  type ResolvedRelativeLink,
-  type WikiLinkMatch,
-  type WikiLinkOffsetRange
+  type ResolvedRelativeLink
 } from '../common/link-navigation';
 import type { NoteIndex } from '../common/note-index';
 import { EntityTypeRegistryService } from './entity-type-registry-service';

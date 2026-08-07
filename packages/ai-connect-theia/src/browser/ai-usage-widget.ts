@@ -48,7 +48,7 @@ export class AiUsageWidget extends ReactWidget {
     this.id = AiUsageWidget.ID;
     this.title.label = AiUsageWidget.LABEL;
     this.title.caption = nls.localize('ai-focused-editor/ai-usage/caption', 'Aggregated AI token usage from the request log');
-    this.title.iconClass = 'fa fa-coins';
+    this.title.iconClass = 'fa fa-bar-chart';
     this.title.closable = true;
     this.addClass('afe-ai-usage');
     void this.refresh();

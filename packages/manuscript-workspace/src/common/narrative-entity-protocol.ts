@@ -3,7 +3,7 @@ import type {
   EffectiveEntityType,
   EntityTypeProblem,
   NarrativeEntityKindFromRegistry
-} from './entity-type-registry';
+} from '@ai-focused-editor/narrative-knowledge';
 
 export const NarrativeEntityService = Symbol('NarrativeEntityService');
 export const NarrativeEntityBackendService = Symbol('NarrativeEntityBackendService');

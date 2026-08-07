@@ -14,7 +14,7 @@ import {
   entityKindLabels,
   entityKindTags,
   type NarrativeEntityKindFromRegistry
-} from './entity-type-registry';
+} from '@ai-focused-editor/narrative-knowledge';
 
 /**
  * Entity kinds creatable from an editor selection — the built-in registry kinds
