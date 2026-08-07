@@ -13,12 +13,24 @@
  * was born from — that needs a hung system service on a machine this repository
  * has no way to stand up, and saying so here is cheaper than someone later
  * mistaking green for "the symptom is covered".
+ *
+ * A SECOND DIVERGENCE, NAMED BECAUSE IT ALREADY HID A REAL DEFECT ONCE. The
+ * `buildMaintainer` harness below makes `probeWatcherTouch` push the event
+ * itself, i.e. it models "a touch always produces an event". Production does
+ * not guarantee that — it depends on the probe file being written somewhere the
+ * watcher is not told to ignore, which is a property of the NODE adapter and is
+ * invisible from here. The first version of this feature wrote into `.theia/`,
+ * a directory the watcher receives as an `ignored` glob, so every healthy
+ * session would have answered `silent`; these tests stayed green throughout,
+ * because the double injected the very event production suppressed. The path
+ * choice is therefore load-bearing and lives with its reasoning in
+ * `node-narrative-knowledge-service.ts`; no test in this lane can defend it.
  */
 
 import { describe, expect, test } from 'bun:test';
 import { InMemoryNarrativeIndexStore } from './in-memory-narrative-index-store';
 import { InMemoryConfigStore, NarrativeMemoryConfigurator } from './narrative-memory-configure';
-import { NarrativeIndexMaintainer } from './narrative-index-maintainer';
+import { NarrativeIndexMaintainer, WATCHER_WARMUP_DURATION_MS } from './narrative-index-maintainer';
 import { NarrativeIndexSession, type IndexableFile } from './narrative-index-session';
 import { TestNarrativeFileWatcher } from './narrative-file-watcher';
 import { ManualTimerScheduler } from './narrative-timer';
@@ -175,7 +187,9 @@ async function buildMaintainer(options: { touch?: () => Promise<void> | void; de
   for (let tick = 0; tick < 6; tick++) {
     await Promise.resolve();
   }
-  scheduler.advance(WATCHER_LIVENESS_TIMEOUT_MS);
+  // The maintainer passes its own, longer window (the whole warm-up phase), so
+  // the harness must advance by THAT rather than the module default.
+  scheduler.advance(WATCHER_WARMUP_DURATION_MS);
   for (let tick = 0; tick < 6; tick++) {
     await Promise.resolve();
   }

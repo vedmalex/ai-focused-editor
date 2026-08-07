@@ -37,11 +37,22 @@ import type { NarrativeTimerScheduler } from './narrative-timer';
 /**
  * How long to wait for the probe's own write to come back as an event.
  *
- * SECONDS, ONCE PER SESSION (gh#69's own budget). Long enough that a loaded
- * machine's watcher is not slandered, short enough that nothing user-visible
- * waits on it — nothing does, the probe is fire-and-forget.
+ * THIS NUMBER MUST EXCEED THE WATCHER'S ARMING LAG, AND THE FIRST VERSION DID
+ * NOT. It was three seconds — "seconds, once per session", gh#69's own budget,
+ * read as a licence to pick a small number. But `WATCHER_WARMUP_SWEEP_INTERVAL_MS`
+ * in `narrative-index-maintainer.ts` records a MEASURED gap of up to sixteen
+ * seconds between `watchFileChanges()` resolving and the first event actually
+ * arriving; that whole warm-up phase exists BECAUSE arming is unproven for a
+ * while. A three-second window therefore accused a perfectly healthy but
+ * slow-arming watcher — the second independent way this probe could have lied.
+ *
+ * TWENTY SECONDS IS THE MEASUREMENT PLUS MARGIN, and it costs nothing: the
+ * probe is fire-and-forget, nothing user-visible waits on it, and the caller
+ * (the maintainer) passes its own window explicitly anyway. What matters is
+ * that a default can never be SHORTER than the lag the package itself
+ * documents.
  */
-export const WATCHER_LIVENESS_TIMEOUT_MS = 3_000;
+export const WATCHER_LIVENESS_TIMEOUT_MS = 20_000;
 
 export type WatcherLivenessVerdict =
   /** An event arrived for our own write. Watching works. */

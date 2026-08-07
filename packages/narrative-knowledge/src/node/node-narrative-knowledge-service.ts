@@ -464,25 +464,38 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
   /**
    * Write the liveness probe's own file (ISS-374, gh#69).
    *
-   * `.theia/` AND NOT THE MANUSCRIPT, for two independent reasons: it is on
-   * {@link NARRATIVE_SCAN_SKIPPED_DIRECTORIES} so the write cannot trigger a
-   * real index pass and answer the probe with its own echo, and it is not the
-   * author's book, so a probe file that survives a crash is invisible to them
-   * rather than debris in their chapters. The narrative database already lives
-   * there, so the directory is ours by established convention.
+   * `.afe/` AND EMPHATICALLY NOT `.theia/`. The first version of this wrote into
+   * `.theia/` on the reasoning that the directory is excluded from the index
+   * walk — true, and exactly backwards. `TheiaNarrativeFileWatcher` passes that
+   * SAME skip list to `watchFileChanges` as `ignored`, so a write there is one
+   * the watcher is contractually forbidden to report. The probe listens on that
+   * very stream, so it could never hear its own write: every healthy session
+   * would have answered `silent` and shown the author a permanent, false
+   * "file change notifications stopped". A probe that cannot pass on a working
+   * system is worse than no probe.
    *
-   * NOT DELETED AFTERWARDS, AND THAT IS THE CAREFUL CHOICE RATHER THAN THE LAZY
-   * ONE. Removing it in the same breath would put a create and a delete in one
-   * watcher window, and a watcher that coalesces the pair into nothing would
-   * hand back a FALSE `silent` — the one verdict this probe must never invent,
-   * because it is shown to a human as "your edits are not being seen". One tiny
-   * file, overwritten once per session, in the directory that already holds the
-   * narrative database, is the cheaper trade.
+   * `.afe/` SATISFIES BOTH HALVES, and both were checked rather than assumed:
+   * it is NOT in {@link NARRATIVE_SCAN_SKIPPED_DIRECTORIES}, so events from it
+   * ARE delivered; and `.tmp` is not in `NARRATIVE_SCAN_EXTENSIONS`, so
+   * `isIndexablePath` rejects the file and no re-index results from it.
+   *
+   * ONE NO-OP PASS PER SESSION IS THE PRICE, KNOWINGLY PAID. `onFileChanges`
+   * re-arms the debounce window before anything filters for indexability, so
+   * this single write does cost one empty maintenance pass — "пустой проход
+   * бесплатен" by ОВ-4, and once per session at that. The alternative, a
+   * watcher-deaf probe, costs a false alarm on every session.
+   *
+   * NOT DELETED AFTERWARDS. Removing it in the same breath would put a create
+   * and a delete in one watcher window, and a watcher that coalesces the pair
+   * into nothing would hand back a FALSE `silent` — the one verdict this must
+   * never invent, because a human is shown it as "your edits are not being
+   * seen". One tiny hidden file, overwritten once per session, is the cheaper
+   * trade.
    */
   protected async touchWatcherProbeFile(rootPath: string): Promise<void> {
-    const directory = join(rootPath, '.theia');
+    const directory = join(rootPath, '.afe');
     await fs.mkdir(directory, { recursive: true });
-    await fs.writeFile(join(directory, 'narrative-watcher-probe.tmp'), String(Date.now()), 'utf8');
+    await fs.writeFile(join(directory, 'watcher-probe.tmp'), String(Date.now()), 'utf8');
   }
 
   /**

@@ -644,7 +644,18 @@ export class NarrativeIndexMaintainer {
     if (touch === undefined) {
       return;
     }
-    const verdict = await probeWatcherLiveness({ watcher, scheduler: this.scheduler, touch });
+    // THE WHOLE WARM-UP PHASE IS THE PATIENCE BUDGET, not an arbitrary few
+    // seconds. That phase exists precisely because a freshly-armed watcher may
+    // stay quiet for a documented sixteen seconds; speaking before it has given
+    // up would accuse a watcher the maintainer itself is still waiting on.
+    // Deriving the window from `WATCHER_WARMUP_DURATION_MS` keeps the two from
+    // drifting apart the way an independent constant already did once.
+    const verdict = await probeWatcherLiveness({
+      watcher,
+      scheduler: this.scheduler,
+      touch,
+      timeoutMs: WATCHER_WARMUP_DURATION_MS
+    });
     if (!this.started || verdict !== 'silent') {
       return;
     }
@@ -702,9 +713,17 @@ export class NarrativeIndexMaintainer {
    * claim about a window that is merely not the writer. The silence here is a
    * deferral to an existing, more precise indicator, not an absence of one.
    *
-   * `extraction-failed` IS THE HONEST CODE FOR THE REST. `IndexFailureCode` is
-   * closed and has no lock member; the sweep's remaining failure modes are the
-   * same read/extract work the watcher lane already reports under that code.
+   * `extraction-failed` FOR THE REST, WITH A KNOWN LIMITATION STATED RATHER
+   * THAN GLOSSED. It is the code the watcher lane already uses for the same
+   * read/extract work, and `IndexFailureCode` has no lock member — but the
+   * union DOES have `disk-full` and `permission-denied`, and `src/node`'s
+   * `IndexFailureReporter` already maps raw errors onto them. This method
+   * discards the caught error and so cannot reach that classification: a
+   * sweep that failed on a full disk is reported here as an extraction
+   * failure. Closing that needs a classifier PORT (the maintainer lives in
+   * `common/` and may not import from `node/`), which is a larger change than
+   * the silence this method exists to end. Recorded as follow-up work rather
+   * than left to be discovered as a lie in this comment.
    */
   private recordSweepFailure(trigger: MaintenanceTrigger): void {
     const state = this.session.state();
