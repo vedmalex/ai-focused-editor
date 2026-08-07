@@ -59,6 +59,12 @@ export const NARRATIVE_FIND_ENTITIES_TOOL_ID = 'narrative_find_entities';
 export const NARRATIVE_FIND_MENTIONS_TOOL_ID = 'narrative_find_mentions';
 export const NARRATIVE_ENTITY_RELATIONS_TOOL_ID = 'narrative_entity_relations';
 export const NARRATIVE_DOCUMENT_CONTEXT_TOOL_ID = 'narrative_document_context';
+/**
+ * gh#47. NAMED, NOT NUMBERED — architecture §4.2. Three plans in this group
+ * each called their tool "the fifth"; an ordinal is a position at the moment of
+ * writing, not an identity, and two of them cannot both be right.
+ */
+export const NARRATIVE_ENTITY_APPEARANCES_TOOL_ID = 'narrative_entity_appearances';
 
 /** Every id above, as data — a test walks it for uniqueness and for the
  *  `allowedTools` list of the skill. */
@@ -66,13 +72,14 @@ export const NARRATIVE_MEMORY_TOOL_IDS = [
   NARRATIVE_FIND_ENTITIES_TOOL_ID,
   NARRATIVE_FIND_MENTIONS_TOOL_ID,
   NARRATIVE_ENTITY_RELATIONS_TOOL_ID,
-  NARRATIVE_DOCUMENT_CONTEXT_TOOL_ID
+  NARRATIVE_DOCUMENT_CONTEXT_TOOL_ID,
+  NARRATIVE_ENTITY_APPEARANCES_TOOL_ID
 ] as const;
 
 /**
  * Localization keys of each tool's name and description.
  *
- * A TOTAL `Record` OVER THE FOUR IDS, so a fifth tool fails to compile here
+ * A TOTAL `Record` OVER EVERY ID, so a fifth tool fails to compile here
  * rather than shipping a raw identifier into the model's tool list — the same
  * device `STALE_DEFAULTS` uses over `IndexStaleReason`. The phrases themselves
  * live in `NARRATIVE_MEMORY_TOOL_PHRASES`; see the note there about why the two
@@ -97,6 +104,10 @@ export const NARRATIVE_TOOL_PHRASE_KEYS: Record<
   [NARRATIVE_DOCUMENT_CONTEXT_TOOL_ID]: {
     name: `${NARRATIVE_MEMORY_NLS_PREFIX}/tool-document-context-name`,
     description: `${NARRATIVE_MEMORY_NLS_PREFIX}/tool-document-context-description`
+  },
+  [NARRATIVE_ENTITY_APPEARANCES_TOOL_ID]: {
+    name: `${NARRATIVE_MEMORY_NLS_PREFIX}/tool-entity-appearances-name`,
+    description: `${NARRATIVE_MEMORY_NLS_PREFIX}/tool-entity-appearances-description`
   }
 };
 
@@ -193,7 +204,11 @@ export const NARRATIVE_TOOL_NOTICE_KEYS = {
   broken: `${NARRATIVE_MEMORY_NLS_PREFIX}/tool-notice-broken`,
   wholeFileEvidence: `${NARRATIVE_MEMORY_NLS_PREFIX}/tool-notice-whole-file-evidence`,
   noWorkspace: `${NARRATIVE_MEMORY_NLS_PREFIX}/tool-notice-no-workspace`,
-  documentNotIndexed: `${NARRATIVE_MEMORY_NLS_PREFIX}/tool-notice-document-not-indexed`
+  documentNotIndexed: `${NARRATIVE_MEMORY_NLS_PREFIX}/tool-notice-document-not-indexed`,
+  /** gh#47: a required argument the caller omitted. Said in words rather than
+   *  thrown — an exception across the tool boundary is paraphrased by the model
+   *  into whatever it guesses happened. */
+  missingEntityId: `${NARRATIVE_MEMORY_NLS_PREFIX}/tool-notice-missing-entity-id`
 } as const;
 
 /**

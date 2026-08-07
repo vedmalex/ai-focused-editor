@@ -4,6 +4,7 @@ import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service
 import type { ToolProvider, ToolRequest } from '@theia/ai-core';
 import {
   NARRATIVE_DOCUMENT_CONTEXT_TOOL_ID,
+  NARRATIVE_ENTITY_APPEARANCES_TOOL_ID,
   NARRATIVE_ENTITY_RELATIONS_TOOL_ID,
   NARRATIVE_FIND_ENTITIES_TOOL_ID,
   NARRATIVE_FIND_MENTIONS_TOOL_ID,
@@ -16,6 +17,8 @@ import {
 } from '../common';
 import {
   narrativeDocumentContextAnswer,
+  narrativeEntityAppearancesAnswer,
+  narrativeMissingEntityIdAnswer,
   narrativeEntityRelationsAnswer,
   narrativeFindEntitiesAnswer,
   narrativeFindMentionsAnswer,
@@ -242,6 +245,74 @@ export class NarrativeFindMentionsTool extends NarrativeMemoryTool {
  * different question with a different cost, and `narrative_document_context`
  * already answers the passage-shaped version of it.
  */
+/**
+ * `narrative_entity_appearances` (gh#47).
+ *
+ * WHY A TOOL AND NOT "USE find_mentions AND SORT". Mentions come back in
+ * insertion order and carry no chapter; putting them in the order the book
+ * reads needs the manifest, and quoting them needs the file plus the hash check
+ * only the backend can perform. A model asked to do that itself would either
+ * report the wrong first appearance or quote a passage that has since moved.
+ *
+ * THE UNPLACEABLE ANSWER IS PART OF THE CONTRACT, not an edge case: an entity
+ * that appears only in a chapter cut from the build has appearances and NO
+ * first appearance, and the tool says exactly that.
+ */
+@injectable()
+export class NarrativeEntityAppearancesTool extends NarrativeMemoryTool {
+  static readonly ID = NARRATIVE_ENTITY_APPEARANCES_TOOL_ID;
+
+  getTool(): ToolRequest {
+    return {
+      id: NarrativeEntityAppearancesTool.ID,
+      ...this.localized(NARRATIVE_ENTITY_APPEARANCES_TOOL_ID),
+      parameters: {
+        type: 'object',
+        properties: {
+          entityId: { type: 'string', description: 'The entity whose appearances to list.' },
+          direction: {
+            type: 'string',
+            description:
+              'asc reads the book forwards (use it for a first appearance), desc backwards (for the most recent). Defaults to asc.'
+          },
+          limit: { type: 'number', description: 'How many appearances to return, after ordering.' },
+          withExcerpt: {
+            type: 'boolean',
+            description: 'Include the quoted passage. Costs one file read per document; defaults to false.'
+          },
+          withSpread: {
+            type: 'boolean',
+            description: 'Also return every document holding a mention, with counts. Never capped by limit.'
+          }
+        },
+        required: ['entityId']
+      },
+      handler: async (argString: string) => {
+        const args = this.parseArgs(argString);
+        const entityId = this.str(args, 'entityId');
+        if (entityId === undefined) {
+          // Unlike relations, there is no legible book-wide version of this
+          // question: "where does everything appear" is the whole mention table.
+          return JSON.stringify(narrativeMissingEntityIdAnswer());
+        }
+        const direction = this.str(args, 'direction');
+        const limit = this.num(args, 'limit');
+        return this.answer(async rootUri =>
+          narrativeEntityAppearancesAnswer(
+            rootUri,
+            await this.service.getEntityAppearances(rootUri, entityId, {
+              ...(direction === 'desc' ? { direction: 'desc' as const } : { direction: 'asc' as const }),
+              ...(limit === undefined ? {} : { limit }),
+              ...(this.bool(args, 'withExcerpt') === undefined ? {} : { withExcerpt: this.bool(args, 'withExcerpt') }),
+              ...(this.bool(args, 'withSpread') === undefined ? {} : { withSpread: this.bool(args, 'withSpread') })
+            })
+          )
+        );
+      }
+    };
+  }
+}
+
 @injectable()
 export class NarrativeEntityRelationsTool extends NarrativeMemoryTool {
   static readonly ID = NARRATIVE_ENTITY_RELATIONS_TOOL_ID;

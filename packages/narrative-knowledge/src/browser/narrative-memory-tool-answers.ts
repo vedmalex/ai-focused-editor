@@ -4,7 +4,10 @@ import {
   compareEntitiesForDisplay,
   isRangeEvidence,
   narrativeToolIndexReport,
+  type EntityAppearanceResult,
   type Envelope,
+  type ExcerptUnavailableReason,
+  type MentionOrderExclusion,
   type EvidenceKind,
   type EvidenceRange,
   type EvidenceRef,
@@ -211,6 +214,32 @@ export interface NarrativeToolAnswer {
    * above.
    */
   readonly documentIndexed?: false;
+  /** gh#47. Present only on `narrative_entity_appearances`. */
+  readonly appearances?: readonly NarrativeToolAppearance[];
+  /** Present only when the caller asked for the spread. */
+  readonly documentCount?: number;
+  readonly documents?: readonly NarrativeToolAppearanceDocument[];
+}
+
+/** One appearance, as a model sees it (gh#47). */
+export interface NarrativeToolAppearance {
+  readonly entityId: string;
+  readonly evidence: NarrativeToolEvidence;
+  readonly chapterTitle?: string;
+  readonly chapterOrder?: number;
+  /** Present exactly when this appearance has no place in the built book. */
+  readonly notInBookOrder?: MentionOrderExclusion;
+  readonly excerpt?: string;
+  /** Present exactly when {@link excerpt} is absent and one was asked for. */
+  readonly excerptUnavailable?: ExcerptUnavailableReason;
+}
+
+/** One document holding mentions, with its count (gh#47). */
+export interface NarrativeToolAppearanceDocument {
+  readonly path: string;
+  readonly mentions: number;
+  readonly title?: string;
+  readonly notInBookOrder?: MentionOrderExclusion;
 }
 
 // ---------------------------------------------------------------------------
@@ -427,6 +456,69 @@ export function narrativeEntityRelationsAnswer(
   const projector = new EvidenceProjector(rootUri);
   return assemble(result.state, projector, () => ({
     relations: result.data.map(relation => projector.relation(relation))
+  }));
+}
+
+/**
+ * The answer for a call that named no entity (gh#47).
+ *
+ * `answered: false` AND NO DATA KEY, which is the discipline the whole tool
+ * surface follows: a data key present but empty asserts that the question was
+ * asked and came back empty. It was not asked at all.
+ */
+export function narrativeMissingEntityIdAnswer(): NarrativeToolAnswer {
+  return {
+    index: { state: 'absent', generation: 0, answered: false, absentCause: 'no-manuscript' },
+    notice: localize([NARRATIVE_TOOL_NOTICE_KEYS.missingEntityId])
+  };
+}
+
+/**
+ * `narrative_entity_appearances` (gh#47).
+ *
+ * THE TWO HONESTIES THIS ANSWER OWES A MODEL, and both are the difference
+ * between a useful recall and a confident invention:
+ *
+ *  - an appearance with `orderExclusion` is NOT a first or latest appearance.
+ *    It is returned, because it is a real mention, and it carries WHY it cannot
+ *    be placed. A model told only "here are the appearances in order" would
+ *    happily report a chapter cut from the build as where a character debuts.
+ *  - an appearance with `excerptUnavailable` has NO quotation, and the reason
+ *    travels with it. Passing the field through as an absent string would let a
+ *    model narrate silence as "the passage is empty".
+ */
+export function narrativeEntityAppearancesAnswer(
+  rootUri: string,
+  result: Envelope<EntityAppearanceResult>
+): NarrativeToolAnswer {
+  const projector = new EvidenceProjector(rootUri);
+  return assemble(result.state, projector, () => ({
+    appearances: result.data.appearances.map(appearance => ({
+      entityId: appearance.mention.entityId,
+      evidence: projector.of(appearance.mention.evidence),
+      ...(appearance.chapterTitle === undefined ? {} : { chapterTitle: appearance.chapterTitle }),
+      ...(appearance.chapterOrder === undefined ? {} : { chapterOrder: appearance.chapterOrder }),
+      // Present ONLY when it applies, so its presence is the signal rather than
+      // a value the model has to compare against a sentinel.
+      ...(appearance.orderExclusion === undefined
+        ? {}
+        : { notInBookOrder: appearance.orderExclusion }),
+      ...(appearance.excerpt === undefined ? {} : { excerpt: appearance.excerpt }),
+      ...(appearance.excerptUnavailable === undefined
+        ? {}
+        : { excerptUnavailable: appearance.excerptUnavailable })
+    })),
+    ...(result.data.spread === undefined
+      ? {}
+      : {
+          documentCount: result.data.spread.length,
+          documents: result.data.spread.map(row => ({
+            path: row.relPath,
+            mentions: row.mentionCount,
+            ...(row.title === undefined ? {} : { title: row.title }),
+            ...(row.orderExclusion === undefined ? {} : { notInBookOrder: row.orderExclusion })
+          }))
+        })
   }));
 }
 
