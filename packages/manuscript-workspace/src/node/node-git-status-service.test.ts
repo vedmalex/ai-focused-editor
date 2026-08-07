@@ -1,3 +1,4 @@
+import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
 import { promises as fs } from 'fs';
 import { dirname, join } from 'path';
@@ -5,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { NodeGitStatusService } from './node-git-status-service';
 import type { SemanticHistoryEntry } from '../common';
 
-const TEST_ROOT = '/private/tmp/claude-501/-Users-vedmalex-work-ai-editor-3/8a15f000-cd38-4649-8fe4-b479e61f41c1/scratchpad/git-history-test';
+const TEST_ROOT = join(tmpdir(), 'afe-git-history-test');
 
 function gitAvailable(): boolean {
   try {

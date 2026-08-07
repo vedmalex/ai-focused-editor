@@ -1,7 +1,7 @@
+import { tmpdir } from 'os';
 import 'reflect-metadata';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { promises as fs } from 'fs';
-import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   InMemoryNarrativeIndexStore,
@@ -36,7 +36,7 @@ import { NodeNarrativeGraphService } from './node-narrative-graph-service';
  */
 
 const SCRATCH_BASE = process.env.CLAUDE_SCRATCHPAD_DIR
-  || '/private/tmp/claude-501/-Users-vedmalex-work-ai-editor-3/8a15f000-cd38-4649-8fe4-b479e61f41c1/scratchpad/narrative-graph-test';
+  || tmpdir();
 
 async function makeRoot(): Promise<string> {
   const base = SCRATCH_BASE.startsWith('/') ? SCRATCH_BASE : tmpdir();

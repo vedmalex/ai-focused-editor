@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -10,7 +11,7 @@ import {
 } from './index';
 
 const SCRATCH =
-  '/private/tmp/claude-501/-Users-vedmalex-work-ai-editor-3/8a15f000-cd38-4649-8fe4-b479e61f41c1/scratchpad/epub-test';
+  join(tmpdir(), 'afe-epub-test');
 
 beforeAll(async () => {
   await rm(SCRATCH, { recursive: true, force: true });

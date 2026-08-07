@@ -1,3 +1,4 @@
+import { tmpdir } from 'os';
 /**
  * SPLIT OUT OF `node-domain-knowledge-service.test.ts` (TASK-022 WP-7).
  *
@@ -18,7 +19,6 @@
 import 'reflect-metadata';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { promises as fs } from 'fs';
-import { tmpdir } from 'os';
 import { join } from 'path';
 import { findChromePath, renderHtmlToPdf } from '@ai-focused-editor/book-export';
 import { NodeSourceLibraryService } from './node-domain-knowledge-service';
@@ -59,7 +59,7 @@ function buildMinimalPdf(text: string): Buffer {
   return Buffer.from(body + xref + trailer, 'latin1');
 }
 const SCRATCH_BASE = process.env.CLAUDE_SCRATCHPAD_DIR
-  || '/private/tmp/claude-501/-Users-vedmalex-work-ai-editor-3/8a15f000-cd38-4649-8fe4-b479e61f41c1/scratchpad/domain-services-test';
+  || tmpdir();
 
 async function makeRoot(): Promise<string> {
   await fs.mkdir(SCRATCH_BASE.startsWith('/') ? SCRATCH_BASE : tmpdir(), { recursive: true });

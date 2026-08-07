@@ -1,14 +1,14 @@
+import { tmpdir } from 'os';
 import 'reflect-metadata';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { promises as fs } from 'fs';
-import { tmpdir } from 'os';
 import { join } from 'path';
 import { parse } from 'yaml';
 import { YamlSchemaValidator } from '../common/yaml-schema-validator';
 import { NodeManuscriptWorkspaceService } from './node-manuscript-workspace-service';
 
 const SCRATCH_BASE = process.env.CLAUDE_SCRATCHPAD_DIR
-  || '/private/tmp/claude-501/-Users-vedmalex-work-ai-editor-3/8a15f000-cd38-4649-8fe4-b479e61f41c1/scratchpad';
+  || tmpdir();
 
 function createService(): NodeManuscriptWorkspaceService {
   const service = new NodeManuscriptWorkspaceService();

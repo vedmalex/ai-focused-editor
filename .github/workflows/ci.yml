@@ -1,0 +1,235 @@
+name: Build and test
+
+# Shaped after eclipse-theia/theia-ide's own `build.yml` — the PRODUCT repo, not
+# the framework monorepo, because that is what this repository is. Kept from it:
+# the OS matrix with `fail-fast: false`, actions pinned by SHA, the nightly
+# schedule, `xvfb-run` for the desktop target on Linux, and artifacts uploaded
+# with `if: always()` so a red run still hands back its evidence.
+#
+# WHY macOS IS IN THE MATRIX AND NOT AN AFTERTHOUGHT. Two open issues are macOS
+# ONLY and cannot be reproduced anywhere else: gh#73 (the desktop smoke cannot
+# run while a desktop editor is open — `runningboardd` / `launchservicesd`
+# territory) and the hung-FSEvents failure gh#69 exists for. A Linux-only CI
+# would keep declaring them unverifiable forever.
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.plan/**'
+      - '.llm-wiki/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.plan/**'
+      - '.llm-wiki/**'
+  schedule:
+    - cron: '0 4 * * *' # nightly, like theia-ide's own
+  workflow_dispatch:
+
+jobs:
+  # The cheap lane. Everything here is pure computation over the source: no app
+  # is built, no browser is launched. It exists so a typo does not cost the
+  # forty minutes the app lane costs, and it runs ONCE — these checks cannot
+  # differ per operating system.
+  checks:
+    name: Checks, unit tests, typecheck
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # PINNED to `packageManager` in package.json, and that is not cosmetic:
+      # this repository was once accidentally built with a 1.4 canary, whose
+      # node_modules layout differs.
+      - name: Use bun 1.3.14
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Install
+        run: bash .github/scripts/install.sh
+
+      - name: Control bytes
+        run: bun run check:control-bytes
+
+      - name: Icon classes
+        run: bun run check:icon-classes
+
+      - name: Build packages
+        run: bun run build:packages
+
+      - name: Unit tests
+        run: bun run test
+
+      - name: Typecheck (narrative-knowledge)
+        run: bun run typecheck:narrative-knowledge
+
+      - name: Typecheck (obsidian plugin)
+        run: bun run typecheck:obsidian
+
+      - name: Documentation drift
+        run: bun run --cwd packages/manuscript-workspace docs:drift
+
+      - name: Archive test reports
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: test-reports
+          path: .test-reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The expensive lane: build both targets and actually RUN the app.
+  # CONTRIBUTING.md records why this cannot be optional — the desktop smoke is
+  # the only lane that instantiates the backend `ContainerModule`, and two DI
+  # defects once rode through four green work packages without it.
+  app:
+    name: App (${{ matrix.os }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15]
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Use bun 1.3.14
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      # The smokes and the navigator probe spawn the backend through `node`,
+      # NOT through bun: bun has no `node:sqlite`, and the backend dies at
+      # startup on `No such built-in module: node:sqlite`.
+      - name: Use Node.js 22.x
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 22.x
+
+      # `native-keymap` compiles against X11 and finds it through pkg-config.
+      # Without these its `node-gyp rebuild` fails with a bare
+      # `pkg-config: not found`, no `keymapping.node` is produced, and the
+      # failure only surfaces much later as an esbuild "Cannot read file".
+      - name: System build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxkbfile-dev
+
+      - name: Install
+        run: bash .github/scripts/install.sh
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      # `--with-deps` pulls the system libraries headless Chromium needs. Without
+      # it the browser exits with `libasound.so.2: cannot open shared object
+      # file`, which reads like a Playwright bug and is not one. The flag is
+      # LINUX-ONLY in Playwright — on macOS it has no package manager to drive,
+      # and the system libraries are already there.
+      - name: Install Playwright chromium (Linux)
+        if: runner.os == 'Linux'
+        run: bunx playwright install --with-deps chromium
+
+      - name: Install Playwright chromium (macOS)
+        if: runner.os == 'macOS'
+        run: bunx playwright install chromium
+
+      - name: Build packages
+        run: bun run build:packages
+
+      - name: Build browser app
+        run: bun run build:browser
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+
+      # ORDER IS THE WHOLE PROBLEM HERE, AND GETTING IT WRONG LOOKS LIKE A
+      # DIFFERENT BUG ENTIRELY.
+      #
+      # `apps/electron`'s `bundle` runs, in order: build the ffmpeg addon,
+      # `theia rebuild:electron` (which recompiles native modules against the
+      # Electron ABI), then `theia build`. But `theia build` FIRST runs
+      # `prepareElectron`, which may add dependencies and abort with
+      # `Updated dependencies, please run "install" again`.
+      #
+      # The obvious reading — "so install and try again" — is a trap: a second
+      # `bun install` REPLACES the freshly rebuilt native modules with registry
+      # copies, and `theia rebuild` then SKIPS them because its cache says they
+      # are already done. The build dies much later on
+      # `Cannot read file: native-keymap/build/Release/keymapping.node`, which
+      # points nowhere near the cause.
+      #
+      # So the dependency update is provoked FIRST, on its own, and the install
+      # that answers it happens BEFORE any rebuild. The `|| true` below is not
+      # error-swallowing: this invocation is EXPECTED to exit non-zero, that is
+      # precisely what it is for.
+      - name: Prepare electron dependencies
+        run: |
+          (cd apps/electron && ../../node_modules/.bin/theia build --app-target electron --mode development) || true
+          bash .github/scripts/install.sh
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+
+      - name: Build electron app
+        run: |
+          # The bundler script Theia GENERATES swallows its own failure:
+          # `catch { process.exit(1) }` with no output, so a bundling error
+          # surfaces as a bare "esbuild exited with an unexpected code: 1" and
+          # says nothing. Teach it to print, so a red run carries its own
+          # diagnosis instead of needing someone to reproduce it locally.
+          for gen in apps/electron/esbuild.mjs apps/browser/esbuild.mjs; do
+            [ -f "$gen" ] || continue
+            perl -0pi -e 's/\} catch \{\n(\s*)process\.exit\(1\);/} catch (err) {\n$1console.error(err);\n$1process.exit(1);/' "$gen"
+          done
+          bun run build:electron
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+
+      - name: Browser smoke
+        run: bun run test:ui
+
+      - name: Layout migration smoke
+        run: bun run test:ui:layout-migration
+
+      # Linux has no display on a runner; `xvfb-run` gives it one. This is
+      # exactly how theia-ide runs its own electron tests.
+      - name: Desktop smoke (Linux, xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a bun run test:electron
+
+      # macOS has a real window server, so no xvfb. THIS is the lane that can
+      # finally speak to gh#73: it either passes here or reproduces the
+      # `runningboardd` conflict on the platform that owns it.
+      - name: Desktop smoke (macOS)
+        if: runner.os == 'macOS'
+        run: bun run test:electron
+
+      - name: Archive smoke artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: smoke-artifacts-${{ matrix.os }}
+          path: |
+            .test-reports/
+            output/
+          if-no-files-found: ignore
+          retention-days: 7

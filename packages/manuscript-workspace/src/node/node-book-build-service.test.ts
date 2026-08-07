@@ -1,3 +1,4 @@
+import { tmpdir } from 'os';
 import { promises as fs } from 'fs';
 import { dirname, join } from 'path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -13,7 +14,7 @@ import {
 // machines without Chrome/Chromium and run for real when one is present.
 const CHROME = findChromePath();
 
-const WORKSPACE_ROOT = '/private/tmp/claude-501/-Users-vedmalex-work-ai-editor-3/8a15f000-cd38-4649-8fe4-b479e61f41c1/scratchpad/bookbuild-test';
+const WORKSPACE_ROOT = join(tmpdir(), 'afe-bookbuild-test');
 
 const service = new NodeBookBuildService();
 

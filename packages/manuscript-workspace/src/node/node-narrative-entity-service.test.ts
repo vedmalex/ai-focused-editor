@@ -1,3 +1,4 @@
+import { tmpdir } from 'os';
 /**
  * RESTORED, ADAPTED TO THE MIGRATED PATH (TASK-022 WP-7, review finding 2 on
  * this task).
@@ -64,7 +65,6 @@
 import 'reflect-metadata';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { promises as fs } from 'fs';
-import { tmpdir } from 'os';
 import { join } from 'path';
 import { FileUri } from '@theia/core/lib/common/file-uri';
 import {
@@ -79,7 +79,7 @@ import { NARRATIVE_INDEX_SCHEMA_VERSION } from '@ai-focused-editor/narrative-kno
 import { NodeNarrativeEntityService } from './node-domain-knowledge-service';
 
 const SCRATCH_BASE = process.env.CLAUDE_SCRATCHPAD_DIR
-  || '/private/tmp/claude-501/-Users-vedmalex-work-ai-editor-3/8a15f000-cd38-4649-8fe4-b479e61f41c1/scratchpad/domain-services-test';
+  || tmpdir();
 
 async function makeRoot(): Promise<string> {
   const base = SCRATCH_BASE.startsWith('/') ? SCRATCH_BASE : tmpdir();
