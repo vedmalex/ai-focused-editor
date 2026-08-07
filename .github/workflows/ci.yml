@@ -154,8 +154,21 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
+      # TWO ATTEMPTS, AND THAT IS THEIA'S OWN INSTRUCTION RATHER THAN A RETRY
+      # LOOP. `apps/electron`'s `bundle` runs `theia rebuild:electron`, which
+      # swaps native modules to the Electron ABI and then reports
+      # `Updated dependencies, please run "install" again` and exits non-zero.
+      # The build genuinely cannot proceed until the tree is reinstalled against
+      # the modules the rebuild just produced, so the install is repeated and
+      # the build asked for a second time. If the SECOND attempt fails, that is
+      # a real failure and the step fails with it.
       - name: Build electron app
-        run: bun run build:electron
+        run: |
+          bun run build:electron || {
+            echo "::notice::Theia asked for a reinstall after rebuild:electron — doing that and rebuilding once."
+            bash .github/scripts/install.sh
+            bun run build:electron
+          }
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
