@@ -15,13 +15,28 @@ set -euo pipefail
 # findable.
 bun install --linker=hoisted
 
-# (2) The probe and the smokes spawn the backend as
-# `node_modules/@theia/cli/bin/theia.js` RELATIVE TO apps/browser, and
-# `apps/browser/package.json` declares `@theia/cli` as its own dependency — but
-# a fully hoisted install leaves no local entry for it. Recreate the one link
-# the app's own scripts assume.
-mkdir -p apps/browser/node_modules/@theia
-ln -sfn ../../../../node_modules/@theia/cli apps/browser/node_modules/@theia/cli
+# (2) The apps' own scripts address their dependencies by RELATIVE PATH, which a
+# hoisted install does not provide. Two known callers, and they fail differently
+# enough that neither hints at the other:
+#   - the smokes spawn the backend as `node_modules/@theia/cli/bin/theia.js`
+#     relative to `apps/browser`;
+#   - `apps/electron`'s `build:ffmpeg-native` runs
+#     `node-gyp rebuild --directory node_modules/@theia/ffmpeg`, and node-gyp
+#     silently falls back to the CWD when that directory is absent, so the error
+#     reads `binding.gyp not found (cwd: apps/electron)` and says nothing about
+#     the missing package.
+# Rather than enumerate the two, link EVERY `@theia/*` an app declares — the
+# next script to address one by path then needs no change here.
+for app in apps/*; do
+  [ -f "$app/package.json" ] || continue
+  mkdir -p "$app/node_modules/@theia"
+  grep -oE '"@theia/[a-zA-Z-]+"' "$app/package.json" | tr -d '"' | sort -u | while read -r dep; do
+    name="${dep#@theia/}"
+    [ -d "node_modules/@theia/$name" ] || continue
+    [ -e "$app/node_modules/@theia/$name" ] && continue
+    ln -sfn "../../../../node_modules/@theia/$name" "$app/node_modules/@theia/$name"
+  done
+done
 
 # (3) With the hoisted layout bun still materialises a few workspace packages'
 # `@theia/*` dependencies as real directories rather than links. TypeScript
