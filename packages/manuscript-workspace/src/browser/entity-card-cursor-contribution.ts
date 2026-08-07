@@ -66,6 +66,18 @@ export class EntityCardCursorContribution implements FrontendApplicationContribu
   /** Entity ids the index knows, for the `note`-first branch. Refreshed on
    *  index change rather than polled — the push already exists. */
   protected knownIds: Set<string> | undefined;
+  /** In flight, so a caret resting on a note token does not start a new read on
+   *  every resolution attempt. */
+  protected loading: Promise<void> | undefined;
+  /**
+   * Bumped by every index change.
+   *
+   * WHY A COUNTER AND NOT JUST CLEARING THE SET: an index change that lands
+   * WHILE a read is in flight would otherwise be undone by that read's answer —
+   * it would write the pre-change list and keep it until the NEXT change. The
+   * answer is only accepted when the world has not moved since it was asked for.
+   */
+  protected generation = 0;
 
   onStart(): void {
     this.toDispose.push(
@@ -75,6 +87,7 @@ export class EntityCardCursorContribution implements FrontendApplicationContribu
       this.track(widget.editor);
     }
     this.toDispose.push(this.indexChangeWatcher.onDidIndexChange(() => {
+      this.generation++;
       this.knownIds = undefined;
     }));
   }
@@ -86,8 +99,28 @@ export class EntityCardCursorContribution implements FrontendApplicationContribu
     this.toDispose.dispose();
   }
 
+  /**
+   * Subscribe to one editor's caret, and RELEASE the subscription when that
+   * editor goes away.
+   *
+   * The first edition pushed every subscription into the contribution's own
+   * collection, which is disposed at shutdown — so a session that opened and
+   * closed a hundred chapters carried a hundred closures over dead editors
+   * until it ended. Bounded and harmless, and still the kind of thing that is
+   * cheaper to get right than to explain later.
+   */
   protected track(editor: TextEditor): void {
-    this.toDispose.push(editor.onCursorPositionChanged(() => this.onCursorMoved(editor)));
+    const subscription = editor.onCursorPositionChanged(() => this.onCursorMoved(editor));
+    // `onDidDispose` and not the Lumino `disposed` signal: the widget's own
+    // `Event` is what Theia exposes, and connecting to the signal by hand threw
+    // `this.target[e] is not a function` at runtime.
+    const widget = this.editorManager.all.find(item => item.editor === editor);
+    if (widget === undefined) {
+      this.toDispose.push(subscription);
+      return;
+    }
+    this.toDispose.push(subscription);
+    widget.onDidDispose(() => subscription.dispose());
   }
 
   protected onCursorMoved(editor: TextEditor): void {
@@ -129,7 +162,11 @@ export class EntityCardCursorContribution implements FrontendApplicationContribu
    */
   protected isKnownEntity(id: string): boolean {
     if (this.knownIds === undefined) {
-      void this.loadKnownIds();
+      if (this.loading === undefined) {
+        this.loading = this.loadKnownIds().finally(() => {
+          this.loading = undefined;
+        });
+      }
       return false;
     }
     return this.knownIds.has(id);
@@ -140,7 +177,14 @@ export class EntityCardCursorContribution implements FrontendApplicationContribu
     if (rootUri === undefined) {
       return;
     }
+    const asked = this.generation;
     const answer = await this.knowledge.findEntities(rootUri);
+    if (asked !== this.generation) {
+      // The index changed while this was in flight. Writing now would install a
+      // list that is already known to be stale and keep it until the NEXT
+      // change — the answer is dropped and the next resolution asks again.
+      return;
+    }
     this.knownIds = new Set(answer.data.map(entity => entity.id));
   }
 
