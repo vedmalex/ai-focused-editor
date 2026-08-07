@@ -381,6 +381,23 @@ export class NarrativeIndexSession {
     return this.store.listDocuments();
   }
 
+  /**
+   * One document by path (gh#47).
+   *
+   * BESIDE {@link documents} RATHER THAN INSTEAD OF IT, and not redundant with
+   * it: an appearance list needs the containing chapter's title, order and
+   * `content_hash` for a handful of paths, and reaching them through
+   * `documents()` would pull every row in the manuscript to answer about three.
+   * The store has had the indexed lookup all along.
+   *
+   * NO ENVELOPE, because this is not an RPC surface — it is internal to the
+   * service that assembles one. The caller wraps its own result once, in the
+   * state the mentions were read under.
+   */
+  getDocument(relPath: string): IndexedDocument | undefined {
+    return this.store.getDocument(relPath);
+  }
+
   getEntity(entityId: string): Envelope<NarrativeEntity | undefined> {
     return envelope(this.state(), this.store.getEntity(entityId));
   }
