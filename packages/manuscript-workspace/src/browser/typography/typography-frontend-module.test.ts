@@ -43,6 +43,11 @@ const { ContributionProvider } = await import('@theia/core/lib/common/contributi
 const { TypographyRule } = await import('../../common/typography/typography-types');
 const { buildTypographySchema, ruleEnabledKey } = await import('../../common/typography/typography-rule-contribution');
 const { TYPOGRAPHY_RULES } = await import('../../common/typography/typography-rules');
+// Same warm-up, same reason as `auto-typography-contribution.test.ts` (gh#77):
+// the module below transitively reaches `@theia/monaco/lib/browser/*`, which
+// `require`s the async monaco ESM entry synchronously. Resolved explicitly here
+// so this file no longer depends on another test file having run first.
+await import('@theia/monaco-editor-core');
 const frontendModule = await import('./typography-frontend-module');
 
 type Rule = import('../../common/typography/typography-types').TypographyRule;
