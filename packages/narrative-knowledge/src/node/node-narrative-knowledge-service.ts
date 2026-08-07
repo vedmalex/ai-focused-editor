@@ -18,6 +18,7 @@ import {
   type EffectiveEntityType,
   type EntityAppearance,
   type EntityAppearanceQuery,
+  type EntityAppearanceResult,
   type EntityQuery,
   type EntityTypeProblem,
   type Envelope,
@@ -243,7 +244,7 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
     rootUri: string,
     entityId: string,
     query: EntityAppearanceQuery = {}
-  ): Promise<Envelope<EntityAppearance[]>> {
+  ): Promise<Envelope<EntityAppearanceResult>> {
     const session = this.session(rootUri);
     const answer = session.getMentions({
       entityId,
@@ -304,10 +305,14 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
       }
       appearances.push(appearance);
     }
+    // The spread is read from the SAME session, inside the same call, so it
+    // cannot straddle a rebuild the way two RPC round trips could — see
+    // `EntityAppearanceResult`.
+    const spread = query.withSpread === true ? session.countMentionsByDocument({ entityId }) : undefined;
     // The envelope of the ORIGINAL read: state and generation describe the index
     // the mentions came from. Rebuilding one here would report the state at the
     // end of the file reads instead, which is a different and later claim.
-    return { ...answer, data: appearances };
+    return { ...answer, data: { appearances, ...(spread === undefined ? {} : { spread }) } };
   }
 
   /**

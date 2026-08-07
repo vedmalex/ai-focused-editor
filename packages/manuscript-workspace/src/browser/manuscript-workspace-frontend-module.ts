@@ -57,6 +57,7 @@ import { BookBuildContribution } from './book-build-contribution';
 import { FootnoteLinkContribution } from './footnote-link-contribution';
 import { SemanticLinkContribution } from './semantic-link-contribution';
 import { SemanticEntityHoverContribution } from './semantic-entity-hover-contribution';
+import { EntityCardService } from './entity-card-service';
 import { EntityCardsViewContribution } from './entity-cards-view-contribution';
 import { NarrativeMemoryCheckEntryPointsContribution } from './narrative-memory-check-entry-points-contribution';
 import { EntityCardsWidget } from './entity-cards-widget';
@@ -199,6 +200,10 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
   bindViewContribution(bind, ManuscriptTreeViewContribution);
   bind(FrontendApplicationContribution).toService(ManuscriptTreeViewContribution);
   bind(TabBarToolbarContribution).toService(ManuscriptTreeViewContribution);
+  // gh#47 WP-3: the card's only door to the index. Bound as a plain singleton
+  // service — it contributes nothing to the shell on its own; the contextual
+  // widget (WP-4) and the commands (WP-5) consume it.
+  bind(EntityCardService).toSelf().inSingletonScope();
   bindViewContribution(bind, EntityCardsViewContribution);
   // UR-039: without this, `EntityCardsViewContribution.initializeLayout` is
   // never invoked — `FrontendApplication.createDefaultLayout()` only calls

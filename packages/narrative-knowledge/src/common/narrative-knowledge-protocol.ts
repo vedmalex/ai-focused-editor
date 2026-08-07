@@ -29,6 +29,7 @@ import type {
   DuplicateEntityRecord,
   EntityQuery,
   IndexedDocument,
+  MentionDocumentCount,
   MentionOrderExclusion,
   MentionQuery,
   NarrativeEntity,
@@ -94,8 +95,34 @@ export interface EntityAppearance {
   excerptUnavailable?: ExcerptUnavailableReason;
 }
 
+/**
+ * Everything the card asks about one entity's presence in the manuscript.
+ *
+ * ONE RESULT RATHER THAN TWO METHODS, AND THE REASON IS GENERATION CONSISTENCY,
+ * not round-trip count. The appearance list and the per-chapter spread are two
+ * views of the same rows; fetched by two calls they could straddle a rebuild and
+ * disagree — a card stating "first seen in chapter 2" beside "mentioned in 5
+ * chapters" computed from a different generation. TASK-022 already learned this
+ * on the diagnostics path, where three envelopes must carry an equal
+ * `generation` or the pass is abandoned. One envelope makes the question moot.
+ */
+export interface EntityAppearanceResult {
+  /** In the requested order, capped by `limit`. */
+  appearances: EntityAppearance[];
+  /**
+   * Every document holding a mention, in ascending book order, with counts.
+   *
+   * PRESENT ONLY WHEN ASKED FOR: unlike {@link appearances} it is never capped,
+   * so a caller wanting one first appearance should not pay for a hub
+   * character's whole spread.
+   */
+  spread?: MentionDocumentCount[];
+}
+
 /** Filter for {@link NarrativeKnowledgeService.getEntityAppearances}. */
 export interface EntityAppearanceQuery {
+  /** Also return the per-document spread — see {@link EntityAppearanceResult.spread}. */
+  withSpread?: boolean;
   /** `asc` for first appearances, `desc` for the most recent. Default `asc`. */
   direction?: 'asc' | 'desc';
   /** Hard cap, applied after ordering. */
@@ -173,7 +200,7 @@ export interface NarrativeKnowledgeService {
     rootUri: string,
     entityId: string,
     query?: EntityAppearanceQuery
-  ): Promise<Envelope<EntityAppearance[]>>;
+  ): Promise<Envelope<EntityAppearanceResult>>;
 
   /**
    * Every entity id currently claimed by more than one card (TASK-022 WP-5,

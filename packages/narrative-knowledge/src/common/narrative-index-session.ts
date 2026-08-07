@@ -53,6 +53,7 @@ import {
   type EvidenceRef,
   type IndexedDocument,
   type IndexedDocumentInput,
+  type MentionDocumentCount,
   type MentionQuery,
   type NarrativeDocumentKind,
   type NarrativeEntity,
@@ -412,6 +413,19 @@ export class NarrativeIndexSession {
 
   getRelations(query: RelationQuery = {}): Envelope<NarrativeRelation[]> {
     return envelope(this.state(), this.store.getRelations(query));
+  }
+
+  /**
+   * Per-document mention counts (gh#47).
+   *
+   * NO ENVELOPE, unlike its neighbours: the one caller assembles a composite
+   * answer and wraps it ONCE, in the state the appearances were read under.
+   * Wrapping here too would produce a second envelope for the same call and
+   * invite a consumer to compare two generations that are the same by
+   * construction — see `EntityAppearanceResult`.
+   */
+  countMentionsByDocument(query: MentionQuery = {}): MentionDocumentCount[] {
+    return this.store.countMentionsByDocument(query);
   }
 
   /** Entity ids defined by more than one card. Feeds the `findings` section and
