@@ -34,6 +34,7 @@ import type {
   EntityQuery,
   IndexedDocument,
   IndexedDocumentInput,
+  MentionDocumentCount,
   MentionQuery,
   NarrativeEntity,
   NarrativeIndexStore,
@@ -44,7 +45,13 @@ import type {
   NeighbourhoodQuery,
   RelationQuery
 } from './graph';
-import { NarrativeIndexStoreError } from './graph';
+import {
+  NarrativeIndexStoreError,
+  assertQueryLimit,
+  documentOrderExclusion,
+  orderDocumentsByChapter,
+  orderMentionsByChapter
+} from './graph';
 
 /** Options an in-memory store accepts. Deliberately tiny — every knob here is
  *  a knob the SQLite adapter would have to grow too. */
@@ -302,6 +309,7 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
   }
 
   findEntities(query: EntityQuery = {}): NarrativeEntity[] {
+    assertQueryLimit(query.limit, 'EntityQuery.limit');
     const prefix = query.namePrefix?.toLowerCase();
     const matches = [...this.entities.values()].filter(entity => {
       if (query.type !== undefined && entity.type !== query.type) {
@@ -328,20 +336,53 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
   }
 
   getMentions(query: MentionQuery = {}): NarrativeMention[] {
-    return this.mentions
-      .filter(mention => {
-        if (query.entityId !== undefined && mention.entityId !== query.entityId) {
-          return false;
-        }
-        if (query.relPath !== undefined && mention.evidence.path !== query.relPath) {
-          return false;
-        }
-        if (query.brokenOnly === true && mention.resolved) {
-          return false;
-        }
-        return true;
-      })
-      .map(clone);
+    assertQueryLimit(query.limit, 'MentionQuery.limit');
+    const matches = this.mentions.filter(mention => {
+      if (query.entityId !== undefined && mention.entityId !== query.entityId) {
+        return false;
+      }
+      if (query.relPath !== undefined && mention.evidence.path !== query.relPath) {
+        return false;
+      }
+      if (query.brokenOnly === true && mention.resolved) {
+        return false;
+      }
+      return true;
+    });
+    // gh#47. Without `orderBy` this stays insertion order — the behaviour every
+    // caller before this option relied on, and changing it unasked would have
+    // rewritten the meaning of results nothing here can see.
+    const ordered =
+      query.orderBy === 'chapter'
+        ? orderMentionsByChapter(matches, query.direction ?? 'asc', relPath => this.documents.get(relPath))
+        : matches;
+    // AFTER ordering, per `MentionQuery.limit` — the ISS-349 rule that a cap
+    // must select the same ROWS in both adapters, not merely the same count.
+    const limited = query.limit === undefined ? ordered : ordered.slice(0, query.limit);
+    return limited.map(clone);
+  }
+
+  countMentionsByDocument(query: MentionQuery = {}): MentionDocumentCount[] {
+    const counts = new Map<string, number>();
+    for (const mention of this.getMentions({ ...query, orderBy: undefined, limit: undefined })) {
+      const path = mention.evidence.path;
+      counts.set(path, (counts.get(path) ?? 0) + 1);
+    }
+    const rows: MentionDocumentCount[] = [];
+    for (const [relPath, mentionCount] of counts) {
+      const document = this.documents.get(relPath);
+      // A mention whose document is gone is not silently dropped: it still
+      // counts, and it lands in the trailing group with the reason that fits.
+      const exclusion = document === undefined ? 'no-chapter-order' : documentOrderExclusion(document);
+      rows.push({
+        relPath,
+        mentionCount,
+        ...(document?.chapterOrder === undefined ? {} : { chapterOrder: document.chapterOrder }),
+        ...(document?.title === undefined ? {} : { title: document.title }),
+        ...(exclusion === undefined ? {} : { orderExclusion: exclusion })
+      });
+    }
+    return orderDocumentsByChapter(rows);
   }
 
   getRelations(query: RelationQuery = {}): NarrativeRelation[] {
@@ -453,6 +494,7 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
         this.documents.set(input.relPath, {
           ...clone(input),
           manifestIncluded: input.manifestIncluded ?? true,
+          buildIncluded: input.buildIncluded ?? true,
           docId,
           generation: committedGeneration
         });
@@ -510,6 +552,7 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
             ? { title: freshness.title }
             : { title: undefined }),
           manifestIncluded: freshness.manifestIncluded ?? true,
+          buildIncluded: freshness.buildIncluded ?? true,
           generation: committedGeneration
         });
         for (const entity of this.entities.values()) {

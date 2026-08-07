@@ -235,6 +235,19 @@ export const NARRATIVE_MEMORY_TOOL_PHRASES: readonly NarrativeMemoryPhrase[] = [
       'A relation the author restated in both cards arrives as two relations, not one. ' +
       'Every relation names both ends, its type, its origin, whether either end resolves to a real card, and every file it was read from.'
   ),
+  phrase(
+    'tool-notice-missing-entity-id',
+    'This tool needs an entity id; without one there is no question to answer, so nothing was looked up.'
+  ),
+  phrase('tool-entity-appearances-name', 'Where an Entity Appears'),
+  phrase(
+    'tool-entity-appearances-description',
+    'List where one entity appears, in the order the BUILT book reads, with the quoted passage. ' +
+      'Ask ascending for a first appearance, descending for the most recent. ' +
+      'Appearances that have no place in the built book — a chapter the manifest omits, a chapter excluded from the build, ' +
+      'a reference that names a file and no position — are returned but never counted as a first or latest appearance, and each says which of those it is. ' +
+      'A passage whose file changed after indexing comes back WITHOUT its quotation and says so, rather than quoting text that has since moved.'
+  ),
   phrase('tool-document-context-name', 'Read Narrative Context'),
   phrase(
     'tool-document-context-description',

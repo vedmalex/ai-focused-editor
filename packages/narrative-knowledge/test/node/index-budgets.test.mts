@@ -53,6 +53,7 @@ import {
   type IndexableFile,
   type IndexedDocument,
   type IndexedDocumentInput,
+  type MentionDocumentCount,
   type MentionQuery,
   type NarrativeEntity,
   type NarrativeIndexStore,
@@ -139,6 +140,8 @@ function countingStore(inner: NarrativeIndexStore): { store: NarrativeIndexStore
     getEntity: (entityId: string): NarrativeEntity | undefined => (bump('getEntity'), inner.getEntity(entityId)),
     findEntities: (query?: EntityQuery): NarrativeEntity[] => (bump('findEntities'), inner.findEntities(query)),
     getMentions: (query?: MentionQuery): NarrativeMention[] => (bump('getMentions'), inner.getMentions(query)),
+    countMentionsByDocument: (query?: MentionQuery): MentionDocumentCount[] =>
+      (bump('countMentionsByDocument'), inner.countMentionsByDocument(query)),
     getRelations: (query?: RelationQuery): NarrativeRelation[] => (bump('getRelations'), inner.getRelations(query)),
     neighbourhood: (query: NeighbourhoodQuery): NarrativeRelation[] =>
       (bump('neighbourhood'), inner.neighbourhood(query)),

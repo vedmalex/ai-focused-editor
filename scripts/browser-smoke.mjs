@@ -121,12 +121,17 @@ try {
   await assertViewIconsPresentOnStartup(
     () => page.evaluate(viewIconPresenceReaderScript([
       'ai-focused-editor.narrative-map',
-      'ai-focused-editor.entity-cards'
+      'ai-focused-editor.entity-cards',
+      'ai-focused-editor.entity-card'
     ])),
     'browser',
     [
       { id: 'ai-focused-editor.narrative-map', label: 'Narrative Map' },
-      { id: 'ai-focused-editor.entity-cards', label: 'Knowledge Cards' }
+      { id: 'ai-focused-editor.entity-cards', label: 'Knowledge Cards' },
+      // gh#47 WP-5. Added here on the SAME day the panel was written, not later:
+      // this check is the only one that distinguishes "present in the shell"
+      // from "openable by command", and it is what caught UR-039.
+      { id: 'ai-focused-editor.entity-card', label: 'Knowledge Card' }
     ]
   );
 

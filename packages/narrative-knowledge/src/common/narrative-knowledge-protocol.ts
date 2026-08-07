@@ -29,6 +29,8 @@ import type {
   DuplicateEntityRecord,
   EntityQuery,
   IndexedDocument,
+  MentionDocumentCount,
+  MentionOrderExclusion,
   MentionQuery,
   NarrativeEntity,
   NarrativeMention,
@@ -53,6 +55,105 @@ import type { ConfigureResult, NarrativeMemoryConfigPatch } from './narrative-me
  * exactly those two fields removed — nothing else narrows, nothing renames.
  */
 export type NarrativeDocumentSummary = Omit<IndexedDocument, 'docId' | 'generation'>;
+
+/**
+ * Why an appearance carries no quoted text (gh#47, architecture §5.4).
+ *
+ * DECLARED HERE RATHER THAN BESIDE THE READER because the reader lives in
+ * `node/` and this crosses the RPC boundary: `common/` may not import from
+ * `node/`, and a consumer rendering the absence has to name the reason.
+ *
+ * ABSENCE IS ALWAYS EXPLAINED. "Here is the passage" and "the file changed since
+ * indexing, so the passage cannot be located" are different claims to the author,
+ * and only one of them is true at a time. A missing excerpt with no reason would
+ * be rendered as an empty quotation, which reads as "nothing was written there".
+ */
+export type ExcerptUnavailableReason = 'document-changed' | 'no-position' | 'unreadable';
+
+/**
+ * One place an entity appears, ready to render (gh#47).
+ *
+ * A PROJECTION OF `NarrativeMention`, NOT A REPLACEMENT: the mention is carried
+ * whole, so nothing about evidence or resolution is lost in translation, and the
+ * fields beside it are the ones a card needs and a mention does not know —
+ * the containing chapter's manifest title, its place in the built book, and the
+ * quotation.
+ */
+export interface EntityAppearance {
+  mention: NarrativeMention;
+  /** Manifest title of the containing document; absent when the manifest does
+   *  not name the file. Absent is not `''` — see `IndexedDocumentInput.title`. */
+  chapterTitle?: string;
+  /** Position in the built book; absent for a file the manifest does not list. */
+  chapterOrder?: number;
+  /** Present when this appearance has no place in manuscript order. Consumers
+   *  must not present such an appearance as a first or latest one. */
+  orderExclusion?: MentionOrderExclusion;
+  /** The quoted passage, present only when it is provably the indexed text. */
+  excerpt?: string;
+  /** Present exactly when {@link excerpt} is absent AND excerpts were asked for. */
+  excerptUnavailable?: ExcerptUnavailableReason;
+}
+
+/**
+ * Everything the card asks about one entity's presence in the manuscript.
+ *
+ * ONE RESULT RATHER THAN TWO METHODS, AND THE REASON IS GENERATION CONSISTENCY,
+ * not round-trip count. The appearance list and the per-chapter spread are two
+ * views of the same rows; fetched by two calls they could straddle a rebuild and
+ * disagree — a card stating "first seen in chapter 2" beside "mentioned in 5
+ * chapters" computed from a different generation. TASK-022 already learned this
+ * on the diagnostics path, where three envelopes must carry an equal
+ * `generation` or the pass is abandoned. One envelope makes the question moot.
+ */
+export interface EntityAppearanceResult {
+  /** In the requested order, capped by `limit`. */
+  appearances: EntityAppearance[];
+  /**
+   * The FIRST appearance in the built book, when one was asked for.
+   *
+   * IN THIS RESULT RATHER THAN A SECOND CALL, and the reason is the same rule
+   * this type states: a card shows "first seen in chapter 2" beside "last seen
+   * in chapter 9", and two calls can straddle a rebuild and disagree. The first
+   * edition of the card did exactly that — an ascending call for the first and a
+   * descending one for the latest — which satisfied the rule's letter for the
+   * spread and broke it for the pair of values the headline is made of.
+   *
+   * ABSENT when nothing placeable exists: an entity seen only in chapters
+   * outside the built book HAS appearances and has no first appearance.
+   */
+  first?: EntityAppearance;
+  /**
+   * Every document holding a mention, in ascending book order, with counts.
+   *
+   * PRESENT ONLY WHEN ASKED FOR: unlike {@link appearances} it is never capped,
+   * so a caller wanting one first appearance should not pay for a hub
+   * character's whole spread.
+   */
+  spread?: MentionDocumentCount[];
+}
+
+/** Filter for {@link NarrativeKnowledgeService.getEntityAppearances}. */
+export interface EntityAppearanceQuery {
+  /** Also return the per-document spread — see {@link EntityAppearanceResult.spread}. */
+  withSpread?: boolean;
+  /** Also return the first appearance in the built book, from THIS envelope —
+   *  see {@link EntityAppearanceResult.first}. */
+  withFirst?: boolean;
+  /** `asc` for first appearances, `desc` for the most recent. Default `asc`. */
+  direction?: 'asc' | 'desc';
+  /** Hard cap, applied after ordering. */
+  limit?: number;
+  /**
+   * Read the quoted passage for each returned appearance.
+   *
+   * OPT-IN, because it costs ONE FILE READ PER DISTINCT DOCUMENT: a card asking
+   * for a first appearance and a latest one wants two quotations, while a caller
+   * counting appearances wants none. Defaults to `false` so the expensive answer
+   * is the one that was asked for.
+   */
+  withExcerpt?: boolean;
+}
 
 /** DI symbol of the service. Bound to the node implementation on the backend
  *  and to the RPC proxy on the frontend. */
@@ -89,6 +190,34 @@ export interface NarrativeKnowledgeService {
   findEntities(rootUri: string, query?: EntityQuery): Promise<Envelope<NarrativeEntity[]>>;
   getMentions(rootUri: string, query?: MentionQuery): Promise<Envelope<NarrativeMention[]>>;
   getRelations(rootUri: string, query?: RelationQuery): Promise<Envelope<NarrativeRelation[]>>;
+
+  /**
+   * Where an entity appears, in manuscript order, optionally quoted (gh#47).
+   *
+   * WHY THIS IS A METHOD AND NOT A COMPOSITION ON THE CALLER'S SIDE — the rule
+   * architecture §3.1 sets is that a new RPC needs a written justification, so
+   * here it is. Building this outside would take three round trips (mentions,
+   * documents, manifest) and would still not reach the quotation, which requires
+   * reading manuscript files — something a widget is forbidden to do. The
+   * ordering itself is a store concern (`MentionQuery.orderBy`), and the excerpt
+   * is a `node/` concern (§5.4); this method is the seam where they meet.
+   *
+   * THE QUOTATION IS NEVER CONFIDENTLY WRONG. An appearance whose document has
+   * changed since indexing comes back with `excerptUnavailable:
+   * 'document-changed'` and NO text — not with text read from a range that has
+   * since shifted. Consumers must render the reason rather than an empty quote,
+   * and must degrade navigation for such an appearance instead of jumping to a
+   * stale range.
+   *
+   * APPEARANCES THAT CANNOT BE PLACED ARE RETURNED, NOT DROPPED, carrying
+   * `orderExclusion`; they trail the ordered ones in BOTH directions, so neither
+   * end of the list can be an unplaceable appearance. See `MentionOrderExclusion`.
+   */
+  getEntityAppearances(
+    rootUri: string,
+    entityId: string,
+    query?: EntityAppearanceQuery
+  ): Promise<Envelope<EntityAppearanceResult>>;
 
   /**
    * Every entity id currently claimed by more than one card (TASK-022 WP-5,

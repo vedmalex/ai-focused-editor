@@ -6,6 +6,7 @@ allowedTools:
   - narrative_find_mentions
   - narrative_entity_relations
   - narrative_document_context
+  - narrative_entity_appearances
 ---
 
 # Querying the narrative index

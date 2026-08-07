@@ -261,11 +261,123 @@ async function drainSettled(maintainer: NarrativeIndexMaintainer): Promise<void>
 const SAME_LENGTH_ORIGINAL = 'Alone: [[char:krishna|Кришна]].';
 const SAME_LENGTH_EDITED = 'Alone: [[char:krishna|Кришнa]].';
 
+/** The chapter that sits INSIDE the part whose `include:` the gh#47 pair flips. */
+const CUT_CHAPTER = 'content/cut/ch-00.md';
+
+/**
+ * A manuscript whose FIRST manifest entry is a part, so the chapter inside it
+ * takes `chapterOrder` 0 and would lead any ascending query.
+ *
+ * A PART CARRIES ITS OWN `path` — a directory — and that is not incidental
+ * bookkeeping: `walk` skips an entry with no `path` before it ever reaches
+ * `children`, so a part written without one contributes nothing at all. The
+ * directory path fails the `.mdx?` test, so the part itself is not a chapter,
+ * while its children are walked with the inherited `include` flag. Writing the
+ * fixture the other way is how one learns this; it is recorded here so the next
+ * reader does not have to.
+ */
+function excludedPartManuscript(partIncluded: boolean): IndexableFile[] {
+  return [
+    file(
+      'manifest.yaml',
+      [
+        'content:',
+        '  - path: content/cut',
+        '    title: Вырезанное',
+        `    include: ${partIncluded}`,
+        '    children:',
+        `      - path: ${CUT_CHAPTER}`,
+        '        title: Пролог',
+        `  - path: ${CH(1)}`,
+        '    title: Глава первая'
+      ].join('\n')
+    ),
+    file(KRISHNA_CARD, ['id: krishna', 'name: Кришна'].join('\n')),
+    file(CUT_CHAPTER, 'Вырезано: [[char:krishna|Кришна]].'),
+    file(CH(1), 'Оставлено: [[char:krishna|Кришна]].')
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // The cases
 // ---------------------------------------------------------------------------
 
 export const NARRATIVE_MAINTENANCE_CONTRACT: NarrativeMaintenanceContractCase[] = [
+  // -- manuscript order means order in the BUILT book (gh#47) ---------------
+  {
+    /**
+     * THIS CASE EXISTS BECAUSE THE STORE-LEVEL ONE WAS NOT ENOUGH, and the way
+     * it was not enough is the whole lesson.
+     *
+     * Manuscript ordering ships a rule: a chapter outside the built book can be
+     * shown, but must never be reported as an entity's FIRST APPEARANCE. The
+     * store contract asserts that rule by writing a document with the excluding
+     * flag set — and passed, in both adapters, while the rule was DEAD in the
+     * product. The state it wrote is one the indexer never produces: an
+     * `include: false` entry is still LISTED, so `manifestIncluded` is `true`
+     * for it, and `manifest-extraction` gives it a real `order` besides. The
+     * first edition read the exclusion off `manifestIncluded`, so it never fired.
+     *
+     * So this case drives the REAL manifest through the REAL session. The
+     * excluded part is placed FIRST on purpose: it takes `chapterOrder` 0, which
+     * means a broken implementation does not merely fail to exclude it — it
+     * actively reports the cut prologue as where the character first appears.
+     */
+    name: 'gh#47: an `include: false` chapter is listed and ordered, yet never the first appearance',
+    async run(makeHarness) {
+      const built = await build(makeHarness, excludedPartManuscript(false));
+
+      // (1) The row the indexer actually writes. Pinned field by field, because
+      // every one of them is a premise the ordering rule depends on, and the
+      // defect lived in believing a different combination.
+      const cut = built.store.getDocument(CUT_CHAPTER);
+      check(cut !== undefined, 'the excluded chapter must still be INDEXED — its mentions are real');
+      equal(cut.manifestIncluded, true, 'an `include: false` entry is still LISTED');
+      equal(cut.buildIncluded, false, 'and it is still out of the built book');
+      equal(cut.chapterOrder, 0, 'and it still holds a position in the walk');
+
+      // (2) The rule itself, through the query the card issues.
+      const first = built.store.getMentions({
+        entityId: 'krishna',
+        orderBy: 'chapter',
+        direction: 'asc',
+        limit: 1
+      });
+      deepEqual(
+        first.map(mention => mention.evidence.path),
+        [CH(1)],
+        'the first appearance is the first chapter of the BUILT book, not the cut one'
+      );
+
+      // (3) Shown, not dropped. The rule is about ranking, not about hiding.
+      equal(
+        built.store.getMentions({ entityId: 'krishna' }).length,
+        2,
+        'the excluded chapter\'s mention is still returned'
+      );
+    }
+  },
+  {
+    /**
+     * THE PAIRED POSITIVE, and without it the case above is worthless: an
+     * implementation that excludes EVERY chapter from ordering passes it, and so
+     * does one that simply reports the second chapter always. Same tree, same
+     * shape, `include:` flipped — the cut prologue becomes the first appearance.
+     */
+    name: 'gh#47, paired positive: with the part included, the same first chapter IS the first appearance',
+    async run(makeHarness) {
+      const built = await build(makeHarness, excludedPartManuscript(true));
+
+      equal(built.store.getDocument(CUT_CHAPTER)?.buildIncluded, true, 'the part is in the build now');
+      deepEqual(
+        built.store
+          .getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'asc', limit: 1 })
+          .map(mention => mention.evidence.path),
+        [CUT_CHAPTER],
+        'nothing excludes it any more, so it leads'
+      );
+    }
+  },
   // -- incrementality is real ----------------------------------------------
   {
     name: 'an edited chapter is re-indexed INCREMENTALLY — one transaction, one document, no rebuild',

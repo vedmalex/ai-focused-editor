@@ -57,6 +57,11 @@ import { BookBuildContribution } from './book-build-contribution';
 import { FootnoteLinkContribution } from './footnote-link-contribution';
 import { SemanticLinkContribution } from './semantic-link-contribution';
 import { SemanticEntityHoverContribution } from './semantic-entity-hover-contribution';
+import { EntityCardService } from './entity-card-service';
+import { EntityCardCursorContribution } from './entity-card-cursor-contribution';
+import { NarrativeSaveReindexContribution } from './narrative-save-reindex-contribution';
+import { EntityCardViewContribution } from './entity-card-view-contribution';
+import { EntityCardWidget } from './entity-card-widget';
 import { EntityCardsViewContribution } from './entity-cards-view-contribution';
 import { NarrativeMemoryCheckEntryPointsContribution } from './narrative-memory-check-entry-points-contribution';
 import { EntityCardsWidget } from './entity-cards-widget';
@@ -199,6 +204,29 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
   bindViewContribution(bind, ManuscriptTreeViewContribution);
   bind(FrontendApplicationContribution).toService(ManuscriptTreeViewContribution);
   bind(TabBarToolbarContribution).toService(ManuscriptTreeViewContribution);
+  // gh#47 WP-3: the card's only door to the index. Bound as a plain singleton
+  // service — it contributes nothing to the shell on its own; the contextual
+  // widget (WP-4) and the commands (WP-5) consume it.
+  bind(EntityCardService).toSelf().inSingletonScope();
+  // gh#47 WP-5 / architecture F2-6: an in-IDE save of a file the index reads is
+  // re-indexed at once instead of waiting for the fallback sweep. See the
+  // contribution for why this is NOT a fix for the silent watcher.
+  // gh#47 F-47-1: the caret path. Without it the panel has no way to show an
+  // entity at all, which is the workflow the issue is written about.
+  bind(EntityCardCursorContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(EntityCardCursorContribution);
+  bind(NarrativeSaveReindexContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(NarrativeSaveReindexContribution);
+  // gh#47 WP-5. The widget factory plus BOTH bindings the panel needs to be
+  // FOUND rather than merely openable — see the contribution's own doc for why
+  // `bindViewContribution` alone is not enough.
+  bind(EntityCardWidget).toSelf();
+  bind(WidgetFactory).toDynamicValue(context => ({
+    id: EntityCardWidget.ID,
+    createWidget: () => context.container.get(EntityCardWidget)
+  })).inSingletonScope();
+  bindViewContribution(bind, EntityCardViewContribution);
+  bind(FrontendApplicationContribution).toService(EntityCardViewContribution);
   bindViewContribution(bind, EntityCardsViewContribution);
   // UR-039: without this, `EntityCardsViewContribution.initializeLayout` is
   // never invoked — `FrontendApplication.createDefaultLayout()` only calls

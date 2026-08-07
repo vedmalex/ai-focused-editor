@@ -125,14 +125,21 @@ function buildIndex(name: string): NarrativeIndexStore {
   return store;
 }
 
-test('the schema version really is 3 — the constant the pragma is written from', () => {
+test('the schema version really is 4 — the constant the pragma is written from', () => {
   // A one-line assertion, and it earns its place: every other case here would
   // pass unchanged against a database still stamped v2, because the columns and
   // the version travel separately. This is what makes "we forgot to bump it"
   // visible, which matters because the bump is the ONLY thing that makes an
   // existing developer's on-disk index rebuild instead of being read with the
   // wrong shape.
-  assert.equal(NARRATIVE_INDEX_SCHEMA_VERSION, 3);
+  //
+  // IT ALSO CAUGHT THE OPPOSITE MISTAKE, which is why the number is spelled out
+  // here rather than compared to itself: gh#47 added `document.build_included`
+  // and this assertion reddened before any consumer noticed, exactly as
+  // intended. Two open plans (gh#48, gh#49) had each written "v4" into their
+  // own text; the number belongs to whoever migrates first, which is gh#47, so
+  // gh#48 takes v5.
+  assert.equal(NARRATIVE_INDEX_SCHEMA_VERSION, 4);
 });
 
 test('B13: an artifact returning to a previous owner survives rebuild() as TWO relations', () => {

@@ -53,6 +53,7 @@ import {
   type EvidenceRef,
   type IndexedDocument,
   type IndexedDocumentInput,
+  type MentionDocumentCount,
   type MentionQuery,
   type NarrativeDocumentKind,
   type NarrativeEntity,
@@ -381,6 +382,23 @@ export class NarrativeIndexSession {
     return this.store.listDocuments();
   }
 
+  /**
+   * One document by path (gh#47).
+   *
+   * BESIDE {@link documents} RATHER THAN INSTEAD OF IT, and not redundant with
+   * it: an appearance list needs the containing chapter's title, order and
+   * `content_hash` for a handful of paths, and reaching them through
+   * `documents()` would pull every row in the manuscript to answer about three.
+   * The store has had the indexed lookup all along.
+   *
+   * NO ENVELOPE, because this is not an RPC surface — it is internal to the
+   * service that assembles one. The caller wraps its own result once, in the
+   * state the mentions were read under.
+   */
+  getDocument(relPath: string): IndexedDocument | undefined {
+    return this.store.getDocument(relPath);
+  }
+
   getEntity(entityId: string): Envelope<NarrativeEntity | undefined> {
     return envelope(this.state(), this.store.getEntity(entityId));
   }
@@ -395,6 +413,19 @@ export class NarrativeIndexSession {
 
   getRelations(query: RelationQuery = {}): Envelope<NarrativeRelation[]> {
     return envelope(this.state(), this.store.getRelations(query));
+  }
+
+  /**
+   * Per-document mention counts (gh#47).
+   *
+   * NO ENVELOPE, unlike its neighbours: the one caller assembles a composite
+   * answer and wraps it ONCE, in the state the appearances were read under.
+   * Wrapping here too would produce a second envelope for the same call and
+   * invite a consumer to compare two generations that are the same by
+   * construction — see `EntityAppearanceResult`.
+   */
+  countMentionsByDocument(query: MentionQuery = {}): MentionDocumentCount[] {
+    return this.store.countMentionsByDocument(query);
   }
 
   /** Entity ids defined by more than one card. Feeds the `findings` section and
@@ -586,7 +617,8 @@ export class NarrativeIndexSession {
         contentHash: move.to.contentHash,
         indexedAt,
         ...(chapter !== undefined ? { chapterOrder: chapter.order, title: chapter.title } : {}),
-        manifestIncluded: chapter !== undefined
+        manifestIncluded: chapter !== undefined,
+        buildIncluded: chapter?.buildIncluded ?? true
       });
       documentsMoved.push({ from: move.from, to: move.to.path });
     }
@@ -621,7 +653,9 @@ export class NarrativeIndexSession {
         contentHash: file.contentHash,
         indexedAt,
         ...(chapter !== undefined ? { chapterOrder: chapter.order, title: chapter.title } : {}),
-        ...(classification.kind === 'chapter' ? { manifestIncluded: chapter !== undefined } : {})
+        ...(classification.kind === 'chapter'
+          ? { manifestIncluded: chapter !== undefined, buildIncluded: chapter?.buildIncluded ?? true }
+          : {})
       });
       writer.clearDocumentContent(path);
       for (const mention of extractChapterMentions({ path, text: file.text }, catalog)) {
@@ -699,7 +733,15 @@ export class NarrativeIndexSession {
         // (`manifest-extraction.ts:92`) applies to an ENTRY THAT EXISTS; using
         // it here would invent a heading for a file the manifest never names.
         ...(chapter !== undefined ? { chapterOrder: chapter.order, title: chapter.title } : {}),
-        ...(kind === 'chapter' ? { manifestIncluded: chapter !== undefined } : {})
+        // gh#47: `manifestIncluded` answers "does the manifest LIST this file",
+        // `buildIncluded` answers "is it in the built book". An `include: false`
+        // entry says yes to the first and no to the second — it is listed, and
+        // `manifest-extraction` even gives it an `order`. Deriving the second
+        // from the first (as the first edition of manuscript ordering did) makes
+        // an excluded chapter indistinguishable from an included one.
+        ...(kind === 'chapter'
+          ? { manifestIncluded: chapter !== undefined, buildIncluded: chapter?.buildIncluded ?? true }
+          : {})
       };
       writer.putDocument(input);
     }

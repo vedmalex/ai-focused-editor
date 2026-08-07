@@ -11,10 +11,14 @@ import {
   NOT_BUILT_INDEX_STATE,
   envelope,
   extractManifestChapters,
+  mentionOrderExclusion,
   resolveEffectiveEntityTypes,
   type ConfigureResult,
   type DuplicateEntityRecord,
   type EffectiveEntityType,
+  type EntityAppearance,
+  type EntityAppearanceQuery,
+  type EntityAppearanceResult,
   type EntityQuery,
   type EntityTypeProblem,
   type Envelope,
@@ -39,6 +43,7 @@ import {
   type RelationQuery
 } from '../common';
 import { NARRATIVE_INDEX_SCHEMA_VERSION } from './narrative-index-schema';
+import { readVerifiedDocument, sliceExcerpt, type VerifiedDocument } from './evidence-excerpt';
 import { NarrativeMemoryConfigResolver } from './narrative-memory-config-resolver';
 import { NodeNarrativeWorkspaceSource } from './node-narrative-workspace-source';
 import {
@@ -217,6 +222,183 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
 
   async getRelations(rootUri: string, query?: RelationQuery): Promise<Envelope<NarrativeRelation[]>> {
     return this.session(rootUri).getRelations(query);
+  }
+
+  /**
+   * Where an entity appears, in manuscript order, optionally quoted (gh#47).
+   *
+   * NOT A PLAIN DELEGATION like its neighbours above, and this is the only read
+   * method here that is not — because it is the seam where two concerns meet
+   * that live in different layers. The ORDER is the store's (`MentionQuery`
+   * ordering, which joins the document's `chapter_order` where the rows are),
+   * and the QUOTATION is this layer's, because `common/` has no filesystem.
+   *
+   * ONE READ PER DOCUMENT, NOT PER APPEARANCE. Several appearances routinely
+   * share a chapter, and the hash check needs the whole file anyway; reading it
+   * once per appearance would multiply the cost by the very number a card is
+   * most likely to ask for. The cache is per call rather than held: a longer
+   * life would mean serving a quotation from bytes read before the caller's
+   * question, which is the staleness this whole rule exists to refuse.
+   */
+  async getEntityAppearances(
+    rootUri: string,
+    entityId: string,
+    query: EntityAppearanceQuery = {}
+  ): Promise<Envelope<EntityAppearanceResult>> {
+    const session = this.session(rootUri);
+    const answer = session.getMentions({
+      entityId,
+      orderBy: 'chapter',
+      direction: query.direction ?? 'asc',
+      ...(query.limit === undefined ? {} : { limit: query.limit })
+    });
+    const rootPath = canonicalWorkspaceKey(rootUri);
+    const documents = new Map<string, NarrativeDocumentSummary | undefined>();
+    const texts = new Map<string, VerifiedDocument>();
+    const appearances: EntityAppearance[] = [];
+    for (const mention of answer.data) {
+      const relPath = mention.evidence.path;
+      if (!documents.has(relPath)) {
+        documents.set(relPath, session.getDocument(relPath));
+      }
+      const document = documents.get(relPath);
+      const orderExclusion =
+        document === undefined
+          ? 'no-chapter-order'
+          : mentionOrderExclusion(mention, {
+              ...(document.chapterOrder === undefined ? {} : { chapterOrder: document.chapterOrder }),
+              buildIncluded: document.buildIncluded
+            });
+      const appearance: EntityAppearance = {
+        mention,
+        ...(document?.title === undefined ? {} : { chapterTitle: document.title }),
+        ...(document?.chapterOrder === undefined ? {} : { chapterOrder: document.chapterOrder }),
+        ...(orderExclusion === undefined ? {} : { orderExclusion })
+      };
+      if (query.withExcerpt === true) {
+        if (document === undefined) {
+          appearance.excerptUnavailable = 'unreadable';
+        } else {
+          // The TEXT is cached, never the finished excerpt: two appearances in
+          // one chapter have different ranges, so caching the quotation would
+          // serve the second one the first one's passage. Keyed by path AND
+          // hash, so a document re-indexed mid-loop is a different document for
+          // quoting purposes rather than a cache hit the new hash never vouched
+          // for.
+          const key = `${relPath}::${document.contentHash}`;
+          let verified = texts.get(key);
+          if (verified === undefined) {
+            verified = await readVerifiedDocument(rootPath, relPath, document.contentHash);
+            texts.set(key, verified);
+          }
+          if (verified.text === undefined) {
+            appearance.excerptUnavailable = verified.unavailable ?? 'unreadable';
+          } else {
+            const excerpt = sliceExcerpt(verified.text, mention.evidence);
+            if (excerpt.text === undefined) {
+              appearance.excerptUnavailable = excerpt.unavailable ?? 'unreadable';
+            } else {
+              appearance.excerpt = excerpt.text;
+            }
+          }
+        }
+      }
+      appearances.push(appearance);
+    }
+    // The spread is read from the SAME session, inside the same call, so it
+    // cannot straddle a rebuild the way two RPC round trips could — see
+    // `EntityAppearanceResult`.
+    const spread = query.withSpread === true ? session.countMentionsByDocument({ entityId }) : undefined;
+    // The first appearance is read from the SAME session in the SAME call, so
+    // the card's two headline facts cannot come from two generations. Asked for
+    // explicitly, because a caller listing recent appearances does not need it.
+    const firstMention =
+      query.withFirst === true
+        ? session.getMentions({ entityId, orderBy: 'chapter', direction: 'asc', limit: 1 }).data[0]
+        : undefined;
+    const first =
+      firstMention === undefined
+        ? undefined
+        : await this.toAppearance(firstMention, session, rootPath, query.withExcerpt === true, texts, documents);
+    // The envelope of the ORIGINAL read: state and generation describe the index
+    // the mentions came from. Rebuilding one here would report the state at the
+    // end of the file reads instead, which is a different and later claim.
+    return {
+      ...answer,
+      data: {
+        appearances,
+        ...(first === undefined ? {} : { first }),
+        ...(spread === undefined ? {} : { spread })
+      }
+    };
+  }
+
+  /**
+   * One mention, projected into an appearance.
+   *
+   * SHARED BY THE LIST AND BY `EntityAppearanceResult.first`, on purpose: the
+   * first appearance is not a different kind of thing, and two projections
+   * would be two chances for the excerpt rule or the exclusion reason to differ
+   * between the value a card puts in its headline and the ones it lists below.
+   *
+   * The caches are passed IN rather than owned here, so a first appearance that
+   * repeats a chapter already read costs no second read.
+   */
+  protected async toAppearance(
+    mention: NarrativeMention,
+    session: NarrativeIndexSession,
+    rootPath: string,
+    withExcerpt: boolean,
+    texts: Map<string, VerifiedDocument>,
+    documents: Map<string, NarrativeDocumentSummary | undefined>
+  ): Promise<EntityAppearance> {
+    const relPath = mention.evidence.path;
+    if (!documents.has(relPath)) {
+      documents.set(relPath, session.getDocument(relPath));
+    }
+    const document = documents.get(relPath);
+    const orderExclusion =
+      document === undefined
+        ? 'no-chapter-order'
+        : mentionOrderExclusion(mention, {
+            ...(document.chapterOrder === undefined ? {} : { chapterOrder: document.chapterOrder }),
+            buildIncluded: document.buildIncluded
+          });
+    const appearance: EntityAppearance = {
+      mention,
+      ...(document?.title === undefined ? {} : { chapterTitle: document.title }),
+      ...(document?.chapterOrder === undefined ? {} : { chapterOrder: document.chapterOrder }),
+      ...(orderExclusion === undefined ? {} : { orderExclusion })
+    };
+    if (!withExcerpt) {
+      return appearance;
+    }
+    if (document === undefined) {
+      appearance.excerptUnavailable = 'unreadable';
+      return appearance;
+    }
+    // The TEXT is cached, never the finished excerpt: two appearances in one
+    // chapter have different ranges, so caching the quotation would serve the
+    // second one the first one's passage. Keyed by path AND hash, so a document
+    // re-indexed mid-call is a different document for quoting purposes rather
+    // than a cache hit the new hash never vouched for.
+    const key = `${relPath}::${document.contentHash}`;
+    let verified = texts.get(key);
+    if (verified === undefined) {
+      verified = await readVerifiedDocument(rootPath, relPath, document.contentHash);
+      texts.set(key, verified);
+    }
+    if (verified.text === undefined) {
+      appearance.excerptUnavailable = verified.unavailable ?? 'unreadable';
+      return appearance;
+    }
+    const excerpt = sliceExcerpt(verified.text, mention.evidence);
+    if (excerpt.text === undefined) {
+      appearance.excerptUnavailable = excerpt.unavailable ?? 'unreadable';
+    } else {
+      appearance.excerpt = excerpt.text;
+    }
+    return appearance;
   }
 
   /**

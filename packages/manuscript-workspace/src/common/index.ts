@@ -66,6 +66,8 @@ export * from './transcript-prompts';
 export * from './transcript-set-model';
 export * from './transcript-set-scaffold';
 export * from './transcript-sidecar';
+export * from './entity-card';
+export * from './entity-token-at';
 export * from './transcript-speakers';
 export * from './transcription-settings';
 export * from './source-library-protocol';

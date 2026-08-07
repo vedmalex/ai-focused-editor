@@ -15,6 +15,7 @@ import { NarrativeMemoryContribution } from './narrative-memory-contribution';
 import { NarrativeMemoryPreferenceContribution } from './narrative-memory-preferences';
 import {
   NarrativeDocumentContextTool,
+  NarrativeEntityAppearancesTool,
   NarrativeEntityRelationsTool,
   NarrativeFindEntitiesTool,
   NarrativeFindMentionsTool
@@ -79,4 +80,5 @@ export default new ContainerModule(bind => {
   bindToolProvider(NarrativeFindMentionsTool, bind);
   bindToolProvider(NarrativeEntityRelationsTool, bind);
   bindToolProvider(NarrativeDocumentContextTool, bind);
+  bindToolProvider(NarrativeEntityAppearancesTool, bind);
 });

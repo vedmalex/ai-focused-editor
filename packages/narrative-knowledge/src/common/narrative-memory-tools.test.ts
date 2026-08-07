@@ -185,9 +185,14 @@ describe('WP-6 — display order (ISS-349)', () => {
 });
 
 describe('WP-6 — the tools themselves', () => {
-  test('four tools, four distinct ids, none colliding with the manuscript_* set', () => {
-    expect(NARRATIVE_MEMORY_TOOL_IDS).toHaveLength(4);
-    expect(new Set(NARRATIVE_MEMORY_TOOL_IDS).size).toBe(4);
+  test('five tools, five distinct ids, none colliding with the manuscript_* set', () => {
+    // THE COUNT IS SPELLED OUT ON PURPOSE, and gh#47 is why it earns its place:
+    // adding a tool must be a VISIBLE edit here, not a silent one. It reddened
+    // when `narrative_entity_appearances` landed, exactly as intended. The
+    // uniqueness assertion beside it is the one that matters — the count alone
+    // would pass a rename that collided two ids into one.
+    expect(NARRATIVE_MEMORY_TOOL_IDS).toHaveLength(5);
+    expect(new Set(NARRATIVE_MEMORY_TOOL_IDS).size).toBe(5);
     for (const id of NARRATIVE_MEMORY_TOOL_IDS) {
       // Both sets share ONE `ToolInvocationRegistry` for the whole of WP-7, and
       // a collision there is a silent shadowing in a Map rather than an error.

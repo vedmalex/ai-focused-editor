@@ -78,7 +78,14 @@ export const NARRATIVE_CONTEXT_SECTIONS = [
  * and it is not built.
  */
 export const UNAVAILABLE_CONTEXT_SECTIONS: Readonly<Record<string, string>> = Object.freeze({
-  characterProfiles: 'gh#47',
+  // AMENDED AT gh#47's LANDING, because silence was not an option (architecture
+  // §3.4). gh#47 shipped the card as an INTERACTIVE surface with its own RPC
+  // (`getEntityAppearances`), which the rule permits — but it did not fill this
+  // section, and leaving `gh#47` here would make the record promise a task that
+  // has already landed. The address moves to gh#51, whose recall assembler is
+  // the consumer that actually needs profiles inside a document's context; the
+  // card's own data path does not go through here at all.
+  characterProfiles: 'gh#51',
   timeline: 'gh#48',
   plotThreads: 'gh#49',
   openQuestions: 'gh#50',

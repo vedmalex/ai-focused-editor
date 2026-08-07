@@ -40,8 +40,15 @@
  * v3 (UR-031) added `document.title`, four chronology columns on `relation`, and
  * `list_position` to `relation_identity`. No data migration accompanies it: a
  * `user_version` mismatch already rebuilds the whole file from the manuscript.
+ *
+ * v4 (gh#47) added `document.build_included`. Same absence of a migration, same
+ * reason. WHO OWNS THE NUMBER: two open plans (gh#48, gh#49) each proposed
+ * taking "v4" independently, which this constant's own history says is exactly
+ * how a version number quietly forks. The epic's rule is that the number goes to
+ * whoever migrates FIRST and the others take the next one — that is gh#47 here,
+ * so gh#48 takes v5. Plans state "the next bump", never a literal.
  */
-export const NARRATIVE_INDEX_SCHEMA_VERSION = 3;
+export const NARRATIVE_INDEX_SCHEMA_VERSION = 4;
 
 /**
  * Pragmas applied to every connection, in this order.
@@ -85,6 +92,13 @@ CREATE TABLE document (
   -- neither. NULL and '' are DIFFERENT answers and nothing may fold them.
   title             TEXT,
   manifest_included INTEGER NOT NULL DEFAULT 1,
+  -- v4 (gh#47): part of the BUILT BOOK, which is NOT the same question as
+  -- \`manifest_included\`. An \`include: false\` entry is still LISTED, so it is
+  -- stored with \`manifest_included = 1\` and a real \`chapter_order\`; only this
+  -- column says it is out of the build. Both are read: \`manifest_included\` by
+  -- the context assembler and the AI tools' document answer, this one by
+  -- manuscript ordering, which means order in the book being built.
+  build_included    INTEGER NOT NULL DEFAULT 1,
   indexed_at        INTEGER NOT NULL,
   generation        INTEGER NOT NULL
 ) STRICT;

@@ -165,6 +165,86 @@ function seedCards(store: NarrativeIndexStore, ...relPaths: readonly string[]): 
   });
 }
 
+// --------------------------------------------------------------------------
+// Fixtures for manuscript order (gh#47)
+// --------------------------------------------------------------------------
+
+const CHAPTER_ONE = 'manuscript/ordered-01.md';
+const CHAPTER_TWO = 'manuscript/ordered-02.md';
+const CHAPTER_THREE = 'manuscript/ordered-03.md';
+/** Named by no manifest entry, so it has no `chapterOrder` at all. */
+const UNLISTED_CHAPTER = 'manuscript/ordered-scratch.md';
+/**
+ * LISTED, WITH AN ORDER, AND STILL OUT OF THE BUILT BOOK — the state an
+ * `include: false` manifest entry actually produces.
+ *
+ * THIS FIXTURE IS THE POINT OF THE gh#47 FIX, so it is worth stating what it
+ * used to be. The first edition wrote `manifestIncluded: false` here and left
+ * `buildIncluded` out of the port entirely. That combination is one the indexer
+ * NEVER WRITES: `manifest-extraction` pushes an `include: false` entry into the
+ * walk WITH an `order`, and the session sets `manifestIncluded: chapter !== undefined`,
+ * i.e. `true`. So the exclusion rule was dead in the product while this case
+ * stayed green — the tooth agreed with the code about a state neither would ever
+ * meet. `manifestIncluded` stays `true` here on purpose: anything else would
+ * re-create the fiction.
+ */
+const EXCLUDED_CHAPTER = 'manuscript/ordered-excluded.md';
+
+function orderedChapter(relPath: string, order?: number, options: { listed?: boolean; built?: boolean } = {}) {
+  return {
+    relPath,
+    kind: 'chapter' as const,
+    sizeBytes: 512,
+    mtimeMs: 1_700_000_004_000,
+    contentHash: 'c'.repeat(64),
+    ...(order === undefined ? {} : { chapterOrder: order }),
+    manifestIncluded: options.listed ?? true,
+    buildIncluded: options.built ?? true,
+    indexedAt: 1_700_000_005_000
+  };
+}
+
+function seedOrderedChapters(store: NarrativeIndexStore): void {
+  store.transaction(writer => {
+    writer.putDocument(orderedChapter(CHAPTER_ONE, 0));
+    writer.putDocument(orderedChapter(CHAPTER_TWO, 1));
+    writer.putDocument(orderedChapter(CHAPTER_THREE, 2));
+    // Unlisted: no order, and `manifestIncluded` false — the ONE case where the
+    // two columns agree, because a file the manifest never names is in neither.
+    writer.putDocument(orderedChapter(UNLISTED_CHAPTER, undefined, { listed: false, built: false }));
+    // Excluded: listed, ordered, out of the build. The columns DISAGREE, which
+    // is what makes this case able to fail.
+    writer.putDocument(orderedChapter(EXCLUDED_CHAPTER, 3, { listed: true, built: false }));
+  });
+}
+
+/** Six mentions of one entity, inserted in an order that DISAGREES with the
+ *  manuscript — see the note on the ascending case for why that matters. */
+function seedOrderingMentions(store: NarrativeIndexStore): void {
+  const at = (relPath: string, line: number, raw: string) =>
+    mention('krishna', {
+      raw,
+      evidence: rangeEvidence(relPath, { start: { line, character: 0 }, end: { line, character: 8 } })
+    });
+  store.transaction(writer => {
+    writer.putMention(at(CHAPTER_TWO, 5, 'ch2-line5'));
+    // TWO ON ONE LINE, so the THIRD sort key has to decide. Every other fixture
+    // here sits at character 0, which left `start_char` unbitten by any case —
+    // an adapter that dropped it from its ORDER BY passed the whole suite.
+    writer.putMention(
+      mention('krishna', {
+        raw: 'ch1-line2-col40',
+        evidence: rangeEvidence(CHAPTER_ONE, { start: { line: 2, character: 40 }, end: { line: 2, character: 48 } })
+      })
+    );
+    writer.putMention(at(CHAPTER_ONE, 9, 'ch1-line9'));
+    writer.putMention(at(CHAPTER_ONE, 2, 'ch1-line2'));
+    writer.putMention(mention('krishna', { raw: 'ch3-whole-file', evidence: wholeFileEvidence(CHAPTER_THREE) }));
+    writer.putMention(at(UNLISTED_CHAPTER, 1, 'scratch-line1'));
+    writer.putMention(at(EXCLUDED_CHAPTER, 1, 'excluded-line1'));
+  });
+}
+
 async function open(makeStore: MakeContractStore, options?: { readOnly?: boolean }): Promise<NarrativeIndexStore> {
   const store = await makeStore(options);
   check(store !== undefined, `the harness could not produce a store (options=${JSON.stringify(options ?? {})})`);
@@ -642,6 +722,200 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
       const broken = store.getMentions({ brokenOnly: true });
       equal(broken.length, 1, 'broken mention count');
       equal(broken[0].entityId, 'nobody', 'the broken one');
+    }
+  },
+  {
+    // gh#47 — manuscript order, ASCENDING.
+    //
+    // THE FIXTURE IS BUILT OUT OF ORDER ON PURPOSE. Mentions are inserted
+    // ch-02, then ch-01 line 9, then ch-01 line 2, so insertion order and
+    // manuscript order DISAGREE about every pair. An adapter that ignores
+    // `orderBy` and returns rows as inserted cannot pass by coincidence.
+    name: 'orderBy chapter ascending: mentions read in manuscript order, across chapters and within one',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedOrderedChapters(store);
+      seedOrderingMentions(store);
+      const ordered = store.getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'asc' });
+      deepEqual(
+        ordered.slice(0, 4).map(m => m.raw),
+        ['ch1-line2', 'ch1-line2-col40', 'ch1-line9', 'ch2-line5'],
+        'ascending manuscript order, and column decides within a line'
+      );
+    }
+  },
+  {
+    // gh#47 — DESCENDING, which is not decoration: "latest appearance" and the
+    // recent-mentions list are unobtainable without it except by transferring
+    // every mention an entity has.
+    name: 'orderBy chapter descending: the placeable mentions come back reversed',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedOrderedChapters(store);
+      seedOrderingMentions(store);
+      const ordered = store.getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'desc' });
+      deepEqual(
+        ordered.slice(0, 4).map(m => m.raw),
+        ['ch2-line5', 'ch1-line9', 'ch1-line2-col40', 'ch1-line2'],
+        'descending manuscript order, column included'
+      );
+    }
+  },
+  {
+    // gh#47 — the case the whole `MentionOrderExclusion` doc exists for, all
+    // three reasons on ONE tree.
+    //
+    // WHAT WOULD FAIL WITHOUT IT: a NULL `chapter_order` sorts FIRST in SQLite
+    // by default, so a mention in a file the manifest never names would be
+    // reported as the character's first appearance — a confident, wrong answer
+    // to the question this panel exists to answer.
+    //
+    // AND THE DESCENDING HALF IS NOT THE SAME ASSERTION TWICE: the tempting
+    // implementation reverses the exclusion flag along with everything else,
+    // which merely moves the lie to the other end — an unplaceable mention
+    // becomes the LATEST appearance instead of the first.
+    name: 'unplaceable mentions trail the ordered ones in BOTH directions',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedOrderedChapters(store);
+      seedOrderingMentions(store);
+      const unplaceable = ['ch3-whole-file', 'scratch-line1', 'excluded-line1'];
+      for (const direction of ['asc', 'desc'] as const) {
+        const ordered = store.getMentions({ entityId: 'krishna', orderBy: 'chapter', direction });
+        equal(ordered.length, 7, `every mention is still returned (${direction})`);
+        deepEqual(
+          ordered.slice(4).map(m => m.raw),
+          unplaceable,
+          `unplaceable mentions trail, in insertion order (${direction})`
+        );
+      }
+    }
+  },
+  {
+    // gh#47 — `limit` AFTER ordering (the ISS-349 rule), and the two queries the
+    // card actually issues.
+    name: 'limit selects the first rows of the chosen order, not the first rows found',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedOrderedChapters(store);
+      seedOrderingMentions(store);
+      const first = store.getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'asc', limit: 1 });
+      deepEqual(first.map(m => m.raw), ['ch1-line2'], 'first appearance');
+      const latest = store.getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'desc', limit: 2 });
+      deepEqual(latest.map(m => m.raw), ['ch2-line5', 'ch1-line9'], 'the two most recent');
+    }
+  },
+  {
+    // gh#47 — THE REJECTING CASE, and it guards two different mistakes.
+    //
+    // (1) `orderBy` must be OPT-IN. Every caller written before it relies on
+    // insertion order, and an adapter that started sorting unconditionally
+    // would rewrite results nothing in this suite otherwise looks at.
+    //
+    // (2) The order must come from the MANIFEST, not from the mentions. Moving
+    // ch-02 ahead of ch-01 changes nothing about any mention row — so an
+    // implementation that sorted by anything carried on the mention itself
+    // (its id, its line, its insertion index) returns the old answer here and
+    // is caught.
+    name: 'ordering is opt-in, and it follows the manifest rather than the mention rows',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedOrderedChapters(store);
+      seedOrderingMentions(store);
+      deepEqual(
+        store.getMentions({ entityId: 'krishna' }).map(m => m.raw),
+        [
+          'ch2-line5',
+          'ch1-line2-col40',
+          'ch1-line9',
+          'ch1-line2',
+          'ch3-whole-file',
+          'scratch-line1',
+          'excluded-line1'
+        ],
+        'without orderBy the result is insertion order'
+      );
+      // Renumber the manifest: ch-02 now comes first. Only DOCUMENT rows change.
+      store.transaction(writer => {
+        writer.putDocument({ ...orderedChapter(CHAPTER_ONE, 1) });
+        writer.putDocument({ ...orderedChapter(CHAPTER_TWO, 0) });
+      });
+      deepEqual(
+        store.getMentions({ entityId: 'krishna', orderBy: 'chapter', direction: 'asc' }).slice(0, 4).map(m => m.raw),
+        ['ch2-line5', 'ch1-line2', 'ch1-line2-col40', 'ch1-line9'],
+        'renumbering the manifest reorders the answer'
+      );
+    }
+  },
+  {
+    // gh#47 — A LIMIT THE TWO ADAPTERS WOULD ANSWER DIFFERENTLY IS REJECTED.
+    //
+    // Both values below are reachable from a preference, and both used to
+    // DIVERGE rather than fail: `-1` means "no limit" to SQLite's `LIMIT ?` and
+    // "drop the last row" to `slice`, while `1.5` made SQLite throw a raw
+    // `datatype mismatch` carrying none of this port's error kinds and made the
+    // in-memory adapter return one row. Divergence is the failure here — the
+    // wrong answer would have been "clamp them into agreement", which invents an
+    // answer to a question nobody asked.
+    name: 'a negative or fractional limit is REJECTED by both adapters, not answered differently',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putEntity(entity('krishna', CARD));
+        writer.putMention(mention('krishna'));
+      });
+      await rejects(() => store.getMentions({ limit: -1 }), 'constraint-violation', 'a negative mention limit');
+      await rejects(() => store.getMentions({ limit: 1.5 }), 'constraint-violation', 'a fractional mention limit');
+      await rejects(() => store.findEntities({ limit: -1 }), 'constraint-violation', 'a negative entity limit');
+      await rejects(() => store.findEntities({ limit: 1.5 }), 'constraint-violation', 'a fractional entity limit');
+      // THE PAIRED POSITIVE, and it carries the real risk: a validator written
+      // as `limit > 0` would reject zero, which is a legitimate answer a caller
+      // can compute from a preference and which both adapters already handle.
+      equal(store.getMentions({ limit: 0 }).length, 0, 'limit 0 is a real answer, not an error');
+      equal(store.findEntities({ limit: 0 }).length, 0, 'limit 0 is a real answer for entities too');
+      equal(store.getMentions({ limit: 1 }).length, 1, 'a valid limit still works');
+    }
+  },
+  {
+    // gh#47 — "which chapters is this character in, and how many".
+    //
+    // THE COUNTS AND THE ROW QUERY MUST AGREE, so the case checks them against
+    // each other rather than against two hand-written expectations: a filter
+    // that narrows one has to narrow the other identically, which is the whole
+    // reason both are built from one `mentionFilter`.
+    name: 'countMentionsByDocument groups the same filter, in ascending manuscript order',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedOrderedChapters(store);
+      seedOrderingMentions(store);
+      const counts = store.countMentionsByDocument({ entityId: 'krishna' });
+      deepEqual(
+        counts.map(row => `${row.relPath}:${row.mentionCount}`),
+        [
+          `${CHAPTER_ONE}:3`,
+          `${CHAPTER_TWO}:1`,
+          `${CHAPTER_THREE}:1`,
+          `${EXCLUDED_CHAPTER}:1`,
+          `${UNLISTED_CHAPTER}:1`
+        ],
+        'chapters in build order, then the unplaceable ones by path'
+      );
+      // The trailing group carries its REASON, not merely its position — the two
+      // documents below are excluded for different reasons and a consumer that
+      // renders "not in the built book" must not say it about an unlisted file.
+      const byPath = new Map(counts.map(row => [row.relPath, row]));
+      equal(byPath.get(CHAPTER_ONE)?.orderExclusion, undefined, 'an ordinary chapter is placeable');
+      equal(byPath.get(EXCLUDED_CHAPTER)?.orderExclusion, 'not-in-built-book', 'listed, ordered, out of the build');
+      equal(byPath.get(UNLISTED_CHAPTER)?.orderExclusion, 'no-chapter-order', 'the manifest never names it');
+      // Totals agree with the row query — the aggregate is a different SHAPE of
+      // the same answer, not a second answer.
+      equal(
+        counts.reduce((sum, row) => sum + row.mentionCount, 0),
+        store.getMentions({ entityId: 'krishna' }).length,
+        'the counts sum to the mentions'
+      );
+      equal(store.countMentionsByDocument({ entityId: 'nobody' }).length, 0, 'no mentions, no rows');
     }
   },
   {
