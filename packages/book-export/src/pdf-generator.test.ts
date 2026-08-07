@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -8,7 +9,7 @@ import {
 } from './index';
 
 const SCRATCH =
-  '/private/tmp/claude-501/-Users-vedmalex-work-ai-editor-3/8a15f000-cd38-4649-8fe4-b479e61f41c1/scratchpad/pdf-test';
+  join(tmpdir(), 'afe-pdf-test');
 
 // Resolve a real browser once so the integration test can skip gracefully on
 // machines without Chrome/Chromium (test.skipIf), and actually render when present.
