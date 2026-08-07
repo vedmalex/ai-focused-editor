@@ -16,5 +16,6 @@ export * from './extracted-relation';
 export * from './document-classification';
 export * from './entity-card-extraction';
 export * from './chapter-extraction';
+export * from './event-extraction';
 export * from './manifest-extraction';
 export * from './narrative-extraction';

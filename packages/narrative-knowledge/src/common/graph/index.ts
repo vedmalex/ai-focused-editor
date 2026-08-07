@@ -17,6 +17,7 @@ export * from './narrative-origin';
 export * from './evidence';
 export * from './narrative-entity';
 export * from './narrative-mention';
+export * from './narrative-event';
 export * from './narrative-relation';
 
 // Relation source 6, the DERIVED one (TASK-022 WP-4a). The RULE of the fold is
