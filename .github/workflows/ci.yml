@@ -154,31 +154,45 @@ jobs:
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
-      # TWO ATTEMPTS, AND THAT IS THEIA'S OWN INSTRUCTION RATHER THAN A RETRY
-      # LOOP. `apps/electron`'s `bundle` runs `theia rebuild:electron`, which
-      # swaps native modules to the Electron ABI and then reports
-      # `Updated dependencies, please run "install" again` and exits non-zero.
-      # The build genuinely cannot proceed until the tree is reinstalled against
-      # the modules the rebuild just produced, so the install is repeated and
-      # the build asked for a second time. If the SECOND attempt fails, that is
-      # a real failure and the step fails with it.
+      # ORDER IS THE WHOLE PROBLEM HERE, AND GETTING IT WRONG LOOKS LIKE A
+      # DIFFERENT BUG ENTIRELY.
+      #
+      # `apps/electron`'s `bundle` runs, in order: build the ffmpeg addon,
+      # `theia rebuild:electron` (which recompiles native modules against the
+      # Electron ABI), then `theia build`. But `theia build` FIRST runs
+      # `prepareElectron`, which may add dependencies and abort with
+      # `Updated dependencies, please run "install" again`.
+      #
+      # The obvious reading — "so install and try again" — is a trap: a second
+      # `bun install` REPLACES the freshly rebuilt native modules with registry
+      # copies, and `theia rebuild` then SKIPS them because its cache says they
+      # are already done. The build dies much later on
+      # `Cannot read file: native-keymap/build/Release/keymapping.node`, which
+      # points nowhere near the cause.
+      #
+      # So the dependency update is provoked FIRST, on its own, and the install
+      # that answers it happens BEFORE any rebuild. The `|| true` below is not
+      # error-swallowing: this invocation is EXPECTED to exit non-zero, that is
+      # precisely what it is for.
+      - name: Prepare electron dependencies
+        run: |
+          (cd apps/electron && ../../node_modules/.bin/theia build --app-target electron --mode development) || true
+          bash .github/scripts/install.sh
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+
       - name: Build electron app
         run: |
-          bun run build:electron || {
-            echo "::notice::Theia asked for a reinstall after rebuild:electron — doing that and rebuilding once."
-            bash .github/scripts/install.sh
-            # The bundler script Theia GENERATES swallows its own failure:
-            # `catch { process.exit(1) }` with no output, so a bundling error
-            # arrives as a bare "esbuild exited with an unexpected code: 1" and
-            # says nothing. Teach the generated file to print before retrying,
-            # so a red run carries its own diagnosis instead of needing a
-            # second person to reproduce it.
-            for gen in apps/electron/esbuild.mjs apps/browser/esbuild.mjs; do
-              [ -f "$gen" ] || continue
-              perl -0pi -e 's/\} catch \{\n(\s*)process\.exit\(1\);/} catch (err) {\n$1console.error(err);\n$1process.exit(1);/' "$gen"
-            done
-            bun run build:electron
-          }
+          # The bundler script Theia GENERATES swallows its own failure:
+          # `catch { process.exit(1) }` with no output, so a bundling error
+          # surfaces as a bare "esbuild exited with an unexpected code: 1" and
+          # says nothing. Teach it to print, so a red run carries its own
+          # diagnosis instead of needing someone to reproduce it locally.
+          for gen in apps/electron/esbuild.mjs apps/browser/esbuild.mjs; do
+            [ -f "$gen" ] || continue
+            perl -0pi -e 's/\} catch \{\n(\s*)process\.exit\(1\);/} catch (err) {\n$1console.error(err);\n$1process.exit(1);/' "$gen"
+          done
+          bun run build:electron
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
