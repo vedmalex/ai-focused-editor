@@ -61,6 +61,7 @@ import {
 import type { NarrativeMemoryConfig } from './narrative-memory-config';
 import type { NarrativeConfigChange, NarrativeMemoryConfigurator } from './narrative-memory-configure';
 import { systemTimerScheduler, type NarrativeTimerHandle, type NarrativeTimerScheduler } from './narrative-timer';
+import { probeWatcherLiveness } from './narrative-watcher-liveness';
 import type { NarrativeWorkspaceSource } from './narrative-workspace-source';
 
 /** Why a pass ran. Carried into the report so a log says what woke the index. */
@@ -166,6 +167,19 @@ export interface NarrativeIndexMaintainerOptions {
    * costs it nothing beyond the one timer it would otherwise arm.
    */
   onIndexChanged?: (generation: number) => void;
+  /**
+   * Write the liveness probe's own file, OUTSIDE the indexed tree (ISS-374, gh#69).
+   *
+   * OPTIONAL, AND ABSENT MEANS SKIP THE PROBE ENTIRELY. The maintainer has no
+   * write port — {@link NarrativeWorkspaceSource} reads — so the one write this
+   * check needs is injected rather than invented here, and every existing
+   * fixture that omits it keeps its current timer arithmetic untouched.
+   *
+   * The caller owns the path and its cleanup; see
+   * {@link WatcherLivenessProbeOptions.touch} for why it must not live where
+   * the index looks.
+   */
+  probeWatcherTouch?: () => Promise<void> | void;
 }
 
 interface QueuedPass {
@@ -184,6 +198,7 @@ export class NarrativeIndexMaintainer {
   private readonly rootPath: string | undefined;
   private readonly now: () => number;
   private readonly notifyIndexChanged: ((generation: number) => void) | undefined;
+  private readonly probeWatcherTouch: (() => Promise<void> | void) | undefined;
 
   private readonly subscriptions: NarrativeDisposable[] = [];
   private debounceTimer: NarrativeTimerHandle | undefined;
@@ -228,6 +243,7 @@ export class NarrativeIndexMaintainer {
     this.rootPath = options.rootPath;
     this.now = options.now ?? (() => Date.now());
     this.notifyIndexChanged = options.onIndexChanged;
+    this.probeWatcherTouch = options.probeWatcherTouch;
   }
 
   // ---- lifecycle ---------------------------------------------------------
@@ -595,9 +611,55 @@ export class NarrativeIndexMaintainer {
         return;
       }
       this.warmupDeadline = this.now() + WATCHER_WARMUP_DURATION_MS;
-      void this.sweep('prefiltered', 'warmup-sweep').catch(() => undefined);
+      void this.sweep('prefiltered', 'warmup-sweep').catch(() => this.recordSweepFailure('warmup-sweep'));
       this.armWarmupSweep();
+      void this.runWatcherLivenessProbe(watcher);
     });
+  }
+
+  /**
+   * Ask, once per session, whether this subscription actually DELIVERS (ISS-374, gh#69).
+   *
+   * IT RIDES THE WARM-UP'S `whenReady()` RATHER THAN ARMING ITS OWN TRIGGER —
+   * same lifecycle question, same moment, one signal. But the two are NOT the
+   * same job and are deliberately not merged: the warm-up sweep COVERS the gap
+   * by sweeping, this TELLS the author there is one. gh#69 exists because the
+   * covering worked so well that nobody noticed the watcher was dead.
+   *
+   * ONLY `silent` SPEAKS. `alive` says nothing — "не шуметь при исправной
+   * работе" is one of the issue's own boundaries, and a healthy session must
+   * look exactly as it did before this existed. `inconclusive` says nothing
+   * either: a probe that could not write learned nothing about the watcher, and
+   * `watcher-lost` is a claim shown to a human.
+   *
+   * A `silent` VERDICT GOES INTO THE EXISTING `watcher-lost` CHANNEL, NOT A NEW
+   * ONE. That reason's own doc already reads "the file watcher died, OR NEVER
+   * STARTED. Changes are arriving unseen" — a hung service is precisely the
+   * second half, and `IndexStaleReason` is closed on purpose. gh#69 warns
+   * against creating "второй индикатор, которому нельзя верить"; inventing a
+   * parallel state would have been exactly that.
+   */
+  private async runWatcherLivenessProbe(watcher: NarrativeFileWatcher): Promise<void> {
+    const touch = this.probeWatcherTouch;
+    if (touch === undefined) {
+      return;
+    }
+    // THE WHOLE WARM-UP PHASE IS THE PATIENCE BUDGET, not an arbitrary few
+    // seconds. That phase exists precisely because a freshly-armed watcher may
+    // stay quiet for a documented sixteen seconds; speaking before it has given
+    // up would accuse a watcher the maintainer itself is still waiting on.
+    // Deriving the window from `WATCHER_WARMUP_DURATION_MS` keeps the two from
+    // drifting apart the way an independent constant already did once.
+    const verdict = await probeWatcherLiveness({
+      watcher,
+      scheduler: this.scheduler,
+      touch,
+      timeoutMs: WATCHER_WARMUP_DURATION_MS
+    });
+    if (!this.started || verdict !== 'silent') {
+      return;
+    }
+    this.onWatcherLost('watcher-liveness-probe: no event for our own write');
   }
 
   /**
@@ -620,7 +682,7 @@ export class NarrativeIndexMaintainer {
     this.warmupTimer = this.scheduler.schedule(WATCHER_WARMUP_SWEEP_INTERVAL_MS, () => {
       this.warmupTimer = undefined;
       void this.sweep('prefiltered', 'warmup-sweep')
-        .catch(() => undefined)
+        .catch(() => this.recordSweepFailure('warmup-sweep'))
         .finally(() => this.armWarmupSweep());
     });
   }
@@ -632,13 +694,56 @@ export class NarrativeIndexMaintainer {
     this.warmupDeadline = undefined;
   }
 
+  /**
+   * Record a failed background sweep — or deliberately stay quiet (ISS-361, gh#72's sibling gh#71).
+   *
+   * THE ASYMMETRY THIS CLOSES. A watcher-driven pass that rejects records a
+   * failure ({@link onFileChanges}); a sweep that rejected used to swallow the
+   * rejection whole, so the fallback lane — the one that exists precisely for
+   * when the watcher is not delivering — could fail every five minutes with
+   * nothing anywhere saying so. That is the worst of the options gh#71 lists.
+   *
+   * WHY A FOREIGN LOCK IS THE ONE CASE THAT STAYS SILENT, AND WHY THAT IS NOT
+   * THE OLD SWALLOWING. Read-only is ALREADY reported, and by a better channel:
+   * `state()` derives `stale`/`foreign-writer` from `store.lifecycle().readOnly`
+   * fresh on every call, and the status bar renders it as "another process owns
+   * the index, so this window is read-only". Recording a failure on top would
+   * REPLACE that accurate report with a worse one — `failed` means "recovery
+   * REFUSED" (see `IndexStaleReason`'s own doc), a strictly stronger and wrong
+   * claim about a window that is merely not the writer. The silence here is a
+   * deferral to an existing, more precise indicator, not an absence of one.
+   *
+   * `extraction-failed` FOR THE REST, WITH A KNOWN LIMITATION STATED RATHER
+   * THAN GLOSSED. It is the code the watcher lane already uses for the same
+   * read/extract work, and `IndexFailureCode` has no lock member — but the
+   * union DOES have `disk-full` and `permission-denied`, and `src/node`'s
+   * `IndexFailureReporter` already maps raw errors onto them. This method
+   * discards the caught error and so cannot reach that classification: a
+   * sweep that failed on a full disk is reported here as an extraction
+   * failure. Closing that needs a classifier PORT (the maintainer lives in
+   * `common/` and may not import from `node/`), which is a larger change than
+   * the silence this method exists to end. Recorded as follow-up work rather
+   * than left to be discovered as a lie in this comment.
+   */
+  private recordSweepFailure(trigger: MaintenanceTrigger): void {
+    const state = this.session.state();
+    if (state.state === 'stale' && state.staleReason === 'foreign-writer') {
+      return;
+    }
+    this.session.recordFailure({
+      code: 'extraction-failed',
+      incidentId: `${trigger}-${this.now()}`,
+      occurrences: 1
+    });
+  }
+
   private armSweep(): void {
     this.sweepTimer?.cancel();
     const ttl = this.readConfig().fallbackTtlMs;
     this.sweepTimer = this.scheduler.schedule(ttl, () => {
       this.sweepTimer = undefined;
       void this.enqueue(() => this.runSweep('prefiltered', 'ttl-sweep'))
-        .catch(() => undefined)
+        .catch(() => this.recordSweepFailure('ttl-sweep'))
         .finally(() => {
           if (this.started) {
             this.armSweep();

@@ -37,6 +37,15 @@ for (const name of Object.getOwnPropertyNames(domWindow)) {
 }
 
 const { default: URI } = await import('@theia/core/lib/common/uri');
+// `@theia/monaco/lib/browser/*` is CJS and `require`s monaco synchronously, which
+// Bun refuses for an async ESM module unless it is already resolved — so pull the
+// monaco ESM entry in explicitly before anything that transitively requires it.
+// WITHOUT THIS LINE THIS FILE PASSES ONLY BY LUCK (gh#77): it then depends on
+// some OTHER test file in the same bun process having warmed the module cache
+// first, and bun does not promise an order. When the luck runs out the whole
+// FILE fails to load, taking every test in it along — which is why a red run
+// reported 28 passing instead of 104.
+await import('@theia/monaco-editor-core');
 const { MonacoEditor } = await import('@theia/monaco/lib/browser/monaco-editor');
 const { AutoTypographyContribution, CONTEXT_LOOKBACK_LINES, TYPOGRAPHY_TYPE_DEBOUNCE_MS } = await import('./auto-typography-contribution');
 const { TYPOGRAPHY_RULES } = await import('../../common/typography/typography-rules');

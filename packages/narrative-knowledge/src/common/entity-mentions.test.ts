@@ -107,6 +107,15 @@ describe('mentions inside code are examples, not references (ISS-362)', () => {
     ]);
   });
 
+  test('split: a FENCED-BLOCK token stays a text segment, asserted directly', () => {
+    // The byte-for-byte invariant below would ALSO be satisfied by a split that
+    // emitted this token as a mention segment (concatenation uses `raw`), so
+    // the fenced case needs its own assertion on the segment KIND. Inline code
+    // is covered above; this is its fenced twin.
+    const text = ['Example:', '```', '[[char:krishna]]', '```'].join('\n');
+    expect(splitEntityMentions(text).every(segment => segment.type === 'text')).toBe(true);
+  });
+
   test('split: THE LOAD-BEARING INVARIANT — segments still reproduce the input byte for byte', () => {
     // This is the tooth for "post-filter, never mutate". A `continue` that also
     // advanced the cursor would silently DELETE the skipped token from the

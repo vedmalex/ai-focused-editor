@@ -143,6 +143,26 @@ export const NARRATIVE_MEMORY_COMMAND_PHRASES: readonly NarrativeMemoryPhrase[] 
   phrase('report-incident', 'Incident id'),
   phrase('report-copy-incident', 'Copy incident id'),
   phrase('report-rebuild-blocked', 'Rebuild is unavailable: another process owns the index.'),
+  /**
+   * The ACTIONABLE half of `watcher-lost` (ISS-374, gh#69).
+   *
+   * WHY IT IS A SECOND LINE AND NOT A LONGER `stale-watcher-lost`. That phrase
+   * is the status bar's one-line mark; this belongs where there is room, and
+   * the dialog already carries multi-line explanation.
+   *
+   * NO "FIVE MINUTES" IN THE TEXT, DELIBERATELY, THOUGH gh#69 NAMES THAT
+   * NUMBER. The delay is `fallbackTtlMs`, a user-configurable setting; a phrase
+   * promising five minutes would be a lie on any workspace that changed it, and
+   * every phrase in this catalog is arity 0 by a rule stated in
+   * `indexStatusReportLines` — so the number cannot be substituted in without
+   * breaking the guard that keeps translations safe. "The periodic re-scan" is
+   * true for every configuration.
+   */
+  phrase(
+    'report-watcher-lost-advice',
+    'Until this clears, edits are picked up only by the periodic re-scan, not as you save. ' +
+      'Restarting the computer fixes a file-watching service that has hung.'
+  ),
 
   // "Check for Changes Now" (TASK-022 UR-036/UR-037/UR-038). The visible-progress
   // requirement is a THREE-part vocabulary — "checking", then one of the two
