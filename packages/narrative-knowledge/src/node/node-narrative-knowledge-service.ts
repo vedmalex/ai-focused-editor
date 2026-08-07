@@ -453,11 +453,36 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
         rootUri: this.originalRootUriByPath.get(rootPath) ?? rootPath,
         generation
       }),
-      ...(this.createWatcher !== undefined ? { watcher: this.createWatcher(rootPath) } : {})
+      ...(this.createWatcher !== undefined ? { watcher: this.createWatcher(rootPath) } : {}),
+      probeWatcherTouch: () => this.touchWatcherProbeFile(rootPath)
     });
     this.maintainers.set(rootPath, maintainer);
     maintainer.start();
     return maintainer;
+  }
+
+  /**
+   * Write the liveness probe's own file (ISS-374, gh#69).
+   *
+   * `.theia/` AND NOT THE MANUSCRIPT, for two independent reasons: it is on
+   * {@link NARRATIVE_SCAN_SKIPPED_DIRECTORIES} so the write cannot trigger a
+   * real index pass and answer the probe with its own echo, and it is not the
+   * author's book, so a probe file that survives a crash is invisible to them
+   * rather than debris in their chapters. The narrative database already lives
+   * there, so the directory is ours by established convention.
+   *
+   * NOT DELETED AFTERWARDS, AND THAT IS THE CAREFUL CHOICE RATHER THAN THE LAZY
+   * ONE. Removing it in the same breath would put a create and a delete in one
+   * watcher window, and a watcher that coalesces the pair into nothing would
+   * hand back a FALSE `silent` — the one verdict this probe must never invent,
+   * because it is shown to a human as "your edits are not being seen". One tiny
+   * file, overwritten once per session, in the directory that already holds the
+   * narrative database, is the cheaper trade.
+   */
+  protected async touchWatcherProbeFile(rootPath: string): Promise<void> {
+    const directory = join(rootPath, '.theia');
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(join(directory, 'narrative-watcher-probe.tmp'), String(Date.now()), 'utf8');
   }
 
   /**

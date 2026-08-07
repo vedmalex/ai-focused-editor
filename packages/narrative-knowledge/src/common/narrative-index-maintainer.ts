@@ -61,6 +61,7 @@ import {
 import type { NarrativeMemoryConfig } from './narrative-memory-config';
 import type { NarrativeConfigChange, NarrativeMemoryConfigurator } from './narrative-memory-configure';
 import { systemTimerScheduler, type NarrativeTimerHandle, type NarrativeTimerScheduler } from './narrative-timer';
+import { probeWatcherLiveness } from './narrative-watcher-liveness';
 import type { NarrativeWorkspaceSource } from './narrative-workspace-source';
 
 /** Why a pass ran. Carried into the report so a log says what woke the index. */
@@ -166,6 +167,19 @@ export interface NarrativeIndexMaintainerOptions {
    * costs it nothing beyond the one timer it would otherwise arm.
    */
   onIndexChanged?: (generation: number) => void;
+  /**
+   * Write the liveness probe's own file, OUTSIDE the indexed tree (ISS-374, gh#69).
+   *
+   * OPTIONAL, AND ABSENT MEANS SKIP THE PROBE ENTIRELY. The maintainer has no
+   * write port — {@link NarrativeWorkspaceSource} reads — so the one write this
+   * check needs is injected rather than invented here, and every existing
+   * fixture that omits it keeps its current timer arithmetic untouched.
+   *
+   * The caller owns the path and its cleanup; see
+   * {@link WatcherLivenessProbeOptions.touch} for why it must not live where
+   * the index looks.
+   */
+  probeWatcherTouch?: () => Promise<void> | void;
 }
 
 interface QueuedPass {
@@ -184,6 +198,7 @@ export class NarrativeIndexMaintainer {
   private readonly rootPath: string | undefined;
   private readonly now: () => number;
   private readonly notifyIndexChanged: ((generation: number) => void) | undefined;
+  private readonly probeWatcherTouch: (() => Promise<void> | void) | undefined;
 
   private readonly subscriptions: NarrativeDisposable[] = [];
   private debounceTimer: NarrativeTimerHandle | undefined;
@@ -228,6 +243,7 @@ export class NarrativeIndexMaintainer {
     this.rootPath = options.rootPath;
     this.now = options.now ?? (() => Date.now());
     this.notifyIndexChanged = options.onIndexChanged;
+    this.probeWatcherTouch = options.probeWatcherTouch;
   }
 
   // ---- lifecycle ---------------------------------------------------------
@@ -597,7 +613,42 @@ export class NarrativeIndexMaintainer {
       this.warmupDeadline = this.now() + WATCHER_WARMUP_DURATION_MS;
       void this.sweep('prefiltered', 'warmup-sweep').catch(() => this.recordSweepFailure('warmup-sweep'));
       this.armWarmupSweep();
+      void this.runWatcherLivenessProbe(watcher);
     });
+  }
+
+  /**
+   * Ask, once per session, whether this subscription actually DELIVERS (ISS-374, gh#69).
+   *
+   * IT RIDES THE WARM-UP'S `whenReady()` RATHER THAN ARMING ITS OWN TRIGGER —
+   * same lifecycle question, same moment, one signal. But the two are NOT the
+   * same job and are deliberately not merged: the warm-up sweep COVERS the gap
+   * by sweeping, this TELLS the author there is one. gh#69 exists because the
+   * covering worked so well that nobody noticed the watcher was dead.
+   *
+   * ONLY `silent` SPEAKS. `alive` says nothing — "не шуметь при исправной
+   * работе" is one of the issue's own boundaries, and a healthy session must
+   * look exactly as it did before this existed. `inconclusive` says nothing
+   * either: a probe that could not write learned nothing about the watcher, and
+   * `watcher-lost` is a claim shown to a human.
+   *
+   * A `silent` VERDICT GOES INTO THE EXISTING `watcher-lost` CHANNEL, NOT A NEW
+   * ONE. That reason's own doc already reads "the file watcher died, OR NEVER
+   * STARTED. Changes are arriving unseen" — a hung service is precisely the
+   * second half, and `IndexStaleReason` is closed on purpose. gh#69 warns
+   * against creating "второй индикатор, которому нельзя верить"; inventing a
+   * parallel state would have been exactly that.
+   */
+  private async runWatcherLivenessProbe(watcher: NarrativeFileWatcher): Promise<void> {
+    const touch = this.probeWatcherTouch;
+    if (touch === undefined) {
+      return;
+    }
+    const verdict = await probeWatcherLiveness({ watcher, scheduler: this.scheduler, touch });
+    if (!this.started || verdict !== 'silent') {
+      return;
+    }
+    this.onWatcherLost('watcher-liveness-probe: no event for our own write');
   }
 
   /**

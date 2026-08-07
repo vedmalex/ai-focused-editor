@@ -128,6 +128,13 @@ export function indexStatusReportLines(report: NarrativeIndexStatusReport): stri
   if (report.rebuildBlockedByForeignWriter) {
     lines.push(localizeKey(`${NARRATIVE_MEMORY_NLS_PREFIX}/report-rebuild-blocked`));
   }
+  // ISS-374 (gh#69): a lost watcher is the one stale reason the author can
+  // ACT on, so the dialog says what it costs and what fixes it. The other two
+  // reasons resolve themselves or belong to another process; advice there
+  // would be noise.
+  if (report.staleReason === 'watcher-lost') {
+    lines.push(localizeKey(`${NARRATIVE_MEMORY_NLS_PREFIX}/report-watcher-lost-advice`));
+  }
   return lines;
 }
 

@@ -125,6 +125,25 @@ describe('WP-5 — Show Index Status shows what the status bar withholds', () =>
     expect(withLock.length).toBe(without.length + 1);
   });
 
+  test('ISS-374 — a lost watcher gets ACTIONABLE advice: what it costs and what fixes it', () => {
+    // gh#69's own boundary: not "watcher unavailable", but what it means for the
+    // author and what to do about it. A line that only named the failure would
+    // leave them exactly where the half-day of wrong diagnoses started.
+    const lines = report({ state: 'stale', generation: 1, staleReason: 'watcher-lost', staleSince: 2 });
+    const advice = lines.join('\n');
+    expect(advice).toContain('periodic re-scan');
+    expect(advice).toContain('Restarting the computer');
+  });
+
+  test('ISS-374, PAIRED: the other stale reasons get NO advice line', () => {
+    // "Не шуметь при исправной работе", applied to its neighbours: advice on a
+    // foreign lock or a partial update would be noise the author cannot act on.
+    for (const staleReason of ['foreign-writer', 'partial-update-failed'] as const) {
+      const lines = report({ state: 'stale', generation: 1, staleReason, staleSince: 2 });
+      expect(lines.join('\n')).not.toContain('Restarting the computer');
+    }
+  });
+
   test('no line is a bare key — every phrase resolved through the catalog', () => {
     // `localizeKey` falls back to the leaf name when a key is missing from the
     // catalog, which is the right degradation for a running editor and a silent
