@@ -5,7 +5,38 @@
  * Two forms are recognised inside free text fields:
  *   - `[[kind:id|label]]` — an explicit semantic reference (kind + id + label).
  *   - `[[id]]` — a bare fallback that matches any entity whose id is `id`.
+ *
+ * CODE IS NOT A REFERENCE (ISS-362, gh#72). A `[[...]]` token inside inline
+ * code or a fenced code block is a syntax EXAMPLE — an author demonstrating the
+ * tag grammar in a card's own description, not pointing at an entity. Both
+ * functions below therefore skip such tokens, closing the last two scanners
+ * left blind when ISS-358 taught the diagnostic-producing parsers
+ * (`parseWikiLinks`, `parseSemanticMarkdown`) the same rule.
+ *
+ * WHY THIS MATTERS EVEN THOUGH NEITHER FUNCTION PRODUCES DIAGNOSTICS. They feed
+ * the mention COUNT and the clickable chips: `extractEntityMentions` is what
+ * `chapter-bundle.ts` and `entity-card-extraction.ts` count relations from, and
+ * `splitEntityMentions` is what `entity-cards-widget.ts` turns into links. A
+ * counted example inflates a relation that does not exist, and a linked one
+ * invites a click into a card the prose never referenced.
+ *
+ * POST-FILTER, NEVER MUTATE. The guard SKIPS matches on the original string; it
+ * does not blank code spans out first. That keeps every surviving match's
+ * offsets byte-identical to the unguarded scan — the property
+ * `computeCodeSpanRanges`' own doc calls load-bearing, and the reason
+ * {@link splitEntityMentions} can leave a skipped token to fall into the
+ * neighbouring text segment untouched.
+ *
+ * TWO CALLERS PASS YAML-DECODED TEXT, NOT MARKDOWN SOURCE
+ * (`chapter-front-matter.ts`, `entity-card-extraction.ts`) — the value has
+ * already been unescaped and folded by the YAML parser. That is deliberate and
+ * safe: a block scalar (`|`) preserves the fence lines verbatim, so a fenced
+ * example inside a card body still reads as code here, and an inline `` ` ``
+ * pair survives folding either way. Nothing downstream re-derives offsets
+ * against the markdown source, so the fold cannot desynchronise them.
  */
+
+import { computeCodeSpanRanges, isOffsetInCodeSpan } from '@ai-focused-editor/semantic-markdown';
 
 export interface EntityMention {
   /** The full matched text, e.g. `[[char:krishna|Krishna]]` or `[[krishna]]`. */
@@ -34,9 +65,14 @@ export function extractEntityMentions(text: string): EntityMention[] {
 
   const mentions: EntityMention[] = [];
   const seen = new Set<string>();
+  const codeRanges = computeCodeSpanRanges(text);
   ENTITY_MENTION_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = ENTITY_MENTION_PATTERN.exec(text)) !== null) {
+    // ISS-362: an example, not a reference — see this module's header.
+    if (isOffsetInCodeSpan(match.index, codeRanges)) {
+      continue;
+    }
     const [raw, kind, id, label] = match;
     const key = `${kind ?? ''}\u0000${id}`;
     if (seen.has(key)) {
@@ -63,10 +99,20 @@ export function splitEntityMentions(text: string): EntityMentionSegment[] {
   }
 
   const segments: EntityMentionSegment[] = [];
+  const codeRanges = computeCodeSpanRanges(text);
   ENTITY_MENTION_PATTERN.lastIndex = 0;
   let cursor = 0;
   let match: RegExpExecArray | null;
   while ((match = ENTITY_MENTION_PATTERN.exec(text)) !== null) {
+    // ISS-362: an example, not a reference. THE CURSOR DELIBERATELY DOES NOT
+    // MOVE — unlike a filter, a splitter that merely `continue`d past a token
+    // would DELETE it from the output. Leaving the cursor where it was makes
+    // the skipped token fall into the next text segment verbatim, which is
+    // what keeps this function total: concatenating every segment (text values
+    // plus each mention's `raw`) still reproduces the input byte for byte.
+    if (isOffsetInCodeSpan(match.index, codeRanges)) {
+      continue;
+    }
     if (match.index > cursor) {
       segments.push({ type: 'text', value: text.slice(cursor, match.index) });
     }
