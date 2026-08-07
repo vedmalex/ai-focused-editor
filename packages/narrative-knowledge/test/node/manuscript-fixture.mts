@@ -43,16 +43,19 @@
  *     that omitted them would make "the pipeline produces nothing from them"
  *     green because they never showed up.
  *
- *     ONE OF THE THREE IS NOW ALSO REFUSED EARLIER, AND THIS IS NOT THAT TEST.
- *     Since gh#48 WP-3 the real disk walk skips files under `knowledge/` that
- *     the index cannot read (F-12: gh#50's and gh#52's append-only journals
- *     defeat the `(size, mtime)` prefilter by construction), so in the PRODUCT
- *     `knowledge/plans/act-1.yaml` never reaches classification at all. The two
- *     `sources/**` files still do, so relation source 5's tooth keeps meaning
- *     what it meant. What the `knowledge/` entry here asserts is narrower than
- *     it used to be — that classification refuses it if it ever arrives — and
- *     saying so is better than leaving a comment that describes a walk the
- *     package no longer has.
+ *     ONE OF THE THREE IS NOW ALSO REFUSED EARLIER ON ONE PATH OF THREE. Since
+ *     gh#48 WP-3 the real disk WALK skips files under `knowledge/` that the
+ *     index cannot read (F-12: gh#50's and gh#52's append-only journals defeat
+ *     the `(size, mtime)` prefilter by construction), so a rebuild and a sweep
+ *     never open `knowledge/plans/act-1.yaml`. The other two paths into the
+ *     index are unchanged and still classify it: the watcher batch and an
+ *     explicit `updateDocument` both filter through `isIndexablePath`, which IS
+ *     a call to `classifyDocument` (`narrative-index-update.ts`), and refuse the
+ *     path there — `timeline-pipeline.test.mts` drives exactly that. So
+ *     classification remains the guard on those paths, the walk is a second one
+ *     on its own, and neither claim is bigger than it is. The two `sources/**`
+ *     files are untouched by all of it, so relation source 5's tooth keeps
+ *     meaning what it meant.
  *
  * WHY SHA-256 HERE AND FNV IN THE WP-4b CORE. That core runs under `bun` too,
  * where `src/common` may not import `node:crypto` (prohibition (a)). This module

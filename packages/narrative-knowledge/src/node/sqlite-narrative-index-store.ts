@@ -980,7 +980,11 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
       params.push(query.relPath);
     }
     if (query.chapterPath !== undefined) {
-      clauses.push('d.rel_path = ?');
+      // ON THE STATED PATH, NOT ON THE RESOLVED JOIN. "What have I put in this
+      // chapter" must answer even before the chapter file exists — that is the
+      // state an author writing events ahead of prose is in, and filtering
+      // through the join would silently drop exactly those events.
+      clauses.push('e.chapter_rel_path = ?');
       params.push(query.chapterPath);
     }
     if (query.origin !== undefined) {
@@ -1014,11 +1018,11 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
     }
     const rows = this.db
       .prepare(
-        `SELECT e.event_id, e.payload, e.sequence, e.chapter_doc_id,
+        `SELECT e.event_id, e.payload, e.sequence, d.doc_id AS chapter_doc_id,
                 src.rel_path AS src_rel_path, d.chapter_order, d.build_included
          FROM event e
          JOIN document src ON src.doc_id = e.doc_id
-         LEFT JOIN document d ON d.doc_id = e.chapter_doc_id
+         LEFT JOIN document d ON d.rel_path = e.chapter_rel_path
          ${where} ${order} ${limit}`
       )
       .all(...params) as unknown as {
@@ -1617,21 +1621,22 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
             `cannot store event ${event.id}: its source document ${relPath} is not indexed`
           );
         }
-        const chapter =
-          event.chapterPath === undefined
-            ? undefined
-            : (this.db.prepare('SELECT doc_id FROM document WHERE rel_path = ?').get(event.chapterPath) as
-                | { doc_id: number }
-                | undefined);
+        // THE CHAPTER IS NOT LOOKED UP HERE. Storing the path and joining on it
+        // at read time is what keeps this adapter's answer LIVE: a chapter
+        // indexed after the event — the ordinary case, since creating a chapter
+        // file is an increment that never re-writes events — places the event
+        // the moment it appears. The previous edition resolved a `doc_id` here,
+        // once, and left the event excluded forever; see the DDL comment and the
+        // contract case that caught it.
         this.db
           .prepare(
             `INSERT INTO event (event_id, doc_id, title, sequence, time_kind, time_value,
-             time_parsed_ms, chapter_doc_id, origin, confidence, payload, generation)
+             time_parsed_ms, chapter_rel_path, origin, confidence, payload, generation)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(event_id) DO UPDATE SET
                doc_id = excluded.doc_id, title = excluded.title, sequence = excluded.sequence,
                time_kind = excluded.time_kind, time_value = excluded.time_value,
-               time_parsed_ms = excluded.time_parsed_ms, chapter_doc_id = excluded.chapter_doc_id,
+               time_parsed_ms = excluded.time_parsed_ms, chapter_rel_path = excluded.chapter_rel_path,
                origin = excluded.origin, confidence = excluded.confidence,
                payload = excluded.payload, generation = excluded.generation`
           )
@@ -1643,7 +1648,7 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
             event.storyTime.kind,
             event.storyTime.value ?? null,
             event.storyTime.parsedMs ?? null,
-            chapter?.doc_id ?? null,
+            event.chapterPath ?? null,
             event.origin,
             event.confidence ?? null,
             JSON.stringify(event),

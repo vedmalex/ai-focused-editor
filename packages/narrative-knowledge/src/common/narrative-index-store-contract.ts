@@ -985,6 +985,126 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
     }
   },
   {
+    /**
+     * A CHAPTER INDEXED **AFTER** THE EVENT THAT NAMES IT (gh#48 WP-3 re-gate).
+     *
+     * EVERY OTHER EVENT CASE WRITES THE CHAPTER FIRST, and that shared order is
+     * exactly what hid this: an adapter resolving the chapter ONCE, at write
+     * time, is indistinguishable from one resolving it at read time as long as
+     * the chapter is always already there. It is not always already there. The
+     * ordinary sequence is the one this package's own pipeline tooth calls "a
+     * fixable authoring mistake": the manifest lists a chapter, the author
+     * writes the event first, and creates `content/ch-NN.md` afterwards. That
+     * creation is a CHAPTER change, so it is applied INCREMENTALLY — no rebuild
+     * re-writes the event — and an adapter holding a write-time snapshot answers
+     * `chapter-not-indexed` forever, about a chapter its own `listDocuments`
+     * reports as indexed.
+     *
+     * THE CASE IS WRITTEN AS TWO SEPARATE TRANSACTIONS on purpose. One
+     * transaction would let an adapter resolve at commit and still pass, which
+     * is not the claim: the claim is that a document written LATER, by an
+     * unrelated pass, places the event.
+     *
+     * This is also an ISS-349 case (§5.3): the two adapters returned different
+     * ROWS in different ORDERS for the identical sequence of port calls, and no
+     * reader would have seen it, because `bun` can only run the in-memory one.
+     */
+    name: 'a chapter indexed AFTER the event places it — resolution is live, not a write-time snapshot',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      const LATE_CHAPTER = 'manuscript/ordered-late.md';
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putDocument(orderedChapter(CHAPTER_ONE, 0));
+        writer.putEvent(event('e-here', { sequence: 100, chapterPath: CHAPTER_ONE }), TIMELINE);
+        // Its chapter does not exist yet — the honest answer at THIS moment.
+        writer.putEvent(event('e-later', { sequence: 200, chapterPath: LATE_CHAPTER }), TIMELINE);
+      });
+      equal(
+        store.listEvents({ orderBy: 'manuscript', direction: 'asc' }).find(row => row.event.id === 'e-later')
+          ?.orderExclusion,
+        'chapter-not-indexed',
+        'before its chapter exists, the event is honestly unplaceable'
+      );
+
+      // The author creates the file. A SEPARATE pass, exactly as the increment
+      // applies it.
+      store.transaction(writer => {
+        writer.putDocument(orderedChapter(LATE_CHAPTER, 1));
+      });
+
+      const after = store.listEvents({ orderBy: 'manuscript', direction: 'asc' });
+      deepEqual(
+        after.map(row => row.event.id),
+        ['e-here', 'e-later'],
+        'once its chapter is indexed the event takes its place in manuscript order'
+      );
+      equal(after[1].orderExclusion, undefined, 'and it is no longer excluded');
+      // PAIRED NEGATIVE, so "always placeable" cannot pass: an event naming a
+      // chapter nobody ever creates stays excluded, and says the same why.
+      store.transaction(writer => {
+        writer.putEvent(event('e-ghost', { sequence: 300, chapterPath: 'manuscript/never.md' }), TIMELINE);
+      });
+      equal(
+        store.listEvents({ orderBy: 'manuscript', direction: 'asc' }).find(row => row.event.id === 'e-ghost')
+          ?.orderExclusion,
+        'chapter-not-indexed',
+        'a chapter that is never created keeps the event excluded'
+      );
+      // And the SAME liveness in the other direction: deleting the chapter puts
+      // the event back into the trailing group rather than leaving it placed
+      // against a document that is gone.
+      store.transaction(writer => {
+        writer.deleteDocument(LATE_CHAPTER);
+      });
+      equal(
+        store.listEvents({ orderBy: 'manuscript', direction: 'asc' }).find(row => row.event.id === 'e-later')
+          ?.orderExclusion,
+        'chapter-not-indexed',
+        'a deleted chapter excludes its events again'
+      );
+      // The author's stated path SURVIVES all of it — it is what a diagnostic
+      // quotes, and losing it would make the two exclusions indistinguishable.
+      equal(store.getEvent('e-later')?.event.chapterPath, LATE_CHAPTER, 'the named path is never dropped');
+    }
+  },
+  {
+    /**
+     * `chapterPath` FILTERS ON WHAT THE AUTHOR WROTE, not on what resolved.
+     *
+     * The same liveness question from the other side: asking for one chapter's
+     * events must return an event whose chapter is not indexed yet, because the
+     * author DID assign it there. An adapter filtering through a resolved join
+     * silently drops exactly the events a "what have I put in this chapter"
+     * view most needs to show.
+     */
+    name: 'the chapterPath filter matches the stated chapter, indexed or not',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      const ABSENT = 'manuscript/not-written-yet.md';
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putDocument(orderedChapter(CHAPTER_ONE, 0));
+        writer.putEvent(event('e-indexed', { sequence: 1, chapterPath: CHAPTER_ONE }), TIMELINE);
+        writer.putEvent(event('e-absent', { sequence: 2, chapterPath: ABSENT }), TIMELINE);
+      });
+      deepEqual(
+        store.listEvents({ orderBy: 'story', direction: 'asc', chapterPath: ABSENT }).map(row => row.event.id),
+        ['e-absent'],
+        'an unindexed chapter still answers for its events'
+      );
+      // PAIRED POSITIVE: the indexed chapter answers for its own and ONLY its
+      // own, so "return everything" cannot pass the line above.
+      deepEqual(
+        store.listEvents({ orderBy: 'story', direction: 'asc', chapterPath: CHAPTER_ONE }).map(row => row.event.id),
+        ['e-indexed'],
+        'and an indexed chapter answers for exactly its own'
+      );
+    }
+  },
+  {
     // THE TIE-BREAK IS THE ID, NOT INSERTION ORDER, and that is what makes
     // "stable after restart" assertable: an author numbering in tens and then
     // writing two things "at the same time" is ordinary, and insertion order

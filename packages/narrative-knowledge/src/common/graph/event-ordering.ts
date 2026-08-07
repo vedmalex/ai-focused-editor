@@ -137,7 +137,14 @@ function compareIds(a: string, b: string): number {
 
 /**
  * The SQLite spelling of {@link orderEvents}, for a query that has joined
- * `event e` to `document d` (LEFT, because an event may name no chapter).
+ * `event e` to `document d` (LEFT, because an event may name no chapter — and
+ * because it may name one that is not indexed, which is a different fact the
+ * join must be able to express by finding nothing).
+ *
+ * THE JOIN IS ON `d.rel_path = e.chapter_rel_path`, so "is this chapter
+ * indexed" is asked at READ time — the same moment the in-memory adapter asks
+ * it. A stored `doc_id` answered it once, at write time, and the two adapters
+ * disagreed about an event whose chapter was indexed afterwards.
  *
  * Both `${}` interpolations are narrowed unions mapped through a switch, so no
  * caller-supplied string reaches the SQL. The exclusion flag stays `ASC`.
@@ -147,7 +154,7 @@ export function eventOrderSql(orderBy: EventOrderBy, direction: 'asc' | 'desc'):
   const excluded =
     orderBy === 'story'
       ? 'e.sequence IS NULL'
-      : `e.chapter_doc_id IS NULL OR d.chapter_order IS NULL OR d.build_included = 0`;
+      : `d.doc_id IS NULL OR d.chapter_order IS NULL OR d.build_included = 0`;
   const primary = orderBy === 'story' ? 'e.sequence' : 'd.chapter_order';
   // Neutralised for excluded rows rather than merely flagged — the mistake the
   // mention ordering made and the shared suite caught: SQLite orders NULL FIRST

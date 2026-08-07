@@ -209,7 +209,19 @@ CREATE TABLE event (
   -- pairing the way \`evidence_kind\` does, so a parsed instant cannot appear
   -- beside a kind that never claimed to be a date.
   time_parsed_ms INTEGER,
-  chapter_doc_id INTEGER REFERENCES document(doc_id) ON DELETE SET NULL,
+  -- THE CHAPTER IS NAMED BY PATH, NOT BY \`doc_id\`, AND IT IS RESOLVED ON READ.
+  -- A \`doc_id\` foreign key is a WRITE-TIME SNAPSHOT, and events are written
+  -- before their chapters routinely: the manifest lists a chapter, the author
+  -- writes the event, and creates the file afterwards. Creating a chapter is an
+  -- INCREMENTAL change — no rebuild re-writes the event — so a snapshot leaves
+  -- the event answering \`chapter-not-indexed\` forever about a chapter the same
+  -- store reports as indexed. It also drifted from the in-memory adapter, which
+  -- has always resolved on read; the contract case "a chapter indexed AFTER the
+  -- event places it" is what caught the pair.
+  -- NULLABLE, because an event naming no chapter is ordinary. NOT a foreign
+  -- key: the author's stated path is theirs, and it must survive a chapter that
+  -- does not exist yet, or that stops existing.
+  chapter_rel_path TEXT,
   origin        TEXT    NOT NULL,
   confidence    REAL,
   payload       TEXT    NOT NULL,
@@ -219,7 +231,7 @@ CREATE TABLE event (
 ) STRICT;
 CREATE INDEX event_doc       ON event(doc_id);
 CREATE INDEX event_sequence  ON event(sequence) WHERE sequence IS NOT NULL;
-CREATE INDEX event_chapter   ON event(chapter_doc_id) WHERE chapter_doc_id IS NOT NULL;
+CREATE INDEX event_chapter   ON event(chapter_rel_path) WHERE chapter_rel_path IS NOT NULL;
 
 CREATE TABLE event_ref (
   event_ref_id INTEGER PRIMARY KEY,

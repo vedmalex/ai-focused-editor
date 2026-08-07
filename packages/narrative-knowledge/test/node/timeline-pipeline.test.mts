@@ -276,10 +276,10 @@ test('an event naming a chapter that does not exist is stored, and says which ki
     '    sequence: 3'
   ].join('\n'));
 
-  // FIRST: the write must not blow up. `event.chapter_doc_id` is a foreign key,
-  // and an implementation that resolved the path eagerly and inserted whatever
-  // it got would fail the whole rebuild on one typo in one timeline entry —
-  // taking the entire index down with it.
+  // FIRST: the write must not blow up. An implementation that insisted on
+  // resolving the named chapter before storing the event would fail the whole
+  // rebuild on one typo in one timeline entry — taking the entire index down
+  // with it.
   const rebuild = await service.rebuild(root);
   assert.equal(rebuild.state.state, 'ready');
 
@@ -298,4 +298,60 @@ test('an event naming a chapter that does not exist is stored, and says which ki
   // The named path survives the round trip, so a diagnostic can quote it.
   const ghost = must((await service.getEvent(root, 'ghost-chapter')).data, 'the ghost event');
   assert.equal(ghost.event.chapterPath, 'content/ch-99.md');
+});
+
+test('writing the chapter afterwards places the event — through the service, incrementally', async () => {
+  const { service, root } = manuscriptService('timeline-chapter-arrives-later');
+  // The ordinary way an author works: the manifest already promises a third
+  // chapter, the event is written first, the prose comes later.
+  writeFile(root, 'manifest.yaml', [
+    'content:',
+    '  - path: content/ch-01.md',
+    '    title: Первая',
+    '  - path: content/ch-02.md',
+    '    title: Вторая',
+    '  - path: content/ch-03.md',
+    '    title: Третья'
+  ].join('\n'));
+  writeFile(root, TIMELINE, [
+    'events:',
+    '  - id: in-first',
+    '    title: В первой',
+    '    sequence: 1',
+    '    chapter: content/ch-01.md',
+    '  - id: awaiting-chapter',
+    '    title: Ждёт своей главы',
+    '    sequence: 2',
+    '    chapter: content/ch-03.md'
+  ].join('\n'));
+  await service.rebuild(root);
+
+  const before = await service.listEvents(root, { orderBy: 'manuscript', direction: 'asc' });
+  const awaiting = must(
+    before.data.find((row: any) => row.event.id === 'awaiting-chapter'),
+    'the event awaiting its chapter'
+  );
+  assert.equal(
+    awaiting.orderExclusion,
+    'chapter-not-indexed',
+    'while the chapter file does not exist, the honest answer is that it is not indexed'
+  );
+
+  // The author writes the chapter. Creating a chapter is an INCREMENT — nothing
+  // re-writes the event — which is precisely why an index that resolved the
+  // chapter once, at the moment the event was stored, would never recover.
+  writeFile(root, 'content/ch-03.md', 'Третья глава.');
+  const report = await service.updateDocument(join(root, 'content/ch-03.md'));
+  assert.equal(report.data.mode, 'incremental', 'and it really was an increment, not a hidden rebuild');
+
+  // THE STATE THE AUTHOR SEES. The same service that now lists the chapter as a
+  // document must place the event that names it; answering `chapter-not-indexed`
+  // about a chapter its own `listDocuments` reports is the index contradicting
+  // itself, and no assertion about the chapter alone would catch it.
+  const documents = await service.listDocuments(root);
+  assert.ok(documents.data.some((row: any) => row.relPath === 'content/ch-03.md'));
+
+  const after = await service.listEvents(root, { orderBy: 'manuscript', direction: 'asc' });
+  assert.deepEqual(after.data.map((row: any) => row.event.id), ['in-first', 'awaiting-chapter']);
+  assert.equal(after.data[1].orderExclusion, undefined, 'the event is placed, not merely present');
 });
