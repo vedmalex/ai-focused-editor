@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { rangeEvidence, wholeFileEvidence, type EntityAppearance, type IndexState, type NarrativeEntity } from '@ai-focused-editor/narrative-knowledge';
-import { buildEntityCard } from './entity-card';
+import { buildEntityCard, shouldFollowCursor } from './entity-card';
 
 /**
  * NO DOM ANYWHERE IN THIS FILE, and that is a requirement rather than a
@@ -174,5 +174,26 @@ describe('buildEntityCard — honesty about what is not known', () => {
     const card = base({ ascending: [wholeFile], descending: [wholeFile] });
     expect(card.recentAppearances).toHaveLength(1);
     expect(card.firstAppearance).toBeUndefined();
+  });
+});
+
+describe('shouldFollowCursor — pinning resists the cursor, not the author', () => {
+  test('pinned: the caret moving to another entity does NOT replace the card', () => {
+    expect(shouldFollowCursor(true, 'krishna', 'arjuna')).toBe(false);
+  });
+
+  test('PAIRED POSITIVE: unpinned, the same move DOES replace it', () => {
+    // Without this twin the case above is satisfied by a card that never
+    // updates at all — which is the likeliest way "pinning works" gets shipped
+    // broken, and it would look identical in a screenshot.
+    expect(shouldFollowCursor(false, 'krishna', 'arjuna')).toBe(true);
+  });
+
+  test('unpinned but the caret is still on the entity already shown: no re-query', () => {
+    expect(shouldFollowCursor(false, 'krishna', 'krishna')).toBe(false);
+  });
+
+  test('nothing shown yet: the first entity under the caret is taken', () => {
+    expect(shouldFollowCursor(false, undefined, 'krishna')).toBe(true);
   });
 });

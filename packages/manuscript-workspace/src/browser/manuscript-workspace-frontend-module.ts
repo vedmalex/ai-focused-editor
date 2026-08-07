@@ -58,6 +58,8 @@ import { FootnoteLinkContribution } from './footnote-link-contribution';
 import { SemanticLinkContribution } from './semantic-link-contribution';
 import { SemanticEntityHoverContribution } from './semantic-entity-hover-contribution';
 import { EntityCardService } from './entity-card-service';
+import { EntityCardViewContribution } from './entity-card-view-contribution';
+import { EntityCardWidget } from './entity-card-widget';
 import { EntityCardsViewContribution } from './entity-cards-view-contribution';
 import { NarrativeMemoryCheckEntryPointsContribution } from './narrative-memory-check-entry-points-contribution';
 import { EntityCardsWidget } from './entity-cards-widget';
@@ -204,6 +206,16 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
   // service — it contributes nothing to the shell on its own; the contextual
   // widget (WP-4) and the commands (WP-5) consume it.
   bind(EntityCardService).toSelf().inSingletonScope();
+  // gh#47 WP-5. The widget factory plus BOTH bindings the panel needs to be
+  // FOUND rather than merely openable — see the contribution's own doc for why
+  // `bindViewContribution` alone is not enough.
+  bind(EntityCardWidget).toSelf();
+  bind(WidgetFactory).toDynamicValue(context => ({
+    id: EntityCardWidget.ID,
+    createWidget: () => context.container.get(EntityCardWidget)
+  })).inSingletonScope();
+  bindViewContribution(bind, EntityCardViewContribution);
+  bind(FrontendApplicationContribution).toService(EntityCardViewContribution);
   bindViewContribution(bind, EntityCardsViewContribution);
   // UR-039: without this, `EntityCardsViewContribution.initializeLayout` is
   // never invoked — `FrontendApplication.createDefaultLayout()` only calls

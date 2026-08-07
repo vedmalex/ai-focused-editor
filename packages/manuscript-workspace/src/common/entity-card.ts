@@ -86,6 +86,32 @@ export interface EntityCardViewModel {
   indexState: IndexState;
 }
 
+/**
+ * Should a caret landing on `nextEntityId` replace what the card is showing?
+ *
+ * EXTRACTED FROM THE WIDGET SO IT CAN BE ASSERTED WITHOUT A DOM, and the pair of
+ * assertions it needs is the reason. "Pinned, cursor moves, card unchanged" is
+ * satisfied by a card that never updates at all; only the twin — "unpinned,
+ * cursor moves, card changes" — tells the two apart. Both are one boolean here
+ * and would be a React widget plus a happy-dom bootstrap there.
+ *
+ * PINNING RESISTS THE CURSOR, NOT THE AUTHOR: an explicit `showEntity` (the
+ * command, a click on a relation) still replaces the card. That is why this
+ * function is consulted only on the cursor path.
+ */
+export function shouldFollowCursor(
+  pinned: boolean,
+  shownEntityId: string | undefined,
+  nextEntityId: string
+): boolean {
+  if (pinned) {
+    return false;
+  }
+  // Re-issuing the same query on every keystroke inside one tag is the other
+  // half of what makes cursor-following usable at all.
+  return shownEntityId !== nextEntityId;
+}
+
 /** What {@link buildEntityCard} needs. Every field is an answer already
  *  obtained; this function performs no I/O and issues no queries. */
 export interface EntityCardInput {
