@@ -42,11 +42,16 @@ import {
   NarrativeIndexStoreError,
   assertQueryLimit,
   documentOrderExclusion,
+  eventOrderExclusion,
+  eventOrderSql,
   mentionOrderSql,
   orderDocumentsByChapter,
   type DocumentMoveFreshness,
   type DuplicateEntityRecord,
   type EntityQuery,
+  type EventQuery,
+  type IndexedEvent,
+  type NarrativeEvent,
   type EvidenceRef,
   type IndexedDocument,
   type IndexedDocumentInput,
@@ -956,6 +961,105 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
    * the shared document rule rather than in SQL, because the trailing-group
    * tie-break is by path and both adapters must reach it the same way.
    */
+  /**
+   * gh#48. The payload carries the event verbatim; the columns exist so the
+   * store can FILTER and ORDER without parsing every row — the same division
+   * `relation` already uses. A column and the payload disagreeing would be a
+   * defect, which is why every write goes through one statement pair below.
+   */
+  listEvents(query: EventQuery): IndexedEvent[] {
+    assertQueryLimit(query.limit, 'EventQuery.limit');
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (query.eventId !== undefined) {
+      clauses.push('e.event_id = ?');
+      params.push(query.eventId);
+    }
+    if (query.relPath !== undefined) {
+      clauses.push('src.rel_path = ?');
+      params.push(query.relPath);
+    }
+    if (query.chapterPath !== undefined) {
+      clauses.push('d.rel_path = ?');
+      params.push(query.chapterPath);
+    }
+    if (query.origin !== undefined) {
+      clauses.push('e.origin = ?');
+      params.push(query.origin);
+    }
+    if (query.brokenOnly === true) {
+      clauses.push('EXISTS (SELECT 1 FROM event_ref r WHERE r.event_id = e.event_id AND r.resolved = 0)');
+    }
+    if (query.entityId !== undefined) {
+      // Role narrows WITHIN the entity match, never beside it — see the
+      // in-memory adapter for why the two questions are different.
+      clauses.push(
+        query.role === undefined
+          ? 'EXISTS (SELECT 1 FROM event_ref r WHERE r.event_id = e.event_id AND r.entity_id = ?)'
+          : 'EXISTS (SELECT 1 FROM event_ref r WHERE r.event_id = e.event_id AND r.entity_id = ? AND r.role = ?)'
+      );
+      params.push(query.entityId);
+      if (query.role !== undefined) {
+        params.push(query.role);
+      }
+    } else if (query.role !== undefined) {
+      clauses.push('EXISTS (SELECT 1 FROM event_ref r WHERE r.event_id = e.event_id AND r.role = ?)');
+      params.push(query.role);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const order = eventOrderSql(query.orderBy, query.direction ?? 'asc');
+    const limit = query.limit === undefined ? '' : 'LIMIT ?';
+    if (query.limit !== undefined) {
+      params.push(query.limit);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT e.event_id, e.payload, e.sequence, e.chapter_doc_id,
+                src.rel_path AS src_rel_path, d.chapter_order, d.build_included
+         FROM event e
+         JOIN document src ON src.doc_id = e.doc_id
+         LEFT JOIN document d ON d.doc_id = e.chapter_doc_id
+         ${where} ${order} ${limit}`
+      )
+      .all(...params) as unknown as {
+      event_id: string;
+      payload: string;
+      sequence: number | null;
+      chapter_doc_id: number | null;
+      src_rel_path: string;
+      chapter_order: number | null;
+      build_included: number | null;
+    }[];
+    return rows.map(row => {
+      const event = JSON.parse(row.payload) as NarrativeEvent;
+      const exclusion = eventOrderExclusion(event, query.orderBy, () =>
+        row.chapter_doc_id === null
+          ? undefined
+          : {
+              ...(row.chapter_order === null ? {} : { chapterOrder: row.chapter_order }),
+              buildIncluded: row.build_included !== 0
+            }
+      );
+      return {
+        event,
+        relPath: row.src_rel_path,
+        ...(exclusion === undefined ? {} : { orderExclusion: exclusion })
+      };
+    });
+  }
+
+  getEvent(eventId: string): IndexedEvent | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT e.payload, src.rel_path AS src_rel_path
+         FROM event e JOIN document src ON src.doc_id = e.doc_id WHERE e.event_id = ?`
+      )
+      .get(eventId) as unknown as { payload: string; src_rel_path: string } | undefined;
+    return row === undefined
+      ? undefined
+      : { event: JSON.parse(row.payload) as NarrativeEvent, relPath: row.src_rel_path };
+  }
+
   countMentionsByDocument(query: MentionQuery = {}): MentionDocumentCount[] {
     const { where, params } = this.mentionFilter(query);
     const rows = this.db
@@ -1335,6 +1439,9 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
         // document are left alone, because the caller recomputes the whole
         // derived layer immediately afterwards.
         this.db.prepare('DELETE FROM relation WHERE doc_id = ?').run(row.doc_id);
+        // gh#48. `event_ref` follows by `ON DELETE CASCADE`; the event rows
+        // themselves are owned by the timeline file and are cleared with it.
+        this.db.prepare('DELETE FROM event WHERE doc_id = ?').run(row.doc_id);
       },
       clearDerivedRelations: (): void => {
         this.db.prepare("DELETE FROM relation WHERE origin = 'derived'").run();
@@ -1499,6 +1606,58 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
           );
         }
         return relationId;
+      },
+      putEvent: (event: NarrativeEvent, relPath: string): void => {
+        const doc = this.db.prepare('SELECT doc_id FROM document WHERE rel_path = ?').get(relPath) as
+          | { doc_id: number }
+          | undefined;
+        if (doc === undefined) {
+          throw new NarrativeIndexStoreError(
+            'constraint-violation',
+            `cannot store event ${event.id}: its source document ${relPath} is not indexed`
+          );
+        }
+        const chapter =
+          event.chapterPath === undefined
+            ? undefined
+            : (this.db.prepare('SELECT doc_id FROM document WHERE rel_path = ?').get(event.chapterPath) as
+                | { doc_id: number }
+                | undefined);
+        this.db
+          .prepare(
+            `INSERT INTO event (event_id, doc_id, title, sequence, time_kind, time_value,
+             time_parsed_ms, chapter_doc_id, origin, confidence, payload, generation)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(event_id) DO UPDATE SET
+               doc_id = excluded.doc_id, title = excluded.title, sequence = excluded.sequence,
+               time_kind = excluded.time_kind, time_value = excluded.time_value,
+               time_parsed_ms = excluded.time_parsed_ms, chapter_doc_id = excluded.chapter_doc_id,
+               origin = excluded.origin, confidence = excluded.confidence,
+               payload = excluded.payload, generation = excluded.generation`
+          )
+          .run(
+            event.id,
+            doc.doc_id,
+            event.title,
+            event.sequence ?? null,
+            event.storyTime.kind,
+            event.storyTime.value ?? null,
+            event.storyTime.parsedMs ?? null,
+            chapter?.doc_id ?? null,
+            event.origin,
+            event.confidence ?? null,
+            JSON.stringify(event),
+            committedGeneration
+          );
+        // Replaced wholesale rather than diffed: a re-indexed file must not
+        // double an event's references, and the reference list is small.
+        this.db.prepare('DELETE FROM event_ref WHERE event_id = ?').run(event.id);
+        const insertRef = this.db.prepare(
+          'INSERT INTO event_ref (event_id, role, raw, entity_id, kind, resolved) VALUES (?, ?, ?, ?, ?, ?)'
+        );
+        for (const ref of event.refs) {
+          insertRef.run(event.id, ref.role, ref.raw, ref.entityId, ref.kind ?? null, ref.resolved ? 1 : 0);
+        }
       },
       clearAll: (): void => {
         for (const table of ['relation_evidence', 'relation', 'mention', 'entity_alias', 'entity_duplicate', 'entity']) {

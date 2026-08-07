@@ -48,7 +48,7 @@
  * whoever migrates FIRST and the others take the next one — that is gh#47 here,
  * so gh#48 takes v5. Plans state "the next bump", never a literal.
  */
-export const NARRATIVE_INDEX_SCHEMA_VERSION = 4;
+export const NARRATIVE_INDEX_SCHEMA_VERSION = 5;
 
 /**
  * Pragmas applied to every connection, in this order.
@@ -190,6 +190,52 @@ CREATE TABLE mention (
 CREATE INDEX mention_doc        ON mention(doc_id);
 CREATE INDEX mention_entity_doc ON mention(entity_id, doc_id);
 CREATE INDEX mention_broken     ON mention(doc_id) WHERE resolved = 0;
+
+-- gh#48. An EVENT is not an entity card and has its own table: its substance is
+-- an order, typed references with roles and a story time, none of which fit the
+-- flat fields of a card, and the entity registry would drag a form, a tag kind,
+-- a tree section and a Book Doctor rule along with it.
+CREATE TABLE event (
+  event_id      TEXT    NOT NULL PRIMARY KEY,
+  doc_id        INTEGER NOT NULL REFERENCES document(doc_id) ON DELETE CASCADE,
+  title         TEXT    NOT NULL,
+  -- NULLABLE, and that is the whole design: an event the author has not placed
+  -- yet is real, and it trails the ordered ones rather than being guessed at.
+  sequence      INTEGER,
+  time_kind     TEXT    NOT NULL,
+  -- Verbatim as written. NEVER compared: see \`narrative-event.ts\`.
+  time_value    TEXT,
+  -- \`time_value\` parsed, ONLY when \`time_kind = 'exact'\`. The CHECK states the
+  -- pairing the way \`evidence_kind\` does, so a parsed instant cannot appear
+  -- beside a kind that never claimed to be a date.
+  time_parsed_ms INTEGER,
+  chapter_doc_id INTEGER REFERENCES document(doc_id) ON DELETE SET NULL,
+  origin        TEXT    NOT NULL,
+  confidence    REAL,
+  payload       TEXT    NOT NULL,
+  generation    INTEGER NOT NULL,
+  CHECK (time_kind IN ('exact', 'relative', 'sequence', 'unknown')),
+  CHECK (time_parsed_ms IS NULL OR time_kind = 'exact')
+) STRICT;
+CREATE INDEX event_doc       ON event(doc_id);
+CREATE INDEX event_sequence  ON event(sequence) WHERE sequence IS NOT NULL;
+CREATE INDEX event_chapter   ON event(chapter_doc_id) WHERE chapter_doc_id IS NOT NULL;
+
+CREATE TABLE event_ref (
+  event_ref_id INTEGER PRIMARY KEY,
+  event_id  TEXT    NOT NULL REFERENCES event(event_id) ON DELETE CASCADE,
+  role      TEXT    NOT NULL,
+  raw       TEXT    NOT NULL,
+  entity_id TEXT    NOT NULL,
+  kind      TEXT,
+  -- An UNRESOLVED reference is stored, exactly as an unresolved mention is: the
+  -- author who wrote it made a real statement, and this flag is what lets a
+  -- diagnostic point at it instead of it vanishing.
+  resolved  INTEGER NOT NULL
+) STRICT;
+CREATE INDEX event_ref_event  ON event_ref(event_id);
+CREATE INDEX event_ref_entity ON event_ref(entity_id);
+CREATE INDEX event_ref_broken ON event_ref(event_id) WHERE resolved = 0;
 
 CREATE TABLE relation (
   relation_id     INTEGER PRIMARY KEY,

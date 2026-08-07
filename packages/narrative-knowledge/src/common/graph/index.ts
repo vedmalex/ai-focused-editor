@@ -35,3 +35,4 @@ export * from './narrative-index-store';
 // and the contract suite consume it — see the module note on why it is shared
 // rather than implemented twice.
 export * from './mention-ordering';
+export * from './event-ordering';

@@ -36,6 +36,8 @@
 
 import type { NarrativeEntity } from './narrative-entity';
 import type { NarrativeMention } from './narrative-mention';
+import type { NarrativeEvent } from './narrative-event';
+import type { EventOrderBy, EventOrderExclusion } from './event-ordering';
 import type { NarrativeOrigin } from './narrative-origin';
 import type { NarrativeRelation } from './narrative-relation';
 
@@ -47,14 +49,33 @@ import type { NarrativeRelation } from './narrative-relation';
  * prose and lives in the SAME FILE; a new kind would describe a new PLACE
  * inside an old document, not a new document.
  */
-export type NarrativeDocumentKind = 'chapter' | 'entity-card' | 'manifest' | 'entity-types';
+/**
+ * The kinds of file the index reads.
+ *
+ * A FIFTH MEMBER, AND THE FOURTH-KIND DECISION IS BEING REVERSED IN THE OPEN
+ * (gh#48). `document-classification.ts` states "FOUR KINDS, AND THE ENUM GAINS
+ * NO FIFTH", on the reasoning that no source in scope needed one — a
+ * front-matter mention lives in the chapter FILE, so it was a new place and not
+ * a new document. An event is not that: it lives in its own file, has its own
+ * identity, its own references and its own order, and there is no existing
+ * document it could be a "new place" inside of.
+ *
+ * The invariant that survives is the important one: `knowledge/**` stays
+ * invisible to the index EXCEPT for `knowledge/timeline/*.yaml`, and that
+ * exception is written down where classification happens rather than left to be
+ * inferred from precedent. Everything else under `knowledge/` — AI candidates,
+ * decision journals, generated notes — remains unread, which is what gh#52 and
+ * gh#50 depend on.
+ */
+export type NarrativeDocumentKind = 'chapter' | 'entity-card' | 'manifest' | 'entity-types' | 'timeline';
 
 /** Every member of {@link NarrativeDocumentKind}, as data. */
 export const NARRATIVE_DOCUMENT_KINDS = [
   'chapter',
   'entity-card',
   'manifest',
-  'entity-types'
+  'entity-types',
+  'timeline'
 ] as const satisfies readonly NarrativeDocumentKind[];
 
 /**
@@ -329,6 +350,47 @@ export interface MentionDocumentCount {
   mentionCount: number;
 }
 
+/**
+ * Filter for {@link NarrativeIndexReader.listEvents} (gh#48).
+ *
+ * `orderBy` IS NOT OPTIONAL THE WAY `MentionQuery.orderBy` IS, and the asymmetry
+ * is deliberate. Mentions had callers before ordering existed, so their default
+ * had to stay insertion order; events have none, and "the order I happened to
+ * write them in" is never a useful answer about a timeline. Making the caller
+ * say which order they mean is what stops a panel from rendering an arbitrary
+ * one and looking authoritative.
+ */
+export interface EventQuery {
+  /** Restrict to one event. */
+  eventId?: string;
+  /** Only events referencing this entity, in any role. */
+  entityId?: string;
+  /** Only events whose reference to {@link entityId} carries this role. */
+  role?: string;
+  /** Restrict to events read from one timeline file. */
+  relPath?: string;
+  /** Restrict to events belonging to one chapter. */
+  chapterPath?: string;
+  origin?: NarrativeOrigin;
+  /** Only events with an unresolved reference — what a diagnostic asks for. */
+  brokenOnly?: boolean;
+  orderBy: EventOrderBy;
+  /** Default `asc`. */
+  direction?: 'asc' | 'desc';
+  /** Applied AFTER ordering (ISS-349). */
+  limit?: number;
+}
+
+/** An event as the store holds it, with the ordering verdict already applied. */
+export interface IndexedEvent {
+  event: NarrativeEvent;
+  /** Workspace-relative path of the timeline file it was read from. */
+  relPath: string;
+  /** Present when the event cannot be placed in the ORDER IT WAS QUERIED IN.
+   *  A different query can place the same event — see `EventOrderExclusion`. */
+  orderExclusion?: EventOrderExclusion;
+}
+
 /** Which end of a relation an entity id is being matched against. */
 export type RelationDirection = 'outgoing' | 'incoming' | 'either';
 
@@ -585,6 +647,16 @@ export interface NarrativeIndexWriter {
   putMention(mention: NarrativeMention): void;
   /** Store one relation and its evidence rows. Returns its row id. */
   putRelation(relation: NarrativeRelation): number;
+  /**
+   * Store one event, replacing any event with the same id.
+   *
+   * REPLACING RATHER THAN APPENDING, because `id` is the event's identity and a
+   * re-indexed file must not double its contents. Two files claiming one id is
+   * a DUPLICATE — a finding, exactly as it is for entities — and which one is in
+   * effect is decided the same way: last writer within a rebuild, reported.
+   */
+  putEvent(event: NarrativeEvent, relPath: string): void;
+
   /** Drop every entity, mention and relation, keeping the schema. */
   clearAll(): void;
 }
@@ -606,6 +678,16 @@ export interface NarrativeIndexReader {
    * different list; the result is always in ascending manuscript order.
    */
   countMentionsByDocument(query?: MentionQuery): MentionDocumentCount[];
+  /**
+   * Events, in the requested order (gh#48).
+   *
+   * NAMED IN THE PORT for the AD-6 reason `neighbourhood` is: manuscript order
+   * needs a join to the document table, and a core that cannot write SQL has to
+   * be able to express that here or not at all.
+   */
+  listEvents(query: EventQuery): IndexedEvent[];
+  /** One event by id, or `undefined`. No ordering question arises. */
+  getEvent(eventId: string): IndexedEvent | undefined;
   getRelations(query?: RelationQuery): NarrativeRelation[];
   /**
    * Relations reachable from an entity within `depth` hops.

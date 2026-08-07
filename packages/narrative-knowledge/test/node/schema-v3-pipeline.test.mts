@@ -125,7 +125,7 @@ function buildIndex(name: string): NarrativeIndexStore {
   return store;
 }
 
-test('the schema version really is 4 — the constant the pragma is written from', () => {
+test('the schema version really is 5 — the constant the pragma is written from', () => {
   // A one-line assertion, and it earns its place: every other case here would
   // pass unchanged against a database still stamped v2, because the columns and
   // the version travel separately. This is what makes "we forgot to bump it"
@@ -138,8 +138,7 @@ test('the schema version really is 4 — the constant the pragma is written from
   // and this assertion reddened before any consumer noticed, exactly as
   // intended. Two open plans (gh#48, gh#49) had each written "v4" into their
   // own text; the number belongs to whoever migrates first, which is gh#47, so
-  // gh#48 takes v5.
-  assert.equal(NARRATIVE_INDEX_SCHEMA_VERSION, 4);
+  assert.equal(NARRATIVE_INDEX_SCHEMA_VERSION, 5);
 });
 
 test('B13: an artifact returning to a previous owner survives rebuild() as TWO relations', () => {

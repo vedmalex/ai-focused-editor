@@ -35,8 +35,11 @@ import type {
   IndexedDocument,
   IndexedDocumentInput,
   MentionDocumentCount,
+  EventQuery,
+  IndexedEvent,
   MentionQuery,
   NarrativeEntity,
+  NarrativeEvent,
   NarrativeIndexStore,
   NarrativeIndexStoreLifecycle,
   NarrativeIndexWriter,
@@ -49,7 +52,9 @@ import {
   NarrativeIndexStoreError,
   assertQueryLimit,
   documentOrderExclusion,
+  eventOrderExclusion,
   orderDocumentsByChapter,
+  orderEvents,
   orderMentionsByChapter
 } from './graph';
 
@@ -210,6 +215,8 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
   private nextRelationId = 1;
 
   private documents = new Map<string, IndexedDocument>();
+  /** Keyed by event id — the identity `putEvent` replaces on. */
+  private events = new Map<string, { event: NarrativeEvent; relPath: string }>();
   private entities = new Map<string, NarrativeEntity>();
   private duplicates = new Map<string, Set<string>>();
   private mentions: NarrativeMention[] = [];
@@ -240,6 +247,7 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
     // asserts it against both, which is the only reason it is worth the copy.
     const snapshot = {
       documents: new Map(this.documents),
+      events: new Map(this.events),
       entities: new Map(this.entities),
       duplicates: new Map([...this.duplicates].map(([id, paths]) => [id, new Set(paths)])),
       mentions: [...this.mentions],
@@ -254,6 +262,7 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
       return result;
     } catch (error) {
       this.documents = snapshot.documents;
+      this.events = snapshot.events;
       this.entities = snapshot.entities;
       this.duplicates = snapshot.duplicates;
       this.mentions = snapshot.mentions;
@@ -270,6 +279,7 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
       throw new NarrativeIndexStoreError('read-only', 'this index store instance may not write');
     }
     this.documents = new Map();
+    this.events = new Map();
     this.entities = new Map();
     this.duplicates = new Map();
     this.mentions = [];
@@ -360,6 +370,66 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
     // must select the same ROWS in both adapters, not merely the same count.
     const limited = query.limit === undefined ? ordered : ordered.slice(0, query.limit);
     return limited.map(clone);
+  }
+
+  listEvents(query: EventQuery): IndexedEvent[] {
+    assertQueryLimit(query.limit, 'EventQuery.limit');
+    const matches = [...this.events.values()].filter(row => {
+      const { event } = row;
+      if (query.eventId !== undefined && event.id !== query.eventId) {
+        return false;
+      }
+      if (query.relPath !== undefined && row.relPath !== query.relPath) {
+        return false;
+      }
+      if (query.chapterPath !== undefined && event.chapterPath !== query.chapterPath) {
+        return false;
+      }
+      if (query.origin !== undefined && event.origin !== query.origin) {
+        return false;
+      }
+      if (query.brokenOnly === true && event.refs.every(ref => ref.resolved)) {
+        return false;
+      }
+      if (query.entityId !== undefined) {
+        const matching = event.refs.filter(ref => ref.entityId === query.entityId);
+        if (matching.length === 0) {
+          return false;
+        }
+        // The role filter narrows WITHIN the entity match rather than beside it:
+        // "where was Ivan present" and "which events happen in Ivan" are
+        // different questions, and an independent role filter would answer
+        // neither when both are given.
+        if (query.role !== undefined && !matching.some(ref => ref.role === query.role)) {
+          return false;
+        }
+      } else if (query.role !== undefined && !event.refs.some(ref => ref.role === query.role)) {
+        return false;
+      }
+      return true;
+    });
+    const resolveDocument = (relPath: string) => this.documents.get(relPath);
+    const ordered = orderEvents(
+      matches.map(row => row.event),
+      query.orderBy,
+      query.direction ?? 'asc',
+      resolveDocument
+    );
+    const byId = new Map(matches.map(row => [row.event.id, row.relPath]));
+    const limited = query.limit === undefined ? ordered : ordered.slice(0, query.limit);
+    return limited.map(event => {
+      const exclusion = eventOrderExclusion(event, query.orderBy, resolveDocument);
+      return {
+        event: clone(event),
+        relPath: byId.get(event.id) as string,
+        ...(exclusion === undefined ? {} : { orderExclusion: exclusion })
+      };
+    });
+  }
+
+  getEvent(eventId: string): IndexedEvent | undefined {
+    const row = this.events.get(eventId);
+    return row === undefined ? undefined : { event: clone(row.event), relPath: row.relPath };
   }
 
   countMentionsByDocument(query: MentionQuery = {}): MentionDocumentCount[] {
@@ -583,6 +653,15 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
       clearDocumentContent: (relPath: string): void => {
         this.mentions = this.mentions.filter(mention => mention.evidence.path !== relPath);
         this.relations = this.relations.filter(row => row.relation.ownerPath !== relPath);
+        // gh#48: events belong to the file they were read from, so re-indexing
+        // that file must not leave the previous pass's events behind. SQLite
+        // gets this from `ON DELETE CASCADE`; here it is explicit, and the
+        // shared contract asserts both.
+        for (const [id, row] of [...this.events.entries()]) {
+          if (row.relPath === relPath) {
+            this.events.delete(id);
+          }
+        }
       },
       clearDerivedRelations: (): void => {
         this.relations = this.relations.filter(row => row.relation.origin !== 'derived');
@@ -647,6 +726,9 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
         const paths = this.duplicates.get(entityId) ?? new Set<string>();
         paths.add(excludedRelPath);
         this.duplicates.set(entityId, paths);
+      },
+      putEvent: (event: NarrativeEvent, relPath: string): void => {
+        this.events.set(event.id, { event: clone(event), relPath });
       },
       putMention: (mention: NarrativeMention): void => {
         assertMentionInvariants(mention);

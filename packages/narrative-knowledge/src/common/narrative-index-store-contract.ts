@@ -22,7 +22,9 @@
  */
 
 import type {
+  NarrativeDocumentKind,
   NarrativeEntity,
+  NarrativeEvent,
   NarrativeIndexStore,
   NarrativeMention,
   NarrativeRelation
@@ -243,6 +245,37 @@ function seedOrderingMentions(store: NarrativeIndexStore): void {
     writer.putMention(at(UNLISTED_CHAPTER, 1, 'scratch-line1'));
     writer.putMention(at(EXCLUDED_CHAPTER, 1, 'excluded-line1'));
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Fixtures for events (gh#48)
+// ---------------------------------------------------------------------------
+
+const TIMELINE = 'knowledge/timeline/main.yaml';
+
+function timelineDocument(relPath: string = TIMELINE) {
+  return {
+    relPath,
+    kind: 'timeline' as NarrativeDocumentKind,
+    sizeBytes: 128,
+    mtimeMs: 1_700_000_006_000,
+    contentHash: 'e'.repeat(64),
+    indexedAt: 1_700_000_007_000
+  };
+}
+
+function event(id: string, overrides: Partial<NarrativeEvent> = {}): NarrativeEvent {
+  return {
+    id,
+    title: id,
+    storyTime: { kind: 'unknown' },
+    refs: [],
+    origin: 'explicit',
+    evidence: wholeFileEvidence(TIMELINE),
+    sourceRefs: [],
+    ...overrides
+  };
 }
 
 async function open(makeStore: MakeContractStore, options?: { readOnly?: boolean }): Promise<NarrativeIndexStore> {
@@ -926,6 +959,197 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
         counts,
         'ordering and capping a mention query do not reshape the per-document aggregate'
       );
+    }
+  },
+  {
+    // gh#48 WP-2. Story order is `sequence`; events without one TRAIL in both
+    // directions. Same rule and same reason as unplaceable mentions: mirroring
+    // the exclusion with the direction would make an unplaced event the "last
+    // thing that happened" as readily as the first.
+    name: 'events order by sequence, and the unsequenced trail in BOTH directions',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putEvent(event('e-late', { sequence: 300 }), TIMELINE);
+        writer.putEvent(event('e-early', { sequence: 100 }), TIMELINE);
+        writer.putEvent(event('e-unplaced'), TIMELINE);
+      });
+      const asc = store.listEvents({ orderBy: 'story', direction: 'asc' });
+      deepEqual(asc.map(row => row.event.id), ['e-early', 'e-late', 'e-unplaced'], 'ascending story order');
+      const desc = store.listEvents({ orderBy: 'story', direction: 'desc' });
+      deepEqual(desc.map(row => row.event.id), ['e-late', 'e-early', 'e-unplaced'], 'the unplaced one still trails');
+      equal(asc[2].orderExclusion, 'no-sequence', 'and it carries WHY');
+      equal(asc[0].orderExclusion, undefined, 'a sequenced event is placeable');
+    }
+  },
+  {
+    // THE TIE-BREAK IS THE ID, NOT INSERTION ORDER, and that is what makes
+    // "stable after restart" assertable: an author numbering in tens and then
+    // writing two things "at the same time" is ordinary, and insertion order
+    // does not survive a rebuild.
+    name: 'events sharing a sequence are ordered by id, in both adapters',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putEvent(event('e-b', { sequence: 100 }), TIMELINE);
+        writer.putEvent(event('e-a', { sequence: 100 }), TIMELINE);
+      });
+      deepEqual(store.listEvents({ orderBy: 'story' }).map(row => row.event.id), ['e-a', 'e-b'], 'id breaks the tie');
+    }
+  },
+  {
+    // gh#48. MANUSCRIPT order is a different question from story order, and an
+    // event can be placeable in one and not the other — a flashback has a low
+    // sequence and a late chapter. The exclusion reason is per ORDER for exactly
+    // this reason.
+    name: 'manuscript order follows the chapter, and its exclusions are its own',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedOrderedChapters(store);
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putEvent(event('e-flashback', { sequence: 10, chapterPath: CHAPTER_THREE }), TIMELINE);
+        writer.putEvent(event('e-opening', { sequence: 900, chapterPath: CHAPTER_ONE }), TIMELINE);
+        writer.putEvent(event('e-no-chapter', { sequence: 50 }), TIMELINE);
+      });
+      deepEqual(
+        store.listEvents({ orderBy: 'story' }).map(row => row.event.id),
+        ['e-flashback', 'e-no-chapter', 'e-opening'],
+        'story order ignores chapters entirely'
+      );
+      const manuscript = store.listEvents({ orderBy: 'manuscript' });
+      deepEqual(
+        manuscript.map(row => row.event.id),
+        ['e-opening', 'e-flashback', 'e-no-chapter'],
+        'manuscript order follows the built book, and the chapterless event trails'
+      );
+      equal(manuscript[2].orderExclusion, 'no-chapter', 'with the reason that belongs to THIS order');
+      equal(
+        store.listEvents({ orderBy: 'story' }).find(row => row.event.id === 'e-no-chapter')?.orderExclusion,
+        undefined,
+        'and the SAME event is perfectly placeable in story order'
+      );
+    }
+  },
+  {
+    name: 'listEvents filters by entity and role, and role narrows WITHIN the entity match',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putEvent(
+          event('e1', { sequence: 1, refs: [{ role: 'participant', raw: 'char:ivan', entityId: 'ivan', resolved: true }] }),
+          TIMELINE
+        );
+        writer.putEvent(
+          event('e2', { sequence: 2, refs: [{ role: 'location', raw: 'location:ivan', entityId: 'ivan', resolved: true }] }),
+          TIMELINE
+        );
+      });
+      deepEqual(
+        store.listEvents({ orderBy: 'story', entityId: 'ivan' }).map(r => r.event.id),
+        ['e1', 'e2'],
+        'both roles match the entity'
+      );
+      // "Where was Ivan present" is not "which events happen in Ivan": an
+      // independent role filter would answer neither when both are given.
+      deepEqual(
+        store.listEvents({ orderBy: 'story', entityId: 'ivan', role: 'participant' }).map(r => r.event.id),
+        ['e1'],
+        'the role narrows within the entity match'
+      );
+      deepEqual(
+        store.listEvents({ orderBy: 'story', role: 'location' }).map(r => r.event.id),
+        ['e2'],
+        'a role alone is a legible question too'
+      );
+    }
+  },
+  {
+    name: 'an unresolved reference is STORED and findable, and brokenOnly finds only it',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putEvent(
+          event('e-ok', { sequence: 1, refs: [{ role: 'participant', raw: 'char:ivan', entityId: 'ivan', resolved: true }] }),
+          TIMELINE
+        );
+        writer.putEvent(
+          event('e-broken', { sequence: 2, refs: [{ role: 'participant', raw: 'char:ghost', entityId: 'ghost', resolved: false }] }),
+          TIMELINE
+        );
+      });
+      deepEqual(
+        store.listEvents({ orderBy: 'story', brokenOnly: true }).map(r => r.event.id),
+        ['e-broken'],
+        'only the event with an unresolved reference'
+      );
+      // PAIRED POSITIVE: the resolved one is still stored and still found.
+      equal(store.listEvents({ orderBy: 'story' }).length, 2, 'a broken reference does not drop its event');
+      equal(store.getEvent('e-broken')?.event.refs[0].resolved, false, 'and the flag round-trips');
+    }
+  },
+  {
+    name: 'putEvent REPLACES by id, and re-indexing a file does not double its events',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putEvent(event('e1', { sequence: 1, title: 'Первое' }), TIMELINE);
+      });
+      store.transaction(writer => {
+        writer.putEvent(event('e1', { sequence: 1, title: 'Исправленное' }), TIMELINE);
+      });
+      equal(store.listEvents({ orderBy: 'story' }).length, 1, 'one id, one event');
+      equal(store.getEvent('e1')?.event.title, 'Исправленное', 'the later write is in effect');
+    }
+  },
+  {
+    name: 'clearDocumentContent drops the events of THAT document and no other',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      const OTHER_TIMELINE = 'knowledge/timeline/side.yaml';
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putDocument(timelineDocument(OTHER_TIMELINE));
+        writer.putEvent(event('e1', { sequence: 1 }), TIMELINE);
+        writer.putEvent(event('e2', { sequence: 2 }), OTHER_TIMELINE);
+      });
+      store.transaction(writer => writer.clearDocumentContent(TIMELINE));
+      deepEqual(
+        store.listEvents({ orderBy: 'story' }).map(row => row.event.id),
+        ['e2'],
+        're-indexing one timeline file must not leave its previous events behind, nor take a neighbour with it'
+      );
+    }
+  },
+  {
+    name: 'an event limit selects the first rows of the chosen order, and is validated like every other',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putEvent(event('e-a', { sequence: 1 }), TIMELINE);
+        writer.putEvent(event('e-b', { sequence: 2 }), TIMELINE);
+        writer.putEvent(event('e-c', { sequence: 3 }), TIMELINE);
+      });
+      deepEqual(
+        store.listEvents({ orderBy: 'story', direction: 'desc', limit: 2 }).map(r => r.event.id),
+        ['e-c', 'e-b'],
+        'the cap selects the first rows of the chosen order'
+      );
+      await rejects(() => store.listEvents({ orderBy: 'story', limit: -1 }), 'constraint-violation', 'a negative event limit');
+      equal(store.listEvents({ orderBy: 'story', limit: 0 }).length, 0, 'zero is a real answer here too');
     }
   },
   {
