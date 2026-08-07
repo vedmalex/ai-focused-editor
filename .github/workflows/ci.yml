@@ -167,6 +167,16 @@ jobs:
           bun run build:electron || {
             echo "::notice::Theia asked for a reinstall after rebuild:electron — doing that and rebuilding once."
             bash .github/scripts/install.sh
+            # The bundler script Theia GENERATES swallows its own failure:
+            # `catch { process.exit(1) }` with no output, so a bundling error
+            # arrives as a bare "esbuild exited with an unexpected code: 1" and
+            # says nothing. Teach the generated file to print before retrying,
+            # so a red run carries its own diagnosis instead of needing a
+            # second person to reproduce it.
+            for gen in apps/electron/esbuild.mjs apps/browser/esbuild.mjs; do
+              [ -f "$gen" ] || continue
+              perl -0pi -e 's/\} catch \{\n(\s*)process\.exit\(1\);/} catch (err) {\n$1console.error(err);\n$1process.exit(1);/' "$gen"
+            done
             bun run build:electron
           }
         env:
