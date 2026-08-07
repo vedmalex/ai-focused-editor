@@ -40,6 +40,7 @@ import {
 import { classifyDocument } from './extraction/document-classification';
 import { extractChapterMentions } from './extraction/chapter-extraction';
 import { buildEntityCatalog } from './extraction/entity-catalog';
+import { extractEvents } from './extraction/event-extraction';
 import { normalizeWorkspacePath } from './extraction/yaml-values';
 import type { IndexUpdatePlan, NarrativeUpdateReport } from './narrative-index-update';
 import {
@@ -49,10 +50,12 @@ import {
   wholeFileEvidence,
   type DuplicateEntityRecord,
   type EntityQuery,
+  type EventQuery,
   type EvidenceRange,
   type EvidenceRef,
   type IndexedDocument,
   type IndexedDocumentInput,
+  type IndexedEvent,
   type MentionDocumentCount,
   type MentionQuery,
   type NarrativeDocumentKind,
@@ -156,15 +159,19 @@ export interface NarrativeRebuildReport {
   mentions: number;
   /** Relations read from cards — sources 2 and 3. */
   extractedRelations: number;
+  /** Events read from `knowledge/timeline/*.yaml` (gh#48). */
+  events: number;
   /** Co-occurrence edges folded from the mentions — source 6. */
   derivedRelations: number;
   /** `manifest.yaml` was present, i.e. this workspace is a manuscript at all. */
   manifestPresent: boolean;
-  /** Malformed `types.yaml`, cards and manifest, forwarded verbatim. */
+  /** Malformed `types.yaml`, cards, manifest and timeline files, forwarded
+   *  verbatim. */
   problems: {
     types: ExtractedNarrativeIndex['typeProblems'];
     cards: ExtractedNarrativeIndex['cardProblems'];
     manifest: ExtractedNarrativeIndex['manifestProblems'];
+    events: ExtractedNarrativeIndex['eventProblems'];
   };
 }
 
@@ -416,6 +423,21 @@ export class NarrativeIndexSession {
   }
 
   /**
+   * Events, in the order asked for (gh#48).
+   *
+   * NO DEFAULT `orderBy`, mirroring `EventQuery`: a timeline rendered in "the
+   * order the author happened to write the entries in" would look authoritative
+   * and be arbitrary, so the caller has to say which of the two orders it means.
+   */
+  listEvents(query: EventQuery): Envelope<IndexedEvent[]> {
+    return envelope(this.state(), this.store.listEvents(query));
+  }
+
+  getEvent(eventId: string): Envelope<IndexedEvent | undefined> {
+    return envelope(this.state(), this.store.getEvent(eventId));
+  }
+
+  /**
    * Per-document mention counts (gh#47).
    *
    * NO ENVELOPE, unlike its neighbours: the one caller assembles a composite
@@ -559,6 +581,7 @@ export class NarrativeIndexSession {
           documentsMoved: [],
           unchangedDocuments: unchanged.sort(byCodePoint),
           mentionsWritten: 0,
+          eventsWritten: 0,
           derivedRelations: this.store.getRelations({ origin: 'derived' }).length,
           unreadableDocuments: [...plan.unreadable].sort(byCodePoint)
         };
@@ -638,6 +661,7 @@ export class NarrativeIndexSession {
 
     const documentsReindexed: string[] = [];
     let mentionsWritten = 0;
+    let eventsWritten = 0;
     for (const file of plan.upsert) {
       const path = normalizeWorkspacePath(file.path);
       const classification = classifyDocument(path, plan.types);
@@ -658,6 +682,24 @@ export class NarrativeIndexSession {
           : {})
       });
       writer.clearDocumentContent(path);
+      if (classification.kind === 'timeline') {
+        // A TIMELINE FILE IS GENUINELY INCREMENTAL, and that is a property of
+        // the data rather than a concession: nothing else in the manuscript
+        // resolves THROUGH an event, so re-reading one file cannot change a
+        // fact in another. That is exactly what a card cannot claim — a card's
+        // id decides what resolves everywhere — which is why cards escalate and
+        // this does not (`changeForcesRebuild`).
+        //
+        // Resolution is read from the entities the index ALREADY holds, the
+        // same catalog the chapter branch below uses, and it is sound for the
+        // same reason: a change to a CARD never reaches this method.
+        for (const event of extractEvents({ path, text: file.text }, id => catalog.ids.has(id)).events) {
+          writer.putEvent(event, path);
+          eventsWritten++;
+        }
+        documentsReindexed.push(path);
+        continue;
+      }
       for (const mention of extractChapterMentions({ path, text: file.text }, catalog)) {
         writer.putMention(mention);
         mentionsWritten++;
@@ -678,6 +720,7 @@ export class NarrativeIndexSession {
       documentsMoved,
       unchangedDocuments: [...unchangedDocuments].sort(byCodePoint),
       mentionsWritten,
+      eventsWritten,
       derivedRelations: derived.length,
       unreadableDocuments: [...plan.unreadable].sort(byCodePoint)
     };
@@ -766,6 +809,11 @@ export class NarrativeIndexSession {
     for (const relation of extracted.relations) {
       writer.putRelation(relation);
     }
+    // AFTER the documents, because `putEvent` names the timeline file that owns
+    // the event and the store enforces that the row exists.
+    for (const { event, relPath } of extracted.events) {
+      writer.putEvent(event, relPath);
+    }
 
     // Source 6, last, because it is a fold OVER the mentions just written.
     const derived = foldCoOccurrenceRelations(extracted.mentions);
@@ -781,12 +829,14 @@ export class NarrativeIndexSession {
       duplicateEntities: extracted.duplicates.length,
       mentions: extracted.mentions.length,
       extractedRelations: extracted.relations.length,
+      events: extracted.events.length,
       derivedRelations: derived.length,
       manifestPresent: extracted.manifestPresent,
       problems: {
         types: extracted.typeProblems,
         cards: extracted.cardProblems,
-        manifest: extracted.manifestProblems
+        manifest: extracted.manifestProblems,
+        events: extracted.eventProblems
       }
     };
   }

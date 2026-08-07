@@ -50,12 +50,15 @@ import {
   type DocumentMoveFreshness,
   type DuplicateEntityRecord,
   type EntityQuery,
+  type EventQuery,
   type IndexableFile,
   type IndexedDocument,
   type IndexedDocumentInput,
+  type IndexedEvent,
   type MentionDocumentCount,
   type MentionQuery,
   type NarrativeEntity,
+  type NarrativeEvent,
   type NarrativeIndexStore,
   type NarrativeIndexWriter,
   type NarrativeMention,
@@ -124,6 +127,8 @@ function countingStore(inner: NarrativeIndexStore): { store: NarrativeIndexStore
       (bump('write.putDuplicateEntity'), writer.putDuplicateEntity(entityId, excludedRelPath)),
     putMention: (mention: NarrativeMention): void => (bump('write.putMention'), writer.putMention(mention)),
     putRelation: (relation: NarrativeRelation): number => (bump('write.putRelation'), writer.putRelation(relation)),
+    putEvent: (event: NarrativeEvent, relPath: string): void =>
+      (bump('write.putEvent'), writer.putEvent(event, relPath)),
     clearAll: (): void => (bump('write.clearAll'), writer.clearAll())
   });
   const store: NarrativeIndexStore = {
@@ -142,6 +147,8 @@ function countingStore(inner: NarrativeIndexStore): { store: NarrativeIndexStore
     getMentions: (query?: MentionQuery): NarrativeMention[] => (bump('getMentions'), inner.getMentions(query)),
     countMentionsByDocument: (query?: MentionQuery): MentionDocumentCount[] =>
       (bump('countMentionsByDocument'), inner.countMentionsByDocument(query)),
+    listEvents: (query: EventQuery): IndexedEvent[] => (bump('listEvents'), inner.listEvents(query)),
+    getEvent: (eventId: string): IndexedEvent | undefined => (bump('getEvent'), inner.getEvent(eventId)),
     getRelations: (query?: RelationQuery): NarrativeRelation[] => (bump('getRelations'), inner.getRelations(query)),
     neighbourhood: (query: NeighbourhoodQuery): NarrativeRelation[] =>
       (bump('neighbourhood'), inner.neighbourhood(query)),

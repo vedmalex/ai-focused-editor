@@ -25,6 +25,7 @@ function report(overrides: Partial<NarrativeUpdateReport> = {}): NarrativeUpdate
     documentsMoved: [],
     unchangedDocuments: [],
     mentionsWritten: 0,
+    eventsWritten: 0,
     derivedRelations: 0,
     unreadableDocuments: [],
     ...overrides

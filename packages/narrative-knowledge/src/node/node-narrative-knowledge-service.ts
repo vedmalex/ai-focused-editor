@@ -22,8 +22,10 @@ import {
   type EntityQuery,
   type EntityTypeProblem,
   type Envelope,
+  type EventQuery,
   type IndexState,
   type IndexedDocument,
+  type IndexedEvent,
   type ManuscriptManifest,
   type MentionQuery,
   type NarrativeContextOptions,
@@ -222,6 +224,14 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
 
   async getRelations(rootUri: string, query?: RelationQuery): Promise<Envelope<NarrativeRelation[]>> {
     return this.session(rootUri).getRelations(query);
+  }
+
+  async listEvents(rootUri: string, query: EventQuery): Promise<Envelope<IndexedEvent[]>> {
+    return this.session(rootUri).listEvents(query);
+  }
+
+  async getEvent(rootUri: string, eventId: string): Promise<Envelope<IndexedEvent | undefined>> {
+    return this.session(rootUri).getEvent(eventId);
   }
 
   /**
@@ -734,6 +744,7 @@ function emptyUpdateReport(): NarrativeUpdateReport {
     documentsMoved: [],
     unchangedDocuments: [],
     mentionsWritten: 0,
+    eventsWritten: 0,
     derivedRelations: 0,
     unreadableDocuments: []
   };
@@ -750,9 +761,10 @@ function emptyRebuildReport(): NarrativeRebuildReport {
     duplicateEntities: 0,
     mentions: 0,
     extractedRelations: 0,
+    events: 0,
     derivedRelations: 0,
     manifestPresent: false,
-    problems: { types: [], cards: [], manifest: [] }
+    problems: { types: [], cards: [], manifest: [], events: [] }
   };
 }
 

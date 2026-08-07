@@ -28,7 +28,9 @@
 import type {
   DuplicateEntityRecord,
   EntityQuery,
+  EventQuery,
   IndexedDocument,
+  IndexedEvent,
   MentionDocumentCount,
   MentionOrderExclusion,
   MentionQuery,
@@ -190,6 +192,32 @@ export interface NarrativeKnowledgeService {
   findEntities(rootUri: string, query?: EntityQuery): Promise<Envelope<NarrativeEntity[]>>;
   getMentions(rootUri: string, query?: MentionQuery): Promise<Envelope<NarrativeMention[]>>;
   getRelations(rootUri: string, query?: RelationQuery): Promise<Envelope<NarrativeRelation[]>>;
+
+  /**
+   * Events, in the order asked for (gh#48).
+   *
+   * ON THIS SERVICE AND NOT A SECOND ONE. `StoryTimelineService` from the issue
+   * text was rejected by gh#48's own plan (П-9) and by architecture §3.1: a
+   * second knowledge seam is a second freshness history, a second envelope and a
+   * second chance to lie about staleness. Events are a new kind of data in one
+   * index, not a new index.
+   *
+   * `orderBy` IS REQUIRED. There are two orders and they answer different
+   * questions — story order is `sequence`, manuscript order is the chapter's
+   * place in the built book — and a flashback separates them. A default would
+   * let a panel render one of them and look authoritative about the other.
+   *
+   * EVENTS THAT CANNOT BE PLACED ARE RETURNED, NOT DROPPED, carrying
+   * `orderExclusion` and trailing the ordered ones in BOTH directions. The
+   * reason is per ORDER: an event with a `sequence` and no chapter is placeable
+   * in story order and not in manuscript order, so the exclusion belongs to the
+   * query rather than to the event.
+   */
+  listEvents(rootUri: string, query: EventQuery): Promise<Envelope<IndexedEvent[]>>;
+
+  /** One event by id (gh#48). `undefined` data under a `ready` envelope means
+   *  the manuscript defines no such event — not that the index is unsure. */
+  getEvent(rootUri: string, eventId: string): Promise<Envelope<IndexedEvent | undefined>>;
 
   /**
    * Where an entity appears, in manuscript order, optionally quoted (gh#47).

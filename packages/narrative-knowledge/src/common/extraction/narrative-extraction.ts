@@ -23,7 +23,11 @@
  *      as nothing, and never reach an extractor at all;
  *   3. parse every card — entities exist, but no resolvedness yet;
  *   4. build the catalog — first card wins an id collision, losers reported;
- *   5. relations and mentions — both need the catalog to say what resolves.
+ *   5. relations, mentions and EVENTS — all three need the catalog to say what
+ *      resolves. Events are read last for that reason alone: an event naming
+ *      `char:ivan` is `resolved` exactly when a card defines `ivan`, and a
+ *      timeline read before the cards were parsed would call every reference
+ *      broken (gh#48 WP-3).
  *
  * THE MANIFEST IS READ BUT NOT REQUIRED. Its absence means "not a manuscript"
  * and is reported as {@link ExtractedNarrativeIndex.manifestPresent} `false`;
@@ -35,9 +39,10 @@
 
 import { BASE_ENTITY_TYPES, mergeEntityTypes, parseEntityTypesYaml } from '../entity-type-registry';
 import type { EffectiveEntityType, EntityTypeProblem } from '../entity-type-registry';
-import type { NarrativeEntity, NarrativeMention } from '../graph';
+import type { NarrativeEntity, NarrativeEvent, NarrativeEventProblem, NarrativeMention } from '../graph';
 import { extractChapterMentions } from './chapter-extraction';
 import { classifyDocument, ENTITY_TYPES_PATH, MANIFEST_PATH } from './document-classification';
+import { extractEvents } from './event-extraction';
 import { buildEntityCatalog, type EntityDuplicate } from './entity-catalog';
 import {
   extractCardRelations,
@@ -80,12 +85,24 @@ export interface ExtractedNarrativeIndex {
   mentions: NarrativeMention[];
   /** Every relation (sources 2 and 3). Never from `sources/**` — see source 5. */
   relations: ExtractedRelation[];
+  /**
+   * Every event, with the timeline file each was read from (gh#48).
+   *
+   * PAIRED WITH ITS PATH rather than carrying one inside the event, because the
+   * store's `putEvent(event, relPath)` needs the owning document and
+   * `NarrativeEvent.evidence` is where the event points, not where it lives —
+   * those coincide today and would stop coinciding the moment an event names a
+   * chapter range as its own evidence.
+   */
+  events: { event: NarrativeEvent; relPath: string }[];
   /** `entities/types.yaml` validation problems. */
   typeProblems: EntityTypeProblem[];
   /** Malformed entity cards. */
   cardProblems: EntityCardProblem[];
   /** Malformed `manifest.yaml`. Empty when the manifest is merely absent. */
   manifestProblems: ManifestProblem[];
+  /** Malformed timeline files and defective events (gh#48). */
+  eventProblems: NarrativeEventProblem[];
 }
 
 /**
@@ -113,6 +130,7 @@ export function extractNarrativeIndex(files: readonly WorkspaceFile[]): Extracte
 
   const cards: ParsedEntityCard[] = [];
   const chaptersToScan: { path: string; text: string }[] = [];
+  const timelinesToRead: { path: string; text: string }[] = [];
   const cardProblems: EntityCardProblem[] = [];
 
   for (const file of files) {
@@ -137,6 +155,10 @@ export function extractNarrativeIndex(files: readonly WorkspaceFile[]): Extracte
     }
     if (classification.kind === 'chapter') {
       chaptersToScan.push({ path, text: file.text });
+      continue;
+    }
+    if (classification.kind === 'timeline') {
+      timelinesToRead.push({ path, text: file.text });
     }
   }
 
@@ -160,6 +182,23 @@ export function extractNarrativeIndex(files: readonly WorkspaceFile[]): Extracte
     mentions.push(...extractChapterMentions(chapter, catalog));
   }
 
+  // `catalog.ids` AND NOT the tagged spelling, because the predicate
+  // `extractEvents` takes is `(id) => boolean` — the shape gh#48 WP-1 shipped.
+  // The residual gap is named rather than hidden: an event writing `char:ivan`
+  // against a manuscript that defines only `location:ivan` resolves, because
+  // `NarrativeEntity.id` is unique per TYPE and this asks a type-free question.
+  // Narrowing it means widening the predicate to carry the written kind, which
+  // is WP-1's surface and a change of its own.
+  const events: { event: NarrativeEvent; relPath: string }[] = [];
+  const eventProblems: NarrativeEventProblem[] = [];
+  for (const timeline of timelinesToRead) {
+    const read = extractEvents(timeline, id => catalog.ids.has(id));
+    eventProblems.push(...read.problems);
+    for (const event of read.events) {
+      events.push({ event, relPath: timeline.path });
+    }
+  }
+
   return {
     effectiveTypes,
     manifestPresent: manifest.present,
@@ -168,8 +207,10 @@ export function extractNarrativeIndex(files: readonly WorkspaceFile[]): Extracte
     duplicates,
     mentions,
     relations,
+    events,
     typeProblems,
     cardProblems,
-    manifestProblems: manifest.problems
+    manifestProblems: manifest.problems,
+    eventProblems
   };
 }

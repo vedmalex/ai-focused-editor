@@ -37,11 +37,22 @@
  *     `chapterOrder` is absent and the spoiler-safe rule has something to key
  *     on.
  *   - `sources/citations.yaml`, `sources/excerpts.jsonl` and
- *     `knowledge/plans/act-1.yaml` MUST ARRIVE in order to be REFUSED. The
- *     workspace walk filters by extension only and is documented as
- *     deliberately liberal (`narrative-workspace-scan.ts:10-18`); a fixture that
- *     omitted these files would make "the pipeline produces nothing from them"
+ *     `knowledge/plans/act-1.yaml` MUST ARRIVE in order to be REFUSED. This
+ *     fixture hands its files STRAIGHT to the session, so all three do arrive
+ *     and the refusal asserted against them is `classifyDocument`'s; a fixture
+ *     that omitted them would make "the pipeline produces nothing from them"
  *     green because they never showed up.
+ *
+ *     ONE OF THE THREE IS NOW ALSO REFUSED EARLIER, AND THIS IS NOT THAT TEST.
+ *     Since gh#48 WP-3 the real disk walk skips files under `knowledge/` that
+ *     the index cannot read (F-12: gh#50's and gh#52's append-only journals
+ *     defeat the `(size, mtime)` prefilter by construction), so in the PRODUCT
+ *     `knowledge/plans/act-1.yaml` never reaches classification at all. The two
+ *     `sources/**` files still do, so relation source 5's tooth keeps meaning
+ *     what it meant. What the `knowledge/` entry here asserts is narrower than
+ *     it used to be — that classification refuses it if it ever arrives — and
+ *     saying so is better than leaving a comment that describes a walk the
+ *     package no longer has.
  *
  * WHY SHA-256 HERE AND FNV IN THE WP-4b CORE. That core runs under `bun` too,
  * where `src/common` may not import `node:crypto` (prohibition (a)). This module

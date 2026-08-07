@@ -155,11 +155,23 @@ export function pairMovedDocuments(
  * Whether one changed path forces a FULL rebuild.
  *
  * `undefined` classification means the index does not read the file at all —
- * `sources/citations.yaml`, `sources/excerpts.jsonl`, `knowledge/**`, build
- * output — and such a change is ignored rather than escalated. That is the same
- * boundary ОВ-1's tooth B12 draws, applied to the incremental path: a file that
- * produces nothing on a rebuild must also cost nothing on an edit, or every save
- * of a citation file would rebuild the manuscript.
+ * `sources/citations.yaml`, `sources/excerpts.jsonl`, everything under
+ * `knowledge/` but the timeline, build output — and such a change is ignored
+ * rather than escalated. That is the same boundary ОВ-1's tooth B12 draws,
+ * applied to the incremental path: a file that produces nothing on a rebuild
+ * must also cost nothing on an edit, or every save of a citation file would
+ * rebuild the manuscript.
+ *
+ * A TIMELINE FILE DOES NOT ESCALATE (gh#48 WP-3), and the test is the one this
+ * function has always applied: does this file's content decide what resolves in
+ * OTHER files. A card's does — its id is what a `[[char:x]]` anywhere in the
+ * manuscript resolves against — so a card escalates. Nothing resolves through an
+ * event: an event points AT entities and chapters, and no entity, mention,
+ * relation or chapter changes meaning because a timeline file was edited. So the
+ * whole cost of an edit is re-reading the one file, which is what an increment
+ * is. Escalating anyway would rebuild the manuscript on every keystroke-save of
+ * a timeline the author is actively writing — the most frequent edit this
+ * feature has.
  */
 export function changeForcesRebuild(path: string, types: readonly EffectiveEntityType[]): boolean {
   const normalized = normalizeWorkspacePath(path);
@@ -171,7 +183,7 @@ export function changeForcesRebuild(path: string, types: readonly EffectiveEntit
     return false;
   }
   // A card is the workspace-level case: its id decides what resolves ANYWHERE.
-  return classification.kind !== 'chapter';
+  return classification.kind !== 'chapter' && classification.kind !== 'timeline';
 }
 
 /** Whether the index reads this path at all. */
@@ -210,6 +222,16 @@ export interface NarrativeUpdateReport {
   unchangedDocuments: string[];
   /** Mention rows written this pass. */
   mentionsWritten: number;
+  /**
+   * Event rows written this pass (gh#48).
+   *
+   * BESIDE `mentionsWritten` RATHER THAN FOLDED INTO IT. They are written by
+   * different branches from different files, and one number covering both would
+   * make "the timeline edit was applied incrementally" unassertable — a pass
+   * that re-read a chapter and skipped the timeline file would report the same
+   * total as one that did the opposite.
+   */
+  eventsWritten: number;
   /** Derived (co-occurrence) relations after the recompute. */
   derivedRelations: number;
   /** Paths whose read failed — the input to `stale/partial-update-failed`. */

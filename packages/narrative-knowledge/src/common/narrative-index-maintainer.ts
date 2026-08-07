@@ -957,6 +957,7 @@ export class NarrativeIndexMaintainer {
         documentsMoved: [],
         unchangedDocuments: report.unchangedDocuments,
         mentionsWritten: report.mentions,
+        eventsWritten: report.events,
         derivedRelations: report.derivedRelations,
         unreadableDocuments: [],
         rebuild: report
