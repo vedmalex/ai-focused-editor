@@ -122,6 +122,14 @@ jobs:
         with:
           node-version: 22.x
 
+      # `native-keymap` compiles against X11 and finds it through pkg-config.
+      # Without these its `node-gyp rebuild` fails with a bare
+      # `pkg-config: not found`, no `keymapping.node` is produced, and the
+      # failure only surfaces much later as an esbuild "Cannot read file".
+      - name: System build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxkbfile-dev
+
       - name: Install
         run: bash .github/scripts/install.sh
 

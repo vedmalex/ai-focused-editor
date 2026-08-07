@@ -15,6 +15,21 @@ set -euo pipefail
 # findable.
 bun install --linker=hoisted
 
+# (1b) BUN BLOCKS LIFECYCLE SCRIPTS BY DEFAULT, and this repository has native
+# dependencies that exist only because of them. `bun pm untrusted` lists
+# `native-keymap`, `@theia/ffmpeg` and `@parcel/watcher`: without their
+# `node-gyp rebuild` the `.node` binaries are never produced, and the electron
+# bundle dies on
+#   Cannot read file: node_modules/native-keymap/build/Release/keymapping.node
+# AFTER `theia rebuild:electron` has cheerfully reported "✔ Rebuild Complete" —
+# it converts existing binaries to the Electron ABI, it does not create missing
+# ones.
+#
+# `--all` rather than a hand-kept list: the set is whatever the dependency tree
+# currently needs, and a stale list would fail exactly this silently again. This
+# is what npm and yarn do unconditionally; the lockfile is what bounds it.
+bun pm trust --all || true
+
 # (2) The apps' own scripts address their dependencies by RELATIVE PATH, which a
 # hoisted install does not provide. Two known callers, and they fail differently
 # enough that neither hints at the other:
