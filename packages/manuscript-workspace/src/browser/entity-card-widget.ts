@@ -103,7 +103,22 @@ export class EntityCardWidget extends ReactWidget {
     if (!shouldFollowCursor(this.pinned, this.entityId, entityId)) {
       return;
     }
-    await this.showEntity(entityId);
+    this.entityId = entityId;
+    if (!this.isVisible) {
+      // A panel hidden behind another tab must not pay for a card nobody can
+      // see: `getCard` costs four RPC and reads manuscript files for the
+      // quotations. Deferred, not dropped — the same catch-up the index-change
+      // push already uses.
+      //
+      // ON THE CARET PATH ONLY. An explicit `showEntity` — the search command, a
+      // click — is the author asking, and deferring THAT would leave a panel
+      // they just summoned showing nothing. Same principle as pinning: this
+      // resists the cursor, not the author. (The first edition put the check in
+      // `showEntity`, and the end-to-end smoke caught it within the minute.)
+      this.pendingRefresh = true;
+      return;
+    }
+    await this.refresh();
   }
 
   get isPinned(): boolean {

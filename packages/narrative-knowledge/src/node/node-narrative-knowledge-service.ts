@@ -257,53 +257,9 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
     const texts = new Map<string, VerifiedDocument>();
     const appearances: EntityAppearance[] = [];
     for (const mention of answer.data) {
-      const relPath = mention.evidence.path;
-      if (!documents.has(relPath)) {
-        documents.set(relPath, session.getDocument(relPath));
-      }
-      const document = documents.get(relPath);
-      const orderExclusion =
-        document === undefined
-          ? 'no-chapter-order'
-          : mentionOrderExclusion(mention, {
-              ...(document.chapterOrder === undefined ? {} : { chapterOrder: document.chapterOrder }),
-              buildIncluded: document.buildIncluded
-            });
-      const appearance: EntityAppearance = {
-        mention,
-        ...(document?.title === undefined ? {} : { chapterTitle: document.title }),
-        ...(document?.chapterOrder === undefined ? {} : { chapterOrder: document.chapterOrder }),
-        ...(orderExclusion === undefined ? {} : { orderExclusion })
-      };
-      if (query.withExcerpt === true) {
-        if (document === undefined) {
-          appearance.excerptUnavailable = 'unreadable';
-        } else {
-          // The TEXT is cached, never the finished excerpt: two appearances in
-          // one chapter have different ranges, so caching the quotation would
-          // serve the second one the first one's passage. Keyed by path AND
-          // hash, so a document re-indexed mid-loop is a different document for
-          // quoting purposes rather than a cache hit the new hash never vouched
-          // for.
-          const key = `${relPath}::${document.contentHash}`;
-          let verified = texts.get(key);
-          if (verified === undefined) {
-            verified = await readVerifiedDocument(rootPath, relPath, document.contentHash);
-            texts.set(key, verified);
-          }
-          if (verified.text === undefined) {
-            appearance.excerptUnavailable = verified.unavailable ?? 'unreadable';
-          } else {
-            const excerpt = sliceExcerpt(verified.text, mention.evidence);
-            if (excerpt.text === undefined) {
-              appearance.excerptUnavailable = excerpt.unavailable ?? 'unreadable';
-            } else {
-              appearance.excerpt = excerpt.text;
-            }
-          }
-        }
-      }
-      appearances.push(appearance);
+      appearances.push(
+        await this.toAppearance(mention, session, rootPath, query.withExcerpt === true, texts, documents)
+      );
     }
     // The spread is read from the SAME session, inside the same call, so it
     // cannot straddle a rebuild the way two RPC round trips could — see

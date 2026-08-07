@@ -916,6 +916,16 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
         'the counts sum to the mentions'
       );
       equal(store.countMentionsByDocument({ entityId: 'nobody' }).length, 0, 'no mentions, no rows');
+      // gh#47 F-47-18. The port PROMISES that `orderBy`/`direction`/`limit` are
+      // ignored here — they describe an order over mentions, and this is a
+      // different list. A promise in a doc comment binds nobody: an adapter that
+      // honoured `limit` would truncate the spread, and every caller today
+      // passes only `entityId`, so nothing would notice.
+      deepEqual(
+        store.countMentionsByDocument({ entityId: 'krishna', orderBy: 'chapter', direction: 'desc', limit: 1 }),
+        counts,
+        'ordering and capping a mention query do not reshape the per-document aggregate'
+      );
     }
   },
   {

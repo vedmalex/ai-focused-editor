@@ -13,7 +13,7 @@ import {
   type EntityTypeDescriptor,
   type NarrativeEntity
 } from '../common';
-import { parseWikiLinks, wikiEntityHoverCandidate } from '@ai-focused-editor/narrative-knowledge';
+import { findEntityTokenAt } from '../common';
 import { tagKindToEntityKind } from '../common/link-navigation';
 import { SemanticLinkCommands } from './semantic-link-contribution';
 import { EntityTypeRegistryService } from './entity-type-registry-service';
@@ -149,40 +149,45 @@ export class SemanticEntityHoverContribution implements FrontendApplicationContr
    * own TTL cache makes the immediately-following `provideHover` call's own
    * fetch effectively free.
    */
+  /**
+   * DELEGATES to the shared resolver (gh#47, closing F-47-13).
+   *
+   * THIS METHOD USED TO BE THE CHAIN, and `findEntityTokenAt` was extracted from
+   * it. Leaving both meant two live implementations of one question — a token
+   * edit in either would make the hover and the card disagree about the SAME
+   * reference, which is the exact shape of ISS-151 and which the extracted
+   * file's own header claims was avoided. It is avoided now.
+   *
+   * The label is recomputed here rather than carried through the shared type:
+   * the resolver answers WHICH reference is under the offset, and the hover's
+   * label is a presentation choice — the tag's own `|label` when it has one, the
+   * bare id otherwise. Pushing it into the shared shape would make every future
+   * consumer inherit this widget's rendering decision.
+   */
   protected async findTagAt(
     model: monaco.editor.ITextModel,
     text: string,
     offset: number
   ): Promise<HoverTagMatch | undefined> {
-    for (const tag of parseSemanticMarkdown(text).tags) {
-      const start = model.getOffsetAt({ lineNumber: tag.range.start.line + 1, column: tag.range.start.character + 1 });
-      const end = model.getOffsetAt({ lineNumber: tag.range.end.line + 1, column: tag.range.end.character + 1 });
-      if (offset >= start && offset <= end) {
-        return { kind: tag.kind, id: tag.id, label: tag.label, startOffset: start, endOffset: end };
-      }
+    void model;
+    // The entity list is fetched ONCE, before resolution, because the shared
+    // predicate is synchronous. It is the same TTL-cached read the note branch
+    // used to perform lazily; paying for it up front costs one cached call and
+    // removes the only reason the chain could not be shared.
+    const entities = await this.getEntities();
+    const token = findEntityTokenAt(text, offset, id => entities.some(entity => entity.id === id));
+    if (token === undefined) {
+      return undefined;
     }
-    for (const link of parseWikiLinks(text)) {
-      const { start, end } = link.range;
-      if (offset < start || offset > end) {
-        continue;
-      }
-      if (link.class === 'note') {
-        // Entity-first (mirrors resolveWikiToken/U4): only pay for the entity
-        // lookup once a note-class token's range already contains the hover
-        // offset, never on every hover over plain prose.
-        const entities = await this.getEntities();
-        const candidate = wikiEntityHoverCandidate(link, id => entities.some(entity => entity.id === id));
-        if (candidate) {
-          return { kind: candidate.kind, id: candidate.id, label: candidate.id, startOffset: start, endOffset: end };
-        }
-        continue; // a genuine note-link (no matching entity) — no entity hover, unchanged.
-      }
-      const candidate = wikiEntityHoverCandidate(link, () => false);
-      if (candidate) {
-        return { kind: candidate.kind, id: candidate.id, label: candidate.id, startOffset: start, endOffset: end };
-      }
-    }
-    return undefined;
+    const raw = text.slice(token.startOffset, token.endOffset);
+    const labelled = /\|([^\]]+)\]\]$/.exec(raw);
+    return {
+      ...(token.kind === undefined ? {} : { kind: token.kind }),
+      id: token.id,
+      label: labelled ? labelled[1] : token.id,
+      startOffset: token.startOffset,
+      endOffset: token.endOffset
+    };
   }
 
   protected resolveEntity(
