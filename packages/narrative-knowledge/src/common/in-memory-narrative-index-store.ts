@@ -44,7 +44,7 @@ import type {
   NeighbourhoodQuery,
   RelationQuery
 } from './graph';
-import { NarrativeIndexStoreError } from './graph';
+import { NarrativeIndexStoreError, orderMentionsByChapter } from './graph';
 
 /** Options an in-memory store accepts. Deliberately tiny — every knob here is
  *  a knob the SQLite adapter would have to grow too. */
@@ -328,20 +328,29 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
   }
 
   getMentions(query: MentionQuery = {}): NarrativeMention[] {
-    return this.mentions
-      .filter(mention => {
-        if (query.entityId !== undefined && mention.entityId !== query.entityId) {
-          return false;
-        }
-        if (query.relPath !== undefined && mention.evidence.path !== query.relPath) {
-          return false;
-        }
-        if (query.brokenOnly === true && mention.resolved) {
-          return false;
-        }
-        return true;
-      })
-      .map(clone);
+    const matches = this.mentions.filter(mention => {
+      if (query.entityId !== undefined && mention.entityId !== query.entityId) {
+        return false;
+      }
+      if (query.relPath !== undefined && mention.evidence.path !== query.relPath) {
+        return false;
+      }
+      if (query.brokenOnly === true && mention.resolved) {
+        return false;
+      }
+      return true;
+    });
+    // gh#47. Without `orderBy` this stays insertion order — the behaviour every
+    // caller before this option relied on, and changing it unasked would have
+    // rewritten the meaning of results nothing here can see.
+    const ordered =
+      query.orderBy === 'chapter'
+        ? orderMentionsByChapter(matches, query.direction ?? 'asc', relPath => this.documents.get(relPath))
+        : matches;
+    // AFTER ordering, per `MentionQuery.limit` — the ISS-349 rule that a cap
+    // must select the same ROWS in both adapters, not merely the same count.
+    const limited = query.limit === undefined ? ordered : ordered.slice(0, query.limit);
+    return limited.map(clone);
   }
 
   getRelations(query: RelationQuery = {}): NarrativeRelation[] {

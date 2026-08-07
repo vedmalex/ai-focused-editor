@@ -30,3 +30,7 @@ export * from './derived-relations';
 // PRIMITIVES rather than `IndexState` precisely so that staying inside is
 // possible — see the module note there.
 export * from './narrative-index-store';
+// The ONE spelling of manuscript order (gh#47), exported because both adapters
+// and the contract suite consume it — see the module note on why it is shared
+// rather than implemented twice.
+export * from './mention-ordering';

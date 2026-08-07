@@ -40,6 +40,7 @@ import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import {
   NarrativeIndexStoreError,
+  mentionOrderSql,
   type DocumentMoveFreshness,
   type DuplicateEntityRecord,
   type EntityQuery,
@@ -913,10 +914,21 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
       clauses.push('m.resolved = 0');
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    // gh#47. `mention_id ASC` is the insertion order every caller before
+    // `orderBy` relied on; the manuscript order is generated from the SAME rule
+    // the in-memory adapter runs, so the two cannot drift silently.
+    const order =
+      query.orderBy === 'chapter' ? mentionOrderSql(query.direction ?? 'asc') : 'ORDER BY m.mention_id';
+    // The cap is bound as a PARAMETER and appended AFTER the ordering, so it
+    // selects the same rows the other adapter selects (ISS-349).
+    const limit = query.limit === undefined ? '' : 'LIMIT ?';
+    if (query.limit !== undefined) {
+      params.push(query.limit);
+    }
     const rows = this.db
       .prepare(
         `SELECT m.*, d.rel_path AS doc_rel_path FROM mention m
-         JOIN document d ON d.doc_id = m.doc_id ${where} ORDER BY m.mention_id`
+         JOIN document d ON d.doc_id = m.doc_id ${where} ${order} ${limit}`
       )
       .all(...params) as unknown as MentionRow[];
     return rows.map(toMention);

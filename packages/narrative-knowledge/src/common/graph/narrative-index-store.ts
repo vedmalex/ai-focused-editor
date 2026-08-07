@@ -209,7 +209,64 @@ export interface MentionQuery {
   relPath?: string;
   /** Only mentions whose id no card defines. */
   brokenOnly?: boolean;
+  /**
+   * Order the result by the entity's position in the manuscript (gh#47).
+   *
+   * WHY THIS IS IN THE PORT RATHER THAN A SORT ON THE CALLER'S SIDE. The key is
+   * `document.chapter_order`, which lives on the DOCUMENT row and is indexed
+   * (`document_chapter_order`), so the join belongs where the rows are. Sorting
+   * outside would mean fetching EVERY mention of an entity first — the exact
+   * use this interface's own note calls "a mistake anywhere else".
+   *
+   * ABSENT means insertion order, the behaviour every existing caller relies on.
+   */
+  orderBy?: 'chapter';
+  /**
+   * Which end of {@link orderBy} to return. Ignored without `orderBy`.
+   *
+   * BOTH DIRECTIONS ARE NEEDED, and by three distinct callers: first appearance
+   * (`asc`, limit 1), latest appearance (`desc`, limit 1) and the recent-mentions
+   * list (`desc`, limit N). With `asc` alone the last two are unobtainable
+   * without transferring the whole list.
+   */
+  direction?: 'asc' | 'desc';
+  /**
+   * Hard cap, applied AFTER ordering — so `limit` returns the same rows in both
+   * adapters and not merely the same number of them (the ISS-349 rule that
+   * {@link EntityQuery.limit} already follows).
+   */
+  limit?: number;
 }
+
+/**
+ * Mentions that {@link MentionQuery.orderBy} cannot place, in the order this
+ * package places them: they trail the ordered ones in BOTH directions.
+ *
+ * THREE INDEPENDENT WAYS TO BE UNPLACEABLE, and a consumer has to be able to
+ * tell them apart, so this is a reason and not a boolean:
+ *
+ *  - `no-chapter-order` — the document has no `chapterOrder`, i.e. a `content/`
+ *    file the manifest does not name.
+ *  - `no-position` — `evidence.evidenceKind !== 'range'`, so the mention has no
+ *    line within its document. The DDL states this as
+ *    `CHECK ((evidence_kind = 'range') = (start_line IS NOT NULL))`.
+ *  - `not-in-manifest` — the chapter is excluded from the built book, possibly
+ *    INHERITED from an `include: false` on a part.
+ *
+ * WHY THEY TRAIL IN BOTH DIRECTIONS RATHER THAN MIRRORING. Mirroring reads as
+ * the symmetric choice and is the worse one: a mention with no position would
+ * become the "latest appearance" under `desc` exactly as readily as it would
+ * become the "first" under `asc`. Trailing in both directions says the true
+ * thing — these are real mentions the card must show, and neither end of the
+ * manuscript is a claim they can support.
+ *
+ * On `not-in-manifest` the reasoning is one step further out: "first appearance"
+ * is a statement about THE BOOK THE AUTHOR IS BUILDING. A chapter deliberately
+ * excluded from the build is not in that chronology, and the exclusion is
+ * visible and reversible — flipping `include: true` moves it into the ordering,
+ * which is precisely what the author meant by flipping it.
+ */
+export type MentionOrderExclusion = 'no-chapter-order' | 'no-position' | 'not-in-manifest';
 
 /** Which end of a relation an entity id is being matched against. */
 export type RelationDirection = 'outgoing' | 'incoming' | 'either';
