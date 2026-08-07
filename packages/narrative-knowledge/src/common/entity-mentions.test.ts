@@ -52,3 +52,77 @@ describe('splitEntityMentions', () => {
     expect(splitEntityMentions('')).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ISS-362 (gh#72) — code is an example, not a reference.
+//
+// The two scanners here were the last ones left blind after ISS-358 taught the
+// diagnostic-producing parsers the same rule. Each positive below is paired
+// with a case that would still pass if the guard were written as "always skip",
+// so a guard that over-reaches reddens too.
+// ---------------------------------------------------------------------------
+
+describe('mentions inside code are examples, not references (ISS-362)', () => {
+  test('extract: a mention inside an inline code span is not counted', () => {
+    expect(extractEntityMentions('Write `[[char:krishna]]` to link him.')).toEqual([]);
+  });
+
+  test('extract: a mention inside a fenced block is not counted', () => {
+    const text = ['Example:', '```', '[[char:krishna]]', '```'].join('\n');
+    expect(extractEntityMentions(text)).toEqual([]);
+  });
+
+  test('extract, PAIRED POSITIVE: the same mention in prose IS counted', () => {
+    // "Always skip" must fail here — this is the case that keeps the guard honest.
+    expect(extractEntityMentions('Krishna is [[char:krishna]] in prose.')).toEqual([
+      { raw: '[[char:krishna]]', kind: 'char', id: 'krishna' }
+    ]);
+  });
+
+  test('extract: prose and code in ONE string — only the prose mention survives', () => {
+    expect(extractEntityMentions('Real [[char:krishna]], example `[[char:arjuna]]`.')).toEqual([
+      { raw: '[[char:krishna]]', kind: 'char', id: 'krishna' }
+    ]);
+  });
+
+  test('extract: a code example does not suppress the SAME id later in prose', () => {
+    // De-duplication runs on surviving matches only, so a skipped example must
+    // not claim the `seen` key and hide the real reference behind it.
+    expect(extractEntityMentions('`[[char:krishna]]` then really [[char:krishna]].')).toEqual([
+      { raw: '[[char:krishna]]', kind: 'char', id: 'krishna' }
+    ]);
+  });
+
+  test('split: a mention inside code stays plain text, it does not vanish', () => {
+    expect(splitEntityMentions('Write `[[char:krishna]]` here.')).toEqual([
+      { type: 'text', value: 'Write `[[char:krishna]]` here.' }
+    ]);
+  });
+
+  test('split: a code example between two real mentions keeps its place in the prose', () => {
+    expect(splitEntityMentions('[[a]] and `[[b]]` and [[c]]')).toEqual([
+      { type: 'mention', mention: { raw: '[[a]]', id: 'a' } },
+      { type: 'text', value: ' and `[[b]]` and ' },
+      { type: 'mention', mention: { raw: '[[c]]', id: 'c' } }
+    ]);
+  });
+
+  test('split: THE LOAD-BEARING INVARIANT — segments still reproduce the input byte for byte', () => {
+    // This is the tooth for "post-filter, never mutate". A `continue` that also
+    // advanced the cursor would silently DELETE the skipped token from the
+    // rendered card; only this assertion catches that.
+    const inputs = [
+      'Write `[[char:krishna]]` here.',
+      '[[a]] and `[[b]]` and [[c]]',
+      ['Example:', '```', '[[char:krishna]]', '```', 'after [[real]]'].join('\n'),
+      'no mentions at all',
+      '`[[only]]`'
+    ];
+    for (const input of inputs) {
+      const rebuilt = splitEntityMentions(input)
+        .map(segment => (segment.type === 'text' ? segment.value : segment.mention.raw))
+        .join('');
+      expect(rebuilt).toBe(input);
+    }
+  });
+});
