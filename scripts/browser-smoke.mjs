@@ -198,6 +198,12 @@ try {
     'browser'
   );
 
+  // gh#47: the card, end to end, now that the index is `ready` and populated.
+  await assertEntityCardRenders(
+    () => page.evaluate(entityCardReaderScript('krishna')),
+    'browser'
+  );
+
   // TASK-022 ISS-359: the index must update ITSELF from an on-disk edit, with
   // NO call to `rebuild()` anywhere in the check — the one shape of proof that
   // catches "the file watcher never starts in a running application" (every
@@ -285,6 +291,77 @@ async function waitForServer(targetUrl, timeoutMs) {
  * repeated here rather than imported: this check is about shell/view state,
  * not the narrative-knowledge index that file is scoped to.
  */
+/**
+ * gh#47 — the entity card, END TO END, in a running application.
+ *
+ * WHY THIS EXISTS AND WHAT IT PROVES THAT NOTHING ELSE DOES. `EntityCardService`
+ * composes four RPC answers into a view model; every part of that is unit-tested
+ * and the composition itself had never been EXECUTED against a live backend in
+ * either target. That is precisely the gap this task family has fallen into nine
+ * times: parts green, whole absent.
+ *
+ * IT DRIVES THE WIDGET, not the service, and deliberately: calling the service
+ * would prove the RPC and say nothing about whether what the author sees comes
+ * from it. `showEntity` is the same entry point the search command uses.
+ */
+function entityCardReaderScript(entityId) {
+  return `(async () => {
+    const container = window.theia && window.theia.container;
+    if (!container) { return { ok: false, error: 'the Theia container is not available' }; }
+    const findKey = (label) => {
+      for (const [candidate] of container._bindingDictionary._map.entries()) {
+        const candidateLabel = candidate && (candidate.description || candidate.name);
+        if (candidateLabel === label) { return candidate; }
+      }
+      return undefined;
+    };
+    try {
+      const widgetManagerKey = findKey('WidgetManager');
+      if (!widgetManagerKey) { return { ok: false, error: 'WidgetManager is not bound' }; }
+      const widgetManager = container.get(widgetManagerKey);
+      const widget = widgetManager.tryGetWidget('ai-focused-editor.entity-card');
+      if (!widget) { return { ok: false, error: 'the entity card widget is not in the shell' }; }
+      await widget.showEntity(${JSON.stringify(entityId)});
+      // One frame for React to flush the update the model triggered.
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const text = widget.node ? widget.node.innerText : '';
+      return { ok: true, text, pinnedBefore: widget.isPinned };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  })()`;
+}
+
+/**
+ * Assert the card showed a REAL entity with REAL manuscript facts.
+ *
+ * The assertions are about CONTENT, not about the absence of an error: a widget
+ * that rendered its empty-state message would satisfy "no exception thrown", and
+ * that is exactly the shape of pass this repository keeps having to disown.
+ */
+async function assertEntityCardRenders(readCard, target) {
+  const answer = await readCard();
+  if (!answer.ok) {
+    throw new Error(`[${target}] entity card: ${answer.error}`);
+  }
+  const text = String(answer.text || '');
+  if (!text.includes('Krishna')) {
+    throw new Error(
+      `[${target}] the entity card did not render the entity's name; it showed: ${JSON.stringify(text.slice(0, 300))}`
+    );
+  }
+  // A card that only ever prints a name would pass the line above. These two
+  // come from the INDEX rather than from the YAML card, so they are the half
+  // that proves the composition ran: the appearance section and the document
+  // count both require the appearance query to have answered.
+  if (!/chapter|глав|Chapter/i.test(text)) {
+    throw new Error(
+      `[${target}] the card rendered no appearance at all — the appearance query did not reach it: ${JSON.stringify(text.slice(0, 300))}`
+    );
+  }
+  console.log(`[${target}] entity card rendered ${JSON.stringify(text.slice(0, 120))}`);
+}
+
 function viewIconPresenceReaderScript(widgetIds) {
   return `(() => {
     const container = window.theia && window.theia.container;
