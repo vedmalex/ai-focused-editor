@@ -22,7 +22,7 @@
   },
   "scripts": {
     "build": "bun run esbuild.config.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "rm -f *.tsbuildinfo && tsc -p tsconfig.json --noEmit",
     "test": "bun test src/core"
   }
 }

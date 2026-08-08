@@ -43,7 +43,7 @@ import type { NarrativeEntity, NarrativeEvent, NarrativeEventProblem, NarrativeM
 import { extractChapterMentions } from './chapter-extraction';
 import { classifyDocument, ENTITY_TYPES_PATH, MANIFEST_PATH } from './document-classification';
 import { extractEvents } from './event-extraction';
-import { buildEntityCatalog, type EntityDuplicate } from './entity-catalog';
+import { buildEntityCatalog, isReferenceResolved, type EntityDuplicate } from './entity-catalog';
 import {
   extractCardRelations,
   parseEntityCard,
@@ -202,13 +202,12 @@ export function extractNarrativeIndex(files: readonly WorkspaceFile[]): Extracte
     mentions.push(...extractChapterMentions(chapter, catalog));
   }
 
-  // `catalog.ids` AND NOT the tagged spelling, because the predicate
-  // `extractEvents` takes is `(id) => boolean` — the shape gh#48 WP-1 shipped.
-  // The residual gap is named rather than hidden: an event writing `char:ivan`
-  // against a manuscript that defines only `location:ivan` resolves, because
-  // `NarrativeEntity.id` is unique per TYPE and this asks a type-free question.
-  // Narrowing it means widening the predicate to carry the written kind, which
-  // is WP-1's surface and a change of its own.
+  // THE SAME RESOLUTION RULE PROSE MENTIONS USE (gh#90). `isReferenceResolved`
+  // matches a bare id across every type and a KINDED reference only against
+  // that kind's card — because `NarrativeEntity.id` is unique only WITHIN a
+  // type. Events used to ask `catalog.ids.has(id)`, which made `char:ivan`
+  // resolve against a LOCATION called `ivan`; one rule, one spelling, and
+  // events are no longer the place that disagrees.
   //
   // FIRST FILE WINS AN ID COLLISION, LOSERS ARE REPORTED — the rule
   // `buildEntityCatalog` already applies to cards, applied to events for the
@@ -228,7 +227,7 @@ export function extractNarrativeIndex(files: readonly WorkspaceFile[]): Extracte
   const eventDuplicates: EventDuplicate[] = [];
   const ownerByEventId = new Map<string, string>();
   for (const timeline of timelinesToRead) {
-    const read = extractEvents(timeline, id => catalog.ids.has(id));
+    const read = extractEvents(timeline, (kind, id) => isReferenceResolved(catalog, kind, id));
     eventProblems.push(...read.problems);
     for (const event of read.events) {
       const owner = ownerByEventId.get(event.id);

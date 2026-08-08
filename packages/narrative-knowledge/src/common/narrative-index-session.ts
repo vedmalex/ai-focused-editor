@@ -39,7 +39,7 @@ import {
 } from './extraction';
 import { classifyDocument } from './extraction/document-classification';
 import { extractChapterMentions } from './extraction/chapter-extraction';
-import { buildEntityCatalog } from './extraction/entity-catalog';
+import { buildEntityCatalog, isReferenceResolved } from './extraction/entity-catalog';
 import { extractEvents } from './extraction/event-extraction';
 import { normalizeWorkspacePath } from './extraction/yaml-values';
 import type { IndexUpdatePlan, NarrativeUpdateReport } from './narrative-index-update';
@@ -701,7 +701,7 @@ export class NarrativeIndexSession {
         // same catalog the chapter branch below uses, and it is sound for the
         // same reason: a change to a CARD never reaches this method.
         const seenHere = new Set<string>();
-        for (const event of extractEvents({ path, text: file.text }, id => catalog.ids.has(id)).events) {
+        for (const event of extractEvents({ path, text: file.text }, (kind, id) => isReferenceResolved(catalog, kind, id)).events) {
           // A CROSS-FILE COLLISION IS RECORDED, NOT SILENTLY WON. The incumbent
           // keeps the id — this pass has read ONE file and cannot know where the
           // other one sorts, so it must not overwrite a claim it cannot compare

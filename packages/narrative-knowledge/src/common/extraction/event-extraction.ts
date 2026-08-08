@@ -22,6 +22,15 @@
  * RESOLUTION. Whether `char:ivan` names a real card is a workspace-level fact,
  * so the caller passes a predicate. The extractor records the answer, it does
  * not look it up — the same split the mention extractor uses.
+ *
+ * THE PREDICATE TAKES THE WRITTEN KIND, NOT ONLY THE ID (gh#90). It did take
+ * only the id, and that made events the ONE place in this package that
+ * disagreed with `isReferenceResolved`: `NarrativeEntity.id` is unique only
+ * WITHIN a type, so an event writing `char:ivan` against a manuscript that
+ * defines a LOCATION called `ivan` was reported as resolved — a broken
+ * reference wearing the flag that exists to make broken references visible. The
+ * rule was already written down for prose mentions; events now ask the same
+ * question instead of a weaker one.
  */
 
 import { parse as parseYaml } from 'yaml';
@@ -37,6 +46,15 @@ import {
   EVENT_TIME_KINDS
 } from '../graph';
 import { asString, isRecord, normalizeWorkspacePath } from './yaml-values';
+
+/**
+ * Whether a reference resolves, asked the way `isReferenceResolved` asks it.
+ *
+ * ARGUMENT ORDER MATCHES `isReferenceResolved(catalog, kind, id)` on purpose, so
+ * the ordinary caller is a one-line forward and there is no chance to swap the
+ * two strings — they are both `string`, and a swap would compile.
+ */
+export type IsKnownEventRef = (kind: string | undefined, entityId: string) => boolean;
 
 export interface ExtractedEvents {
   events: NarrativeEvent[];
@@ -74,7 +92,7 @@ function splitRef(raw: string): { kind?: string; entityId: string } {
   return { kind: raw.slice(0, colon), entityId: raw.slice(colon + 1) };
 }
 
-function readRefs(entry: Record<string, unknown>, isKnownEntity: (id: string) => boolean): EventRef[] {
+function readRefs(entry: Record<string, unknown>, isKnownEntity: IsKnownEventRef): EventRef[] {
   const refs: EventRef[] = [];
   for (const { field, role, list } of REF_FIELDS) {
     const value = entry[field];
@@ -90,8 +108,9 @@ function readRefs(entry: Record<string, unknown>, isKnownEntity: (id: string) =>
         raw,
         entityId,
         ...(kind === undefined ? {} : { kind }),
-        // Recorded, not looked up — see the module note.
-        resolved: isKnownEntity(entityId)
+        // Recorded, not looked up — see the module note. The KIND travels with
+        // the id: `char:ivan` and a bare `ivan` are different questions.
+        resolved: isKnownEntity(kind, entityId)
       });
     }
   }
@@ -189,7 +208,7 @@ function readSourceRefs(entry: Record<string, unknown>, fallbackPath: string): E
  */
 export function extractEvents(
   file: { path: string; text: string },
-  isKnownEntity: (id: string) => boolean = () => false
+  isKnownEntity: IsKnownEventRef = () => false
 ): ExtractedEvents {
   const path = normalizeWorkspacePath(file.path);
   const problems: NarrativeEventProblem[] = [];

@@ -3,10 +3,16 @@ import { extractEvents } from './event-extraction';
 import { EVENT_TIME_KINDS } from '../graph';
 
 const PATH = 'knowledge/timeline/main.yaml';
-const KNOWN = (ids: string[]) => (id: string) => ids.includes(id);
+/**
+ * A catalog stand-in. `ids` are the bare ids a manuscript defines; `tagged` are
+ * the `kind:id` spellings, exactly as `EntityCatalog` holds both (gh#90).
+ */
+const KNOWN = (ids: string[], tagged: string[] = []) =>
+  (kind: string | undefined, id: string): boolean =>
+    kind === undefined ? ids.includes(id) : tagged.includes(`${kind}:${id}`);
 
-function read(body: string, known: string[] = []) {
-  return extractEvents({ path: PATH, text: body }, KNOWN(known));
+function read(body: string, known: string[] = [], tagged: string[] = known.flatMap(id => [`char:${id}`])) {
+  return extractEvents({ path: PATH, text: body }, KNOWN(known, tagged));
 }
 
 describe('extractEvents — the four time kinds are all first-class', () => {
@@ -189,5 +195,54 @@ describe('extractEvents — evidence is honest about precision', () => {
   test('the event itself is evidenced by the timeline file it was read from', () => {
     const { events } = read(['events:', '  - id: e1', '    title: X'].join('\n'));
     expect(events[0].evidence.path).toBe(PATH);
+  });
+});
+
+
+describe('extractEvents — the KIND is part of the question (gh#90)', () => {
+  const event = (raw: string) =>
+    ['events:', '  - id: e1', '    title: Событие', '    participants:', `      - ${raw}`].join('\n');
+
+  test('a kinded reference must match THAT kind, and a bare one matches any', () => {
+    // The manuscript defines a LOCATION called `ivan` and no character of that
+    // name. `NarrativeEntity.id` is unique only WITHIN a type, so this is the
+    // ordinary way the two can collide.
+    const defines = { ids: ['ivan'], tagged: ['location:ivan'] };
+
+    // NOT RESOLVED: the author asked for a character.
+    const asCharacter = extractEvents(
+      { path: PATH, text: event('char:ivan') },
+      KNOWN(defines.ids, defines.tagged)
+    );
+    expect(asCharacter.events[0].refs[0].resolved).toBe(false);
+
+    // PAIRED POSITIVE, same manuscript, one word different: the kind that IS
+    // defined resolves. Without it, an extractor reporting everything
+    // unresolved would pass the line above.
+    const asLocation = extractEvents(
+      { path: PATH, text: event('location:ivan') },
+      KNOWN(defines.ids, defines.tagged)
+    );
+    expect(asLocation.events[0].refs[0].resolved).toBe(true);
+
+    // SECOND PAIRED POSITIVE: a BARE id is matched across every type, which is
+    // the rule prose mentions already follow — so the fix must not have
+    // narrowed the kindless form as collateral.
+    const bare = extractEvents({ path: PATH, text: event('ivan') }, KNOWN(defines.ids, defines.tagged));
+    expect(bare.events[0].refs[0].resolved).toBe(true);
+  });
+
+  test('the reference is KEPT either way, with the kind it was written with', () => {
+    const { events } = extractEvents(
+      { path: PATH, text: event('char:ivan') },
+      KNOWN(['ivan'], ['location:ivan'])
+    );
+    const ref = events[0].refs[0];
+    // An unresolved reference is a real statement about the story, so it stays
+    // — the flag is what makes it a diagnostic rather than a disappearance.
+    expect(ref.raw).toBe('char:ivan');
+    expect(ref.kind).toBe('char');
+    expect(ref.entityId).toBe('ivan');
+    expect(ref.resolved).toBe(false);
   });
 });
