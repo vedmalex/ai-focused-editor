@@ -283,6 +283,11 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
     }
     this.documents = new Map();
     this.events = new Map();
+    // gh#48 WP-4: SQLite reaches this state by building the file from scratch,
+    // so nothing there can survive a reset. Here every map has to be named, and
+    // an `eventDuplicates` left behind would refuse the first legitimate
+    // `putEvent` of the fresh rebuild — taking the whole pass down.
+    this.eventDuplicates = new Map();
     this.entities = new Map();
     this.duplicates = new Map();
     this.mentions = [];
@@ -693,6 +698,13 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
         for (const [id, row] of [...this.events.entries()]) {
           if (row.relPath === relPath) {
             this.events.delete(id);
+            // THE COLLISION DIES WITH ITS WINNER HERE TOO, exactly as it does in
+            // `deleteDocument`. Losing this one line left an ORPHAN: the author
+            // edits the WINNING file, drops the contested event, and the record
+            // survives with no event row to name as `keptRelPath` — after which
+            // `getDuplicateEvents` THROWS on every read, while SQLite (where the
+            // foreign key does it) answers `[]`.
+            this.eventDuplicates.delete(id);
           }
         }
         // AND ITS LOSING CLAIMS (gh#48 WP-4). Re-indexing a file re-states what

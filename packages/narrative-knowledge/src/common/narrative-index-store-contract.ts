@@ -1169,6 +1169,65 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
   },
   {
     /**
+     * THE OTHER TWO WAYS A COLLISION CAN END (gh#48 WP-4 re-gate).
+     *
+     * `deleteDocument` is the one the case above covers, and it was the only one
+     * — which broke the rule this epic wrote down one gate earlier: every
+     * SQLite cascade needs a contract case against BOTH adapters. The two that
+     * were missing are the two that happen far more often than a deletion:
+     *
+     *   - `clearDocumentContent`, i.e. AN ORDINARY EDIT. The author opens the
+     *     WINNING file and removes the contested event. In SQLite the foreign
+     *     key takes the record with it; the in-memory adapter left an ORPHAN,
+     *     and `getDuplicateEvents` then THREW on every read — a reader crash
+     *     where the other adapter answers `[]`.
+     *   - `resetForRebuild`. SQLite builds the file from scratch, so nothing can
+     *     survive; the in-memory adapter has to name every map, and the one it
+     *     did not name refused the first legitimate `putEvent` of the fresh
+     *     rebuild, taking the whole pass down with it.
+     */
+    name: 'an event collision ends with an ordinary edit and with a reset, in both adapters',
+    async run(makeStore) {
+      const OTHER = 'knowledge/timeline/side.yaml';
+      const collide = (store: NarrativeIndexStore): void => {
+        store.transaction(writer => {
+          writer.putDocument(timelineDocument());
+          writer.putDocument(timelineDocument(OTHER));
+          writer.putEvent(event('e-contested', { sequence: 1 }), TIMELINE);
+          writer.putDuplicateEvent('e-contested', OTHER);
+        });
+      };
+
+      const edited = await open(makeStore);
+      seedDocuments(edited);
+      collide(edited);
+      deepEqual(edited.getDuplicateEvents().map(row => row.eventId), ['e-contested'], 'the collision exists');
+      // The author edits the WINNING file and the contested event is gone from
+      // it. `clearDocumentContent` is what an increment calls.
+      edited.transaction(writer => {
+        writer.clearDocumentContent(TIMELINE);
+      });
+      deepEqual(edited.getDuplicateEvents(), [], 'the record goes with the event it named');
+      equal(edited.getEvent('e-contested'), undefined, 'and so does the event');
+
+      const reset = await open(makeStore);
+      seedDocuments(reset);
+      collide(reset);
+      reset.resetForRebuild();
+      deepEqual(reset.getDuplicateEvents(), [], 'a reset leaves no collision behind');
+      // PAIRED POSITIVE, and it is the half that actually broke: the store must
+      // still ACCEPT the claim it used to consider excluded. A reset that
+      // forgets the events and remembers the exclusions refuses the first write
+      // of the very rebuild it was reset for.
+      reset.transaction(writer => {
+        writer.putDocument(timelineDocument(OTHER));
+        writer.putEvent(event('e-contested', { sequence: 1 }), OTHER);
+      });
+      equal(reset.getEvent('e-contested')?.relPath, OTHER, 'the formerly-excluded file may now own the id');
+    }
+  },
+  {
+    /**
      * AN EVENT CANNOT OUTLIVE THE FILE IT WAS READ FROM (gh#48 WP-3 re-gate).
      *
      * TWO HALVES OF ONE OWNERSHIP RULE, and neither adapter had a case for

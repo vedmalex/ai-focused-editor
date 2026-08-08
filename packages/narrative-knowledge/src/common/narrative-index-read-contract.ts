@@ -198,6 +198,35 @@ function stateName(state: IndexState): string {
   return state.state;
 }
 
+/**
+ * EVERY envelope-returning read of the session, named (gh#48 WP-4).
+ *
+ * ONE LIST, TWO — NOW THREE — CASES, and the point is that it is a list at all.
+ * The readiness cases below used to spell the methods out inline, twice, which
+ * made them SNAPSHOTS: gh#48 added `listEvents`, `getEvent` and
+ * `getDuplicateEvents` and both cases stayed green while their own names claimed
+ * to cover "every reading method". A method missing from HERE is missing from
+ * all three readiness cases at once, which is at least one visible place instead
+ * of none.
+ *
+ * `getContextForDocument` is in it too: it is an envelope read like the others,
+ * and its state has to agree with theirs or a consumer assembling a passage
+ * would see a different index from the one it queried.
+ */
+function everyEnvelopeRead(session: NarrativeIndexSession): [string, { state: IndexState }][] {
+  return [
+    ['getEntity', session.getEntity('krishna')],
+    ['findEntities', session.findEntities()],
+    ['getMentions', session.getMentions()],
+    ['getRelations', session.getRelations()],
+    ['getDuplicateEntities', session.getDuplicateEntities()],
+    ['listEvents', session.listEvents({ orderBy: 'story' })],
+    ['getEvent', session.getEvent('any-id')],
+    ['getDuplicateEvents', session.getDuplicateEvents()],
+    ['getContextForDocument', contextOf(session)]
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // The cases
 // ---------------------------------------------------------------------------
@@ -563,17 +592,11 @@ export const NARRATIVE_INDEX_READ_CONTRACT: NarrativeIndexReadContractCase[] = [
     async run(makeStore) {
       const { session } = await build(makeStore);
       session.recordStale('watcher-lost');
-      const states = [
-        session.getEntity('krishna'),
-        session.findEntities(),
-        session.getMentions(),
-        session.getRelations(),
-        contextOf(session)
-      ].map(result => result.state);
-      for (const state of states) {
-        equal(state.state, 'stale', 'a reading method under a stale index');
-        check(state.state === 'stale' && state.staleReason === 'watcher-lost', 'the reason travels');
-        check(state.state === 'stale' && state.staleSince > 0, 'and so does the moment');
+      for (const [name, result] of everyEnvelopeRead(session)) {
+        const state = result.state;
+        equal(state.state, 'stale', `${name} under a stale index`);
+        check(state.state === 'stale' && state.staleReason === 'watcher-lost', `${name} carries the reason`);
+        check(state.state === 'stale' && state.staleSince > 0, `${name} carries the moment`);
       }
       // ОВ-6: the tools ANSWER, they do not refuse. Data still comes back.
       check(session.findEntities().data.length > 0, 'a stale index still answers with data');
@@ -585,22 +608,43 @@ export const NARRATIVE_INDEX_READ_CONTRACT: NarrativeIndexReadContractCase[] = [
     async run(makeStore) {
       const { session } = await build(makeStore);
       session.recordFailure({ code: 'storage-corrupted', incidentId: 'incident-1', occurrences: 1 });
-      const results = [
-        session.getEntity('krishna'),
-        session.findEntities(),
-        session.getMentions(),
-        session.getRelations(),
-        contextOf(session)
-      ];
-      for (const result of results) {
-        equal(result.state.state, 'failed', 'a reading method under a failed index');
+      for (const [name, result] of everyEnvelopeRead(session)) {
+        equal(result.state.state, 'failed', `${name} under a failed index`);
         check(
           result.state.state === 'failed' && result.state.reason.code === 'storage-corrupted',
-          'the whole reason travels, not just the word'
+          `${name} carries the whole reason, not just the word`
         );
       }
       session.clearFailure();
       equal(stateName(session.findEntities().state), 'ready', 'and clearing it restores ready');
+    }
+  },
+  {
+    /**
+     * THE READY-AND-EMPTY ANSWER, WHICH IS THE ONE THAT LOOKS LIKE THE OTHERS
+     * (gh#48 WP-4). The three states above are the honest failures; this is the
+     * honest SUCCESS, and it is the fourth answer the plan asks each method for.
+     * A method that returned an empty list under a `not-built` or `rebuilding`
+     * state would be indistinguishable from this at the call site, which is the
+     * entire reason `Envelope` exists.
+     */
+    name: 'every reading method answers ready-and-empty for a manuscript that simply has none',
+    async run(makeStore) {
+      const bare: IndexableFile[] = [
+        file('manifest.yaml', ['content:', '  - path: content/ch-01.md\n    title: Chapter 1'].join('\n')),
+        file(CH(1), 'Prose with no references, no cards, no events.')
+      ];
+      const { session } = await build(makeStore, bare);
+      for (const [name, result] of everyEnvelopeRead(session)) {
+        equal(result.state.state, 'ready', `${name} on an empty manuscript is READY, not not-built`);
+      }
+      // And the emptiness is real, so "ready" above is not being read off a
+      // fixture that quietly has data.
+      deepEqual(session.findEntities().data, [], 'no entities');
+      deepEqual(session.getMentions().data, [], 'no mentions');
+      deepEqual(session.listEvents({ orderBy: 'story' }).data, [], 'no events');
+      deepEqual(session.getDuplicateEvents().data, [], 'no event collisions');
+      equal(session.getEvent('nothing').data, undefined, 'and an unknown id is undefined, not an error');
     }
   },
   {
@@ -681,20 +725,33 @@ export const NARRATIVE_INDEX_READ_CONTRACT: NarrativeIndexReadContractCase[] = [
     /**
      * DERIVED FROM THE RECORD, NOT FROM A COPY OF IT (amended at gh#48 WP-4).
      *
-     * The first edition listed the five unavailable sections as literals. That
+     * The first edition listed the five unavailable sections as literals, which
      * made it a snapshot: a capability that LANDED and correctly stopped being
-     * `unavailable` reddened this case, and the obvious repair — delete the
-     * line — would have left nothing checking that the record and the answer
-     * still agree. Worse, the mirror mistake was invisible: an issue that
-     * removed its key from `UNAVAILABLE_CONTEXT_SECTIONS` and forgot to build
-     * the section would report `empty`, asserting "this passage has none of
-     * those" about a capability nobody wrote, and no literal list would notice.
+     * `unavailable` reddened it, and the obvious repair — delete the line — left
+     * nothing checking that the record and the answer agree at all.
      *
-     * Both directions are asserted here now, against the record itself, so the
-     * case survives gh#49, gh#50 and gh#51 landing without being edited again —
-     * and reddens if any of them lands HALF of the change.
+     * WHAT THIS CASE DOES **NOT** CATCH, MEASURED RATHER THAN ASSUMED. The
+     * session BUILDS `sections` from this same record — an entry means
+     * `unavailable`, no entry means `present`/`empty` by count — so the
+     * agreement asserted here is true by construction for ANY state of the
+     * record. A first edition of this comment claimed the case reddens when an
+     * issue lands HALF its change; the critic's gate mutated exactly that (key
+     * removed, section not built) and every case here stayed green. The claim
+     * was false and is withdrawn.
+     *
+     * WHAT IT DOES CATCH is worth keeping and is smaller than it looked: that
+     * the session answers FROM the record rather than from literals of its own,
+     * so the record cannot be edited without the answer following.
+     *
+     * WHERE THE HALF-LAND IS ACTUALLY CAUGHT, and the rule gh#49/gh#50/gh#51
+     * inherit: in the capability's OWN per-section case. gh#48 has two —
+     * a chapter with events reports `present` with a real count, a manuscript
+     * without them reports `empty` — and either would redden if `timeline` were
+     * removed from the record while the section stayed unbuilt. A section
+     * delivered without such a pair has no guard at all, and this case is not
+     * the one to lean on.
      */
-    name: 'ОВ-2 tooth 3 — availability agrees with the unavailable-sections record, both ways',
+    name: 'ОВ-2 tooth 3 — the session reads availability FROM the record, not from literals',
     async run(makeStore) {
       const { session } = await build(makeStore);
       const context = contextOf(session).data!;

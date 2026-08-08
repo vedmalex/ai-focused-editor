@@ -317,12 +317,15 @@ export interface NarrativeDocumentContext {
    * same question `priorAppearances` answers for entities, and it is answered
    * the same way, by manuscript position.
    *
-   * SPOILER-SAFE IS THE DEFAULT AND IT EXCLUDES THE UNPLACEABLE. An event in a
-   * chapter positioned AFTER this one is a spoiler; an event whose chapter has
-   * no position — unlisted, unindexed, or named by nothing — cannot be PROVEN
-   * to precede this passage, so it is excluded too rather than guessed at. Both
-   * land in {@link NarrativeDocumentContext.omitted} under `unknown-position`,
-   * because a timeline silently shorter than the author's is the failure this
+   * SPOILER-SAFE IS THE DEFAULT AND IT EXCLUDES TWO DIFFERENT THINGS, UNDER TWO
+   * DIFFERENT REASONS. An event in a chapter positioned AFTER this one is a
+   * spoiler, and it is counted under `spoiler-safe`; an event whose chapter has
+   * no position — unlisted, unindexed, or named by nothing — cannot be PROVEN to
+   * precede this passage, and it is counted under `unknown-position`. Both land
+   * in {@link NarrativeDocumentContext.omitted} and NEITHER is folded into the
+   * other, because "four events happen later and you asked not to be told" and
+   * "the index cannot place four events" are different things to say to an
+   * author. A timeline silently shorter than the author's is the failure this
    * whole envelope discipline exists to prevent.
    *
    * STORY ORDER, NOT MANUSCRIPT ORDER. The section answers "what has happened",

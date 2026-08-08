@@ -300,6 +300,67 @@ test('an event naming a chapter that does not exist is stored, and says which ki
   assert.equal(ghost.event.chapterPath, 'content/ch-99.md');
 });
 
+test('a second file claiming an indexed event id is recorded, not silently overwritten', async () => {
+  const { service, root } = manuscriptService('timeline-collision-increment');
+  const SIDE = 'knowledge/timeline/zz-side.yaml';
+  await service.rebuild(root);
+  assert.equal(
+    must((await service.getEvent(root, 'arrival')).data, 'the arrival event').event.title,
+    'Иван приезжает',
+    'the id belongs to the main timeline to begin with'
+  );
+
+  // The author writes a SECOND timeline file and reuses an id already taken.
+  // This is an increment: creating a timeline file does not escalate.
+  writeFile(root, SIDE, [
+    'events:',
+    '  - id: arrival',
+    '    title: Тот же id, другой файл',
+    '    sequence: 99',
+    '  - id: side-only',
+    '    title: Собственное событие',
+    '    sequence: 100'
+  ].join('\n'));
+  const report = await service.updateDocument(join(root, SIDE));
+  assert.equal(report.data.mode, 'incremental', 'a new timeline file is still an increment');
+
+  // THE INCUMBENT KEEPS THE ID. Having read ONE file, this pass cannot know
+  // where the other sorts, so it must not overwrite a claim it cannot compare
+  // against — and the assertion is on the TITLE, because a check on the path
+  // alone would pass against an implementation that overwrote the payload.
+  const winner = must((await service.getEvent(root, 'arrival')).data, 'the contested event');
+  assert.equal(winner.relPath, TIMELINE);
+  assert.equal(winner.event.title, 'Иван приезжает', 'the incumbent’s payload survived');
+
+  // AND THE LOSING CLAIM IS REPORTED. Without this the collision is destroyed
+  // by the write that resolved it, and gh#50 has nothing to make a verdict from.
+  const duplicates = await service.getDuplicateEvents(root);
+  assert.deepEqual(duplicates.data.map((row: any) => row.eventId), ['arrival']);
+  assert.equal(duplicates.data[0].keptRelPath, TIMELINE);
+  assert.deepEqual(duplicates.data[0].excludedRelPaths, [SIDE]);
+
+  // PAIRED POSITIVE: the losing file is not disqualified wholesale — its own,
+  // uncontested event is indexed normally. A pass that simply dropped every
+  // event of a colliding file would satisfy everything above.
+  assert.equal(must((await service.getEvent(root, 'side-only')).data, 'the side event').relPath, SIDE);
+
+  // AND THE COLLISION ENDS WHEN THE AUTHOR FIXES IT. The loser renames its id;
+  // the ordinary increment must clear the record, or the diagnostic outlives
+  // the defect it describes.
+  writeFile(root, SIDE, [
+    'events:',
+    '  - id: arrival-side',
+    '    title: Переименовано',
+    '    sequence: 99',
+    '  - id: side-only',
+    '    title: Собственное событие',
+    '    sequence: 100'
+  ].join('\n'));
+  await service.updateDocument(join(root, SIDE));
+  assert.deepEqual((await service.getDuplicateEvents(root)).data, [], 'the fixed collision is gone');
+  assert.equal(must((await service.getEvent(root, 'arrival-side')).data, 'the renamed event').relPath, SIDE);
+});
+
 test('writing the chapter afterwards places the event — through the service, incrementally', async () => {
   const { service, root } = manuscriptService('timeline-chapter-arrives-later');
   // The ordinary way an author works: the manifest already promises a third
