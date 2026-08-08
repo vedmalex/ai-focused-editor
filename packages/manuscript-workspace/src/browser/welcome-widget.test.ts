@@ -120,7 +120,16 @@ for (const name of [
 // `@theia/workspace` reads the frontend application config at module load.
 const { FrontendApplicationConfigProvider } =
   await import('@theia/core/lib/browser/frontend-application-config-provider');
-FrontendApplicationConfigProvider.set({ applicationName: 'test' } as never);
+// IDEMPOTENT, because `test:widget` runs its files in ONE process and bun does
+// not promise the order they load in. An unguarded `set` throws "already set"
+// for whichever file happens to load second — which made adding a file to this
+// band break an existing one (gh#48 WP-5 re-gate). The config only has to
+// EXIST before the Theia barrels load; who set it does not matter.
+try {
+  FrontendApplicationConfigProvider.set({ applicationName: 'test' } as never);
+} catch {
+  // Another file in this band configured it first.
+}
 
 const { nls } = await import('@theia/core/lib/common/nls');
 const { DocsContentProvider, DocsLang, DocsManifest, DocsPage } =

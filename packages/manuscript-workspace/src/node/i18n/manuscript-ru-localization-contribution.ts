@@ -11,6 +11,7 @@ import {
 import manuscriptTreeRu from './ru/manuscript-tree.json';
 import menuRu from './ru/menu.json';
 import createRu from './ru/create.json';
+import timelineRu from './ru/timeline.json';
 import buildRu from './ru/build.json';
 import bookConfigRu from './ru/book-config.json';
 import sourcesRu from './ru/sources.json';
@@ -62,7 +63,8 @@ const RU: LanguageInfo = {
 // carries its full `ai-focused-editor/<area>/...` key path (see i18n/README.md).
 const AREA_BUNDLES: unknown[] = [
   manuscriptTreeRu, menuRu,
-  createRu, buildRu, bookConfigRu, sourcesRu, entitiesRu, entityTypesRu,
+  createRu,
+  timelineRu, buildRu, bookConfigRu, sourcesRu, entitiesRu, entityTypesRu,
   aiConfigRu, aiModesRu, editorRu, doctorRu, welcomeRu,
   workspaceRu, knowledgeRu, gitRu, chatCapabilitiesRu, chatContextRu, officeRu,
   excalidrawRu, imageViewerRu, mediaViewerRu, proofreadingRu, transcriptCheckRu, transcriptionSettingsRu,

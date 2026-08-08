@@ -48,14 +48,26 @@ import {
 } from '../common/timeline-event-authoring';
 import { MessageService } from '@theia/core/lib/common/message-service';
 
+/**
+ * SHORT LABEL, CATEGORY AS A KEY — the shape every neighbouring command uses.
+ *
+ * The first edition baked "AI Focused Editor:" into the label AND set a
+ * category, so the palette rendered "Timeline: AI Focused Editor: Add…" — the
+ * only command of some forty to do that. The category is what the palette
+ * prefixes with; the label is what follows it.
+ */
 export namespace TimelineCommands {
+  const CATEGORY = 'AI Focused Editor';
+  const CATEGORY_KEY = 'ai-focused-editor/timeline/category';
+
   export const ADD_EVENT_FROM_SELECTION: Command = Command.toLocalizedCommand(
     {
       id: 'ai-focused-editor.timeline.addEventFromSelection',
-      label: 'AI Focused Editor: Add Timeline Event from Selection',
-      category: 'Timeline'
+      label: 'Add Timeline Event from Selection',
+      category: CATEGORY
     },
-    'ai-focused-editor/timeline/add-event-from-selection'
+    'ai-focused-editor/timeline/add-event-from-selection',
+    CATEGORY_KEY
   );
 }
 
@@ -137,6 +149,16 @@ export class TimelineAuthoringContribution implements CommandContribution, MenuC
 
     const timelineUri = root.resolve(DEFAULT_TIMELINE_FILE);
     const existing = await this.readIfExists(timelineUri);
+    if (existing === 'unreadable') {
+      await this.messages.error(
+        nls.localize(
+          'ai-focused-editor/timeline/unreadable',
+          'Could not read {0}, so nothing was written — the event would have replaced a file this command cannot see.',
+          DEFAULT_TIMELINE_FILE
+        )
+      );
+      return;
+    }
     const event: NewTimelineEvent = {
       title: title.trim(),
       chapterPath,
@@ -152,19 +174,56 @@ export class TimelineAuthoringContribution implements CommandContribution, MenuC
     const result = appendEventToTimeline(existing, event);
     if (!result.ok) {
       await this.messages.warn(
+        result.reason === 'not-a-timeline-file'
+          ? nls.localize(
+              'ai-focused-editor/timeline/not-a-timeline-file',
+              '{0} is not a timeline file (it has no `events:` list), so the event was not written. Fix or rename it first.',
+              DEFAULT_TIMELINE_FILE
+            )
+          : nls.localize(
+              'ai-focused-editor/timeline/cannot-append',
+              'The event was not written: adding it to the end of {0} would not have produced a readable timeline. Check the file’s indentation and that the `events:` list is the last thing in it.',
+              DEFAULT_TIMELINE_FILE
+            )
+      );
+      return;
+    }
+
+    try {
+      await this.fileService.write(timelineUri, result.text);
+    } catch (error) {
+      // SAID OUT LOUD. A write that fails silently is the worst of the
+      // outcomes here: the author believes the event was recorded and it was
+      // not, and the next thing they do is close the file.
+      await this.messages.error(
         nls.localize(
-          'ai-focused-editor/timeline/not-a-timeline-file',
-          '{0} is not a timeline file (it has no `events:` list), so the event was not written. Fix or rename it first.',
-          DEFAULT_TIMELINE_FILE
+          'ai-focused-editor/timeline/write-failed',
+          'Could not write {0}: {1}',
+          DEFAULT_TIMELINE_FILE,
+          error instanceof Error ? error.message : String(error)
         )
       );
       return;
     }
 
-    await this.fileService.write(timelineUri, result.text);
     // Targeted re-index, so the event is visible now rather than after the
-    // fallback sweep — see the class note.
-    await this.knowledge.updateDocument(timelineUri.toString());
+    // fallback sweep — see the class note. BEST EFFORT AND SEPARATELY REPORTED:
+    // the file is already written, so a failure here is "you will see it in a
+    // few minutes", not "it was lost". Reporting it as a failure of the whole
+    // command would make the author add the event a second time.
+    try {
+      await this.knowledge.updateDocument(timelineUri.toString());
+    } catch {
+      await this.messages.info(
+        nls.localize(
+          'ai-focused-editor/timeline/added-index-lagging',
+          'Added “{0}” to {1}. The index did not pick it up yet — it will on the next sweep.',
+          result.eventId,
+          DEFAULT_TIMELINE_FILE
+        )
+      );
+      return;
+    }
     await this.messages.info(
       nls.localize(
         'ai-focused-editor/timeline/added',
@@ -181,19 +240,29 @@ export class TimelineAuthoringContribution implements CommandContribution, MenuC
     return relative === undefined ? undefined : relative.toString();
   }
 
-  protected async readIfExists(uri: URI): Promise<string | undefined> {
+  /**
+   * The file's text, or `undefined` when it DOES NOT EXIST.
+   *
+   * ONLY ABSENCE MAY READ AS `undefined`, and the distinction is not pedantic:
+   * `appendEventToTimeline` creates a fresh file for `undefined`, so treating
+   * every read failure as absence means a file that exists and cannot be read —
+   * a permission the author changed, a lock, a filesystem hiccup — is REPLACED
+   * by a four-line new one. Read and write are independent permissions, and
+   * nothing reads a file before truncating it, so no later error would catch it.
+   * The first edition of this method claimed such a case would "surface as a
+   * write error"; it would not, and the claim is withdrawn.
+   */
+  protected async readIfExists(uri: URI): Promise<string | undefined | 'unreadable'> {
+    if (!(await this.fileService.exists(uri))) {
+      return undefined;
+    }
     try {
       return (await this.fileService.read(uri)).value;
     } catch {
-      // Absent, or unreadable. Either way there is nothing to append TO, and
-      // `appendEventToTimeline` creates a fresh file — which is the right answer
-      // for absent and the safe answer for unreadable, because a write that
-      // cannot read what it is replacing must not silently replace it. See the
-      // note on the refusal path: a file that EXISTS and is unreadable will
-      // surface as a write error rather than as a silent clobber.
-      return undefined;
+      return 'unreadable';
     }
   }
+
 }
 
 /**

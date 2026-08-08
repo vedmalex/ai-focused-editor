@@ -249,3 +249,133 @@ describe('the default file', () => {
     expect(DEFAULT_TIMELINE_FILE.split('/')).toHaveLength(3);
   });
 });
+
+describe('appendEventToTimeline — shapes where appending text does NOT work', () => {
+  /**
+   * EVERY ONE OF THESE WAS ACCEPTED AND REPORTED AS SUCCESS by the first
+   * edition, which checked only that the file WAS a timeline — necessary and
+   * not sufficient for "text appended at the end joins the list". The author
+   * saw “Added” while their file was left unparsable, or their event silently
+   * vanished into a block scalar.
+   *
+   * The byte-prefix tooth above was green on all seven, and correctly so: the
+   * bytes above the insertion point DID survive. What broke was everything
+   * after. That is why the check is now on the RESULT.
+   */
+  const shapes: [string, string][] = [
+    ['a trailing block scalar swallows the appended lines',
+      'events:\n  - id: a\n    title: A\nnotes: |\n  мои заметки\n  вторая строка\n'],
+    ['list items at column 0', 'events:\n- id: a\n  title: A\n'],
+    ['list items indented four spaces', 'events:\n    - id: a\n      title: A\n'],
+    ['a key AFTER the list orphans the addition', 'events:\n  - id: a\n    title: A\nmeta:\n  author: я\n'],
+    ['an end-of-document marker', 'events:\n  - id: a\n    title: A\n...\n'],
+    ['an anchor on the empty-list marker', 'events: &e []\n']
+  ];
+
+  for (const [name, text] of shapes) {
+    test(`refuses, and writes nothing: ${name}`, () => {
+      const result = appendEventToTimeline(text, EVENT);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        // A DIFFERENT reason from `not-a-timeline-file`: this IS the author's
+        // timeline, and the honest thing to say is that it cannot be appended
+        // to as it stands — not that it is somebody else's file.
+        expect(result.reason).toBe('cannot-append-safely');
+      }
+    });
+  }
+
+  test('PAIRED POSITIVE: the ordinary shapes still append', () => {
+    // Without this the whole block above is satisfied by refusing everything,
+    // which is the failure this repository keeps paying for.
+    for (const text of [
+      'events:\n  - id: a\n    title: A\n',
+      'events:\n',
+      'events: []\n',
+      'events: [] # пока пусто\n'
+    ]) {
+      const result = appendEventToTimeline(text, EVENT);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(eventsOf(result.text).some(item => item.id === result.eventId)).toBe(true);
+      }
+    }
+  });
+
+  test('a trailing comment on `events: []` is carried across, not dropped', () => {
+    const result = appendEventToTimeline('events: [] # пока пусто\n', EVENT);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.text).toContain('# пока пусто');
+  });
+
+  test('a NESTED `events: []` is not touched — the rewrite is anchored', () => {
+    // Unanchored, `^\s*events:` matched the nested marker, moved the author's
+    // data and filed the event under `meta.events`.
+    const before = 'meta:\n  events: []\nevents:\n  - id: a\n    title: A\n';
+    const result = appendEventToTimeline(before, EVENT);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.text).toContain('  events: []');
+    const parsed = parseYaml(result.text) as { meta: { events: unknown[] }; events: { id: string }[] };
+    expect(parsed.meta.events).toEqual([]);
+    expect(parsed.events.map(item => item.id)).toEqual(['a', result.eventId]);
+  });
+
+  test('shapes that LOOK dangerous and are in fact fine', () => {
+    // Pinned as positives rather than left to chance: a block scalar in the
+    // LAST entry and a merge key are ordinary things to find in an author's
+    // timeline, and a postcondition tightened carelessly would start refusing
+    // them. Refusing a file that could have been appended to is a milder
+    // failure than corrupting one — but it is still a failure.
+    const shapes = [
+      'events:\n  - id: a\n    title: A\n    note: |\n      многострочная\n      заметка\n',
+      'defaults: &d\n  title: D\nevents:\n  - <<: *d\n    id: a\n'
+    ];
+    for (const text of shapes) {
+      const result = appendEventToTimeline(text, EVENT);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(eventsOf(result.text).map(item => item.id)).toContain('a');
+        expect(eventsOf(result.text).map(item => item.id)).toContain(result.eventId);
+      }
+    }
+  });
+
+  test('nothing the author already had may go missing', () => {
+    // The half that catches the swallowed-into-a-scalar shape, where the parse
+    // SUCCEEDS and the list simply gains nothing.
+    const result = appendEventToTimeline('events:\n  - id: keep-me\n    title: Keep\n', EVENT);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(eventsOf(result.text).map(item => item.id)).toContain('keep-me');
+  });
+});
+
+describe('quoteIfNeeded — the YAML values that are not strings', () => {
+  test('`.inf` and `.NaN` are quoted, because the core schema reads them as numbers', () => {
+    for (const title of ['.inf', '-.inf', '+.INF', '.NaN', '.nan']) {
+      const result = appendEventToTimeline(undefined, { ...EVENT, title });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(eventsOf(result.text)[0].title).toBe(title);
+      }
+    }
+  });
+
+  test('and a title that merely CONTAINS them stays bare', () => {
+    // The paired negative of the rule above: quoting everything would pass the
+    // case above and make the file uglier than the author would have written.
+    const result = appendEventToTimeline(undefined, { ...EVENT, title: 'Бесконечность .inf где-то внутри' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.text).toContain('title: Бесконечность .inf где-то внутри');
+    }
+  });
+});

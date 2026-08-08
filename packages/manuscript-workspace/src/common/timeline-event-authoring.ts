@@ -62,8 +62,21 @@ export type AppendTimelineResult =
     }
   | {
       ok: false;
-      /** Why, in the author's terms. The caller shows it and writes nothing. */
-      reason: 'not-a-timeline-file';
+      /**
+       * Why, in the author's terms. The caller shows it and writes nothing.
+       *
+       * `not-a-timeline-file` — the file is not a mapping with an `events:`
+       * list, so it is somebody else's YAML and must not be touched.
+       *
+       * `cannot-append-safely` — it IS a timeline file, and appending text to
+       * it would not produce a timeline file. That is a real and ordinary
+       * shape: a trailing block scalar swallows the appended lines, list items
+       * written at column 0 or at four spaces make the addition a parse error,
+       * a key AFTER the list leaves nothing for the item to belong to. See
+       * {@link appendEventToTimeline}'s postcondition for why this is DETECTED
+       * rather than enumerated.
+       */
+      reason: 'not-a-timeline-file' | 'cannot-append-safely';
     };
 
 /**
@@ -170,6 +183,9 @@ function quoteIfNeeded(value: string): string {
     value.endsWith(':') ||
     value.includes(' #') ||
     /^(true|false|null|~|yes|no|on|off)$/i.test(value) ||
+    // `.inf`, `-.NaN` and friends are NUMBERS to YAML's core schema, and the
+    // numeric test below wants a digit after the dot, so they slipped through.
+    /^[+-]?\.(inf|nan)$/i.test(value) ||
     /^[+-]?(\d|\.\d)/.test(value);
   return needsQuote ? `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : value;
 }
@@ -224,16 +240,81 @@ export function appendEventToTimeline(
     return { ok: false, reason: 'not-a-timeline-file' };
   }
 
-  // An empty list written in FLOW style (`events: []`) or as an explicit null
-  // (`events:` with nothing under it) — the first has to become a block marker
-  // before an item can follow it, the second already is one.
-  const emptyFlow = /^(\s*events:)[ \t]*\[[ \t]*\][ \t]*$/m;
-  if (emptyFlow.test(existing)) {
-    const rewritten = existing.replace(emptyFlow, '$1');
-    return { ok: true, text: `${withTrailingNewline(rewritten)}${block}\n`, eventId };
-  }
+  // An empty list written in FLOW style (`events: []`) — it has to become a
+  // block marker before an item can follow it.
+  //
+  // ANCHORED TO COLUMN 0, which is not pedantry: `^\s*events:` also matches a
+  // NESTED `events: []` under some other key, and rewriting that one moved the
+  // author's data and filed the event under `meta.events`. A trailing comment
+  // is carried across rather than dropped — it is the author's note about the
+  // list, and the list is still there.
+  const emptyFlow = /^events:[ \t]*\[[ \t]*\][ \t]*(#.*)?$/m;
+  const candidate = emptyFlow.test(existing)
+    ? `${withTrailingNewline(existing.replace(emptyFlow, (_match, comment: string | undefined) =>
+        comment === undefined ? 'events:' : `events: ${comment}`))}${block}\n`
+    : `${withTrailingNewline(existing)}${block}\n`;
 
-  return { ok: true, text: `${withTrailingNewline(existing)}${block}\n`, eventId };
+  return appendedSafely(candidate, eventId, eventIdsIn(existing))
+    ? { ok: true, text: candidate, eventId }
+    : { ok: false, reason: 'cannot-append-safely' };
+}
+
+/**
+ * Did the append actually produce a timeline file with the event in it?
+ *
+ * THE POSTCONDITION EXISTS BECAUSE THE PRECONDITION CANNOT BE ENUMERATED. "The
+ * file is a mapping with an `events:` list" is necessary and NOT sufficient for
+ * "text appended at the end joins that list": a trailing block scalar swallows
+ * the new lines, items written at column 0 or four spaces make the addition a
+ * syntax error, a key after the list orphans it, `...` ends the document, an
+ * anchor on the marker changes what the line is. Seven such shapes were found
+ * in one sitting, and each was ACCEPTED and reported as success by the edition
+ * that only checked the precondition — the file was corrupted or the event
+ * silently dropped, and the author was told "Added".
+ *
+ * Checking the RESULT closes the whole class, including the shapes nobody has
+ * thought of yet, and it fails in the only acceptable direction: a refusal the
+ * author can read, with their file untouched.
+ *
+ * NOT A SECOND GUARD HIDING A FIRST. It verifies the same operation's output;
+ * when it says no, nothing is written. The failure mode of a hiding guard —
+ * a broken rule looking green because something upstream masked it — cannot
+ * arise, because this one has no upstream.
+ */
+function appendedSafely(text: string, eventId: string, previousIds: ReadonlySet<string>): boolean {
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(text);
+  } catch {
+    return false;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return false;
+  }
+  const events = (parsed as { events?: unknown }).events;
+  if (!Array.isArray(events)) {
+    return false;
+  }
+  const ids = new Set<string>();
+  for (const entry of events) {
+    if (entry !== null && typeof entry === 'object' && typeof (entry as { id?: unknown }).id === 'string') {
+      ids.add((entry as { id: string }).id);
+    }
+  }
+  // THE FIRST HALF IS WHAT CATCHES EVERY KNOWN BAD SHAPE, including the
+  // swallowed-into-a-block-scalar one: the parse succeeds and the list simply
+  // does not contain the new id.
+  //
+  // THE SECOND HALF IS INSURANCE, AND IT IS NOT CURRENTLY REACHABLE — said
+  // plainly rather than dressed up. No input has been found where the new event
+  // arrives and one the author already had disappears; the shapes that could do
+  // it (an alias list, a duplicated `events:` key) fail the parse or the first
+  // half instead. It is kept because "nothing of the author's went missing" is
+  // the property this function actually owes, and a postcondition that only
+  // checks the ADDITION would let a future edit trade an old entry for a new one
+  // without a test noticing. If it ever fires, the case that made it fire
+  // belongs in the suite beside the six shapes above.
+  return ids.has(eventId) && [...previousIds].every(id => ids.has(id));
 }
 
 /** `text` with exactly one trailing newline, so the appended block starts on a
