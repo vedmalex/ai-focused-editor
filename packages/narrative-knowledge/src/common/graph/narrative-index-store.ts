@@ -242,6 +242,45 @@ export interface DuplicateEntityRecord {
   excludedRelPaths: string[];
 }
 
+/**
+ * Two timeline files claiming ONE event id (gh#48 WP-4).
+ *
+ * THE SHAPE IS `DuplicateEntityRecord`'S, DELIBERATELY, because the situation
+ * is the same one: an id is the identity, exactly one definition can be in
+ * effect, and the author is the only person who can decide which. Reusing the
+ * shape means a consumer that renders one collision renders both.
+ *
+ * WHY THE INDEX HAS TO STORE THIS AT ALL. `putEvent` REPLACES on id, so a
+ * collision leaves one row and no trace — the fact that a second file claimed
+ * the id is destroyed by the write that resolves it. Every other event
+ * diagnostic gh#48 owes gh#50 (an unresolved reference, a `kind: exact` that is
+ * not a date, a chapter nobody wrote) is recoverable by reading the event rows
+ * back. This one is not, and architecture §3.4 makes gh#48 the supplier of the
+ * DATA that gh#50's rules turn into verdicts.
+ *
+ * IT IS ONLY THE CROSS-FILE CASE. Two entries sharing an id inside ONE file are
+ * already a `NarrativeEventProblem` from the extractor, which keeps both and
+ * says so; they cannot be represented here anyway, since the excluded document
+ * would be the winner. Two different defects, two different mechanisms, neither
+ * silent.
+ */
+export interface DuplicateEventRecord {
+  /** The contested event id. */
+  eventId: string;
+  /**
+   * Workspace-relative path of the timeline file whose event the index HOLDS.
+   *
+   * Never absent, for the reason {@link DuplicateEntityRecord.keptRelPath} is:
+   * a duplicate row cannot exist without the event row it lost to.
+   */
+  keptRelPath: string;
+  /**
+   * The timeline files EXCLUDED by the collision. Never empty, never containing
+   * {@link keptRelPath}, sorted by code point so both adapters agree.
+   */
+  excludedRelPaths: string[];
+}
+
 /** Filter for {@link NarrativeIndexStore.findEntities}. */
 export interface EntityQuery {
   type?: string;
@@ -656,6 +695,27 @@ export interface NarrativeIndexWriter {
    * effect is decided the same way: last writer within a rebuild, reported.
    */
   putEvent(event: NarrativeEvent, relPath: string): void;
+  /**
+   * Record that `excludedRelPath` also defines `eventId`, and LOST (gh#48 WP-4).
+   *
+   * THE WINNER IS NOT A PARAMETER, exactly as it is not for
+   * {@link putDuplicateEntity}: it is the timeline file that owns the event row,
+   * stated once by the {@link putEvent} that must already have happened, rather
+   * than twice with a chance to disagree. Two refusals make that an enforced
+   * ordering:
+   *
+   *   - REJECTED when no event row holds `eventId` — a collision with no winner
+   *     is unrepresentable, which is what makes `keptRelPath` a required field
+   *     rather than an optional one nobody checks;
+   *   - REJECTED when `excludedRelPath` IS the file that owns the event, so one
+   *     file cannot be both the winner and a loser of one collision.
+   *
+   * The same ownership makes the collision die with its winner: deleting the
+   * timeline file that owns the event cascades the event away and these rows
+   * with it. A losing file that is now the only claimant is not a duplicate —
+   * it is simply the definition, which is what the next pass records.
+   */
+  putDuplicateEvent(eventId: string, excludedRelPath: string): void;
 
   /** Drop every entity, mention and relation, keeping the schema. */
   clearAll(): void;
@@ -688,6 +748,13 @@ export interface NarrativeIndexReader {
   listEvents(query: EventQuery): IndexedEvent[];
   /** One event by id, or `undefined`. No ordering question arises. */
   getEvent(eventId: string): IndexedEvent | undefined;
+  /**
+   * Event ids claimed by more than one timeline file (gh#48 WP-4).
+   *
+   * Ordered by `eventId`, code point, so both adapters answer alike; the
+   * excluded paths inside each record are ordered the same way.
+   */
+  getDuplicateEvents(): DuplicateEventRecord[];
   getRelations(query?: RelationQuery): NarrativeRelation[];
   /**
    * Relations reachable from an entity within `depth` hops.

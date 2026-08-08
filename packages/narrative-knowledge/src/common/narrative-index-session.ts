@@ -49,6 +49,7 @@ import {
   isRelationBroken,
   wholeFileEvidence,
   type DuplicateEntityRecord,
+  type DuplicateEventRecord,
   type EntityQuery,
   type EventQuery,
   type EvidenceRange,
@@ -437,6 +438,12 @@ export class NarrativeIndexSession {
     return envelope(this.state(), this.store.getEvent(eventId));
   }
 
+  /** Event ids claimed by more than one timeline file (gh#48 WP-4). The DATA
+   *  gh#50's chronology rules turn into verdicts — architecture §3.4. */
+  getDuplicateEvents(): Envelope<DuplicateEventRecord[]> {
+    return envelope(this.state(), this.store.getDuplicateEvents());
+  }
+
   /**
    * Per-document mention counts (gh#47).
    *
@@ -693,7 +700,26 @@ export class NarrativeIndexSession {
         // Resolution is read from the entities the index ALREADY holds, the
         // same catalog the chapter branch below uses, and it is sound for the
         // same reason: a change to a CARD never reaches this method.
+        const seenHere = new Set<string>();
         for (const event of extractEvents({ path, text: file.text }, id => catalog.ids.has(id)).events) {
+          // A CROSS-FILE COLLISION IS RECORDED, NOT SILENTLY WON. The incumbent
+          // keeps the id — this pass has read ONE file and cannot know where the
+          // other one sorts, so it must not overwrite a claim it cannot compare
+          // against. The next full rebuild re-decides by file order, which is
+          // the authority; both paths agree that a collision EXISTS, and that is
+          // the fact gh#50's rule needs. Overwriting instead would destroy it.
+          const incumbent = this.store.getEvent(event.id);
+          if (incumbent !== undefined && incumbent.relPath !== path) {
+            writer.putDuplicateEvent(event.id, path);
+            continue;
+          }
+          // The same-file case: `extractEvents` has already reported it as a
+          // problem and kept both entries; the id is taken, and the storage
+          // shape cannot express a file excluded from its own id.
+          if (seenHere.has(event.id)) {
+            continue;
+          }
+          seenHere.add(event.id);
           writer.putEvent(event, path);
           eventsWritten++;
         }
@@ -813,6 +839,12 @@ export class NarrativeIndexSession {
     // the event and the store enforces that the row exists.
     for (const { event, relPath } of extracted.events) {
       writer.putEvent(event, relPath);
+    }
+    // AFTER the events, because a duplicate names the file that LOST to one —
+    // the store refuses a collision with no winner, which is what makes
+    // `DuplicateEventRecord.keptRelPath` a required field.
+    for (const duplicate of extracted.eventDuplicates) {
+      writer.putDuplicateEvent(duplicate.eventId, duplicate.sourcePath);
     }
 
     // Source 6, last, because it is a fold OVER the mentions just written.

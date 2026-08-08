@@ -65,8 +65,11 @@
  * rest of the epic follows from that: amend a version in place only while
  * NOBODY, including a branch checkout, can be holding it — in practice, never
  * after the first commit that ships it.
+ *
+ * v7 (gh#48 WP-4) added `event_duplicate` and its two triggers, by that rule:
+ * v6 had shipped.
  */
-export const NARRATIVE_INDEX_SCHEMA_VERSION = 6;
+export const NARRATIVE_INDEX_SCHEMA_VERSION = 7;
 
 /**
  * Pragmas applied to every connection, in this order.
@@ -263,6 +266,38 @@ CREATE TABLE event_ref (
   -- diagnostic point at it instead of it vanishing.
   resolved  INTEGER NOT NULL
 ) STRICT;
+-- Two timeline files claiming one event id. MIRRORS \`entity_duplicate\` down to
+-- the shape of its trigger, because it is the same situation: \`putEvent\`
+-- replaces on id, so without this table the losing file leaves no trace and the
+-- collision is destroyed by the very write that resolves it (gh#48 WP-4).
+CREATE TABLE event_duplicate (
+  event_id TEXT    NOT NULL REFERENCES event(event_id) ON DELETE CASCADE,
+  doc_id   INTEGER NOT NULL REFERENCES document(doc_id) ON DELETE CASCADE,
+  PRIMARY KEY (event_id, doc_id)
+) STRICT;
+
+-- One file cannot be both the winner and a loser of the same collision. A
+-- two-table invariant, so a TRIGGER rather than a CHECK — and still in the DDL,
+-- because an adapter can be bypassed by a migration or by a second
+-- implementation of the port, and the shape it protects (\`keptRelPath\` never
+-- appearing in \`excludedRelPaths\`) is a promise the READER is entitled to.
+CREATE TRIGGER event_duplicate_excludes_the_owning_file
+BEFORE INSERT ON event_duplicate
+WHEN EXISTS (SELECT 1 FROM event WHERE event.event_id = NEW.event_id AND event.doc_id = NEW.doc_id)
+BEGIN
+  SELECT RAISE(ABORT, 'event_duplicate names the timeline file that owns the event');
+END;
+
+-- The other direction: an event upsert can move the winner ONTO a file already
+-- recorded as excluded. Without this the same forbidden shape arrives by the
+-- back door, which is exactly how the entity pair earned its second trigger.
+CREATE TRIGGER event_update_is_not_an_excluded_file
+BEFORE UPDATE OF doc_id ON event
+WHEN EXISTS (SELECT 1 FROM event_duplicate WHERE event_duplicate.event_id = NEW.event_id AND event_duplicate.doc_id = NEW.doc_id)
+BEGIN
+  SELECT RAISE(ABORT, 'event would be owned by a file already recorded as an excluded claimant');
+END;
+
 CREATE INDEX event_ref_event  ON event_ref(event_id);
 CREATE INDEX event_ref_entity ON event_ref(entity_id);
 CREATE INDEX event_ref_broken ON event_ref(event_id) WHERE resolved = 0;

@@ -31,6 +31,7 @@
 import type {
   DocumentMoveFreshness,
   DuplicateEntityRecord,
+  DuplicateEventRecord,
   EntityQuery,
   IndexedDocument,
   IndexedDocumentInput,
@@ -217,6 +218,8 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
   private documents = new Map<string, IndexedDocument>();
   /** Keyed by event id — the identity `putEvent` replaces on. */
   private events = new Map<string, { event: NarrativeEvent; relPath: string }>();
+  /** Event id -> the timeline files EXCLUDED by the collision (gh#48 WP-4). */
+  private eventDuplicates = new Map<string, Set<string>>();
   private entities = new Map<string, NarrativeEntity>();
   private duplicates = new Map<string, Set<string>>();
   private mentions: NarrativeMention[] = [];
@@ -425,6 +428,36 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
         ...(exclusion === undefined ? {} : { orderExclusion: exclusion })
       };
     });
+  }
+
+  /**
+   * Collisions over event ids (gh#48 WP-4).
+   *
+   * THROWS RATHER THAN FILTERING when a record has no winner, for the reason
+   * {@link getDuplicateEntities} does: quietly returning a collision minus its
+   * winner would hide the very cascade bug the field exists to expose, and it
+   * would make the cascade untestable — a test that deletes the winning file
+   * could not tell "cascaded" from "still there but filtered out of the answer".
+   */
+  getDuplicateEvents(): DuplicateEventRecord[] {
+    const records: DuplicateEventRecord[] = [];
+    for (const [eventId, excluded] of this.eventDuplicates) {
+      const kept = this.events.get(eventId);
+      if (kept === undefined) {
+        throw new NarrativeIndexStoreError(
+          'constraint-violation',
+          `event '${eventId}' has duplicate claimants recorded (${[...excluded].join(', ')}) but no event row ` +
+            'holds it; the event/duplicate cascade is broken ' +
+            '(FOREIGN KEY event_duplicate.event_id REFERENCES event(event_id) ON DELETE CASCADE)'
+        );
+      }
+      records.push({
+        eventId,
+        keptRelPath: kept.relPath,
+        excludedRelPaths: [...excluded].sort(compareByCodePoint)
+      });
+    }
+    return records.sort((a, b) => compareByCodePoint(a.eventId, b.eventId));
   }
 
   getEvent(eventId: string): IndexedEvent | undefined {
@@ -662,6 +695,16 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
             this.events.delete(id);
           }
         }
+        // AND ITS LOSING CLAIMS (gh#48 WP-4). Re-indexing a file re-states what
+        // it claims; a collision it no longer takes part in must not outlive the
+        // pass that stopped claiming it, or the author fixes the duplicate and
+        // the diagnostic stays on screen forever.
+        for (const [id, paths] of [...this.eventDuplicates]) {
+          paths.delete(relPath);
+          if (paths.size === 0) {
+            this.eventDuplicates.delete(id);
+          }
+        }
       },
       clearDerivedRelations: (): void => {
         this.relations = this.relations.filter(row => row.relation.origin !== 'derived');
@@ -697,6 +740,19 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
         for (const [id, row] of [...this.events]) {
           if (row.relPath === relPath) {
             this.events.delete(id);
+            // MIRRORS `event_duplicate.event_id ... ON DELETE CASCADE`: losing
+            // the file that WON ends the collision outright. A losing file that
+            // is now the only claimant is not a duplicate — it is simply the
+            // definition, which the next pass records.
+            this.eventDuplicates.delete(id);
+          }
+        }
+        // And the mirror of `event_duplicate.doc_id ... ON DELETE CASCADE`: a
+        // deleted LOSER stops being a claimant.
+        for (const [id, paths] of [...this.eventDuplicates]) {
+          paths.delete(relPath);
+          if (paths.size === 0) {
+            this.eventDuplicates.delete(id);
           }
         }
       },
@@ -737,7 +793,41 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
         paths.add(excludedRelPath);
         this.duplicates.set(entityId, paths);
       },
+      putDuplicateEvent: (eventId: string, excludedRelPath: string): void => {
+        requireDocument(excludedRelPath, `duplicate of event '${eventId}'`);
+        // The two refusals the port names, mirrored from the schema exactly as
+        // the entity pair above mirrors its own: a FOREIGN KEY and a TRIGGER.
+        const kept = this.events.get(eventId);
+        if (kept === undefined) {
+          throw new NarrativeIndexStoreError(
+            'constraint-violation',
+            `duplicate of event '${eventId}' at '${excludedRelPath}' has no event to have lost TO: ` +
+              'no event row holds that id ' +
+              '(FOREIGN KEY event_duplicate.event_id REFERENCES event(event_id))'
+          );
+        }
+        if (kept.relPath === excludedRelPath) {
+          throw new NarrativeIndexStoreError(
+            'constraint-violation',
+            `'${excludedRelPath}' is the timeline file that OWNS event '${eventId}', so it cannot also be ` +
+              'excluded from that id (TRIGGER event_duplicate_excludes_the_owning_file)'
+          );
+        }
+        const paths = this.eventDuplicates.get(eventId) ?? new Set<string>();
+        paths.add(excludedRelPath);
+        this.eventDuplicates.set(eventId, paths);
+      },
       putEvent: (event: NarrativeEvent, relPath: string): void => {
+        // MIRRORS `TRIGGER event_update_is_not_an_excluded_file`: an upsert must
+        // not move the winner onto a file already recorded as a loser, or the
+        // forbidden shape arrives by the back door.
+        if (this.eventDuplicates.get(event.id)?.has(relPath) === true) {
+          throw new NarrativeIndexStoreError(
+            'constraint-violation',
+            `event '${event.id}' would be owned by '${relPath}', which is already recorded as an EXCLUDED ` +
+              'claimant of that id (TRIGGER event_update_is_not_an_excluded_file)'
+          );
+        }
         // MIRRORS `event.doc_id NOT NULL REFERENCES document(doc_id)`. Without
         // it this adapter silently accepted an event whose timeline file is not
         // indexed while SQLite refused the identical call — the drift the
@@ -771,6 +861,11 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
         this.duplicates = new Map();
         this.mentions = [];
         this.relations = [];
+        // gh#48 WP-4: see the SQLite adapter's note. `clearAll` keeps DOCUMENTS,
+        // so without this an event deleted from its timeline file outlived the
+        // full rebuild that was supposed to forget it.
+        this.events = new Map();
+        this.eventDuplicates = new Map();
       }
     };
   }

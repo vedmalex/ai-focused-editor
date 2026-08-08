@@ -846,6 +846,180 @@ export const NARRATIVE_INDEX_READ_CONTRACT: NarrativeIndexReadContractCase[] = [
      * mechanism exists to keep apart, and a capability that lands but keeps
      * answering `unavailable` for its empty case has kept none of its promise.
      */
+    /**
+     * A FULL REBUILD FORGETS A DELETED EVENT (gh#48 WP-4).
+     *
+     * IT DID NOT, IN BOTH ADAPTERS, WHICH IS WHY NO CONTRACT CASE SAW IT: they
+     * were wrong the same way, and the shared suite can only catch a difference.
+     * `clearAll` deliberately KEEPS documents so that `docId`s survive a rebuild
+     * — and events hang off `doc_id`, so an event the author had deleted from
+     * the file kept its foreign key and outlived the rebuild that was supposed
+     * to forget it. WP-3's own removal tooth ran through the INCREMENT, where
+     * `clearDocumentContent` does the clearing, and never through this path.
+     */
+    name: 'gh#48 — a full rebuild forgets an event the author deleted',
+    async run(makeStore) {
+      const withEvents = (ids: readonly string[]): IndexableFile[] => [
+        file('manifest.yaml', ['content:', '  - path: content/ch-01.md\n    title: Chapter 1'].join('\n')),
+        file(CH(1), 'A chapter.'),
+        file(
+          'knowledge/timeline/main.yaml',
+          [
+            'events:',
+            ...ids.flatMap((id, index) => [
+              `  - id: ${id}`,
+              `    title: Event ${id}`,
+              `    sequence: ${(index + 1) * 10}`,
+              '    chapter: content/ch-01.md'
+            ])
+          ].join('\n')
+        )
+      ];
+      const { store, session } = await build(makeStore, withEvents(['e-keep', 'e-drop']));
+      deepEqual(
+        store.listEvents({ orderBy: 'story', direction: 'asc' }).map(row => row.event.id),
+        ['e-keep', 'e-drop'],
+        'both events are indexed to begin with'
+      );
+
+      // The author deletes one and the index is rebuilt from scratch.
+      session.rebuild(withEvents(['e-keep']), { indexedAt: 1_700_000_600_000 });
+      deepEqual(
+        store.listEvents({ orderBy: 'story', direction: 'asc' }).map(row => row.event.id),
+        ['e-keep'],
+        'the deleted event is gone — a rebuild is not allowed to remember it'
+      );
+      equal(store.getEvent('e-drop'), undefined, 'and the by-id read agrees');
+    }
+  },
+  {
+    /**
+     * TWO TIMELINE FILES CLAIMING ONE ID, THROUGH THE REAL INDEXER (gh#48 WP-4).
+     *
+     * THE STORE-LEVEL CASES CANNOT STAND IN FOR THIS ONE, and the difference is
+     * the eighth "green by coincidence" this epic wrote down: those cases hand
+     * `putDuplicateEvent` a collision BY HAND and prove the store can record
+     * one. The rule here belongs to the INDEXER — which claim wins, and that the
+     * losing claim is reported rather than silently overwriting the winner — so
+     * the indexer is what has to run. Mutating the fold away left every
+     * store-level case green.
+     *
+     * THE WINNER IS THE FIRST FILE IN CODE-POINT ORDER, which is the order the
+     * walk sorts by, so it is a property of the manuscript and not of the
+     * filesystem. `a-main.yaml` and `z-side.yaml` are named so the expected
+     * winner is legible from the fixture rather than from the sort.
+     */
+    name: 'gh#48 — two timeline files claiming one event id: first wins, the loser is REPORTED',
+    async run(makeStore) {
+      const FIRST = 'knowledge/timeline/a-main.yaml';
+      const SECOND = 'knowledge/timeline/z-side.yaml';
+      const timelineFile = (path: string, title: string, extraId?: string) =>
+        file(
+          path,
+          [
+            'events:',
+            '  - id: e-contested',
+            `    title: ${title}`,
+            '    sequence: 10',
+            ...(extraId === undefined
+              ? []
+              : [`  - id: ${extraId}`, `    title: Only in ${path}`, '    sequence: 20'])
+          ].join('\n')
+        );
+      const files: IndexableFile[] = [
+        file('manifest.yaml', ['content:', '  - path: content/ch-01.md\n    title: Chapter 1'].join('\n')),
+        file(CH(1), 'A chapter.'),
+        timelineFile(FIRST, 'Claimed by the first file', 'e-only-first'),
+        timelineFile(SECOND, 'Claimed by the second file', 'e-only-second')
+      ];
+      const { store } = await build(makeStore, files);
+
+      // THE FIRST FILE WINS, and the assertion is on the TITLE rather than on
+      // the path alone: a fold that recorded the collision correctly and still
+      // let the second write overwrite the payload would pass a path-only check.
+      const winner = store.getEvent('e-contested');
+      check(winner !== undefined, 'the contested id is in the index exactly once');
+      equal(winner.relPath, FIRST, 'the first file in code-point order owns the id');
+      equal(winner.event.title, 'Claimed by the first file', 'and its PAYLOAD is the winner’s, not the loser’s');
+
+      // THE LOSING CLAIM IS REPORTED, not destroyed by the write that resolved
+      // it. This is the whole reason the record exists: gh#50 turns it into a
+      // verdict, and nothing else in the index remembers it happened.
+      const duplicates = store.getDuplicateEvents();
+      deepEqual(duplicates.map(row => row.eventId), ['e-contested'], 'the collision is recorded');
+      equal(duplicates[0].keptRelPath, FIRST, 'the record names the winning file');
+      deepEqual(duplicates[0].excludedRelPaths, [SECOND], 'and the file that lost');
+
+      // PAIRED POSITIVE: the loser is not otherwise disqualified — its OWN,
+      // uncontested event is indexed normally. Without this, a fold that simply
+      // dropped every event of a colliding file would pass everything above.
+      const ids = store.listEvents({ orderBy: 'story', direction: 'asc' }).map(row => row.event.id);
+      deepEqual(ids, ['e-contested', 'e-only-first', 'e-only-second'], 'the loser’s other events are indexed');
+      equal(store.getEvent('e-only-second')?.relPath, SECOND, 'owned by the file that lost the other id');
+    }
+  },
+  {
+    /**
+     * ONE FILE CLAIMING ITS OWN ID TWICE IS A DIFFERENT DEFECT (gh#48 WP-4).
+     *
+     * IT IS NOT A `DuplicateEventRecord`, and it cannot be: the record names the
+     * file EXCLUDED by the collision, and here that would be the winner — a
+     * shape both adapters refuse outright. So it travels as the extractor's
+     * `NarrativeEventProblem`, which is where it started, and the fold skips it
+     * rather than manufacturing an unstorable record.
+     *
+     * WITHOUT THIS CASE the skip is untested, and a fold that treated a
+     * same-file repeat as an ordinary collision would REFUSE THE WHOLE REBUILD —
+     * one typo in one timeline file taking the entire index down. That is what
+     * the mutation showed.
+     */
+    name: 'gh#48 — one file repeating an event id is a problem, not a duplicate record',
+    async run(makeStore) {
+      const files: IndexableFile[] = [
+        file('manifest.yaml', ['content:', '  - path: content/ch-01.md\n    title: Chapter 1'].join('\n')),
+        file(CH(1), 'A chapter.'),
+        file(
+          'knowledge/timeline/main.yaml',
+          [
+            'events:',
+            '  - id: e-twice',
+            '    title: First writing',
+            '    sequence: 10',
+            '  - id: e-twice',
+            '    title: Second writing',
+            '    sequence: 20',
+            '  - id: e-fine',
+            '    title: An ordinary event',
+            '    sequence: 30'
+          ].join('\n')
+        )
+      ];
+      // THE REBUILD SUCCEEDS. A repeated id is an authoring mistake, and an
+      // index that refused to build because of one would be worse than useless.
+      const { store, session } = await build(makeStore, files);
+      equal(session.state().state, 'ready', 'the rebuild completed');
+
+      // ONE ROW, THE FIRST WRITING — and the payload assertion is what stops a
+      // last-writer-wins fold from passing.
+      equal(store.getEvent('e-twice')?.event.title, 'First writing', 'the FIRST writing is the one indexed');
+      deepEqual(
+        store.listEvents({ orderBy: 'story', direction: 'asc' }).map(row => row.event.id),
+        ['e-twice', 'e-fine'],
+        'and the file’s other event is untouched'
+      );
+      // NOT a duplicate RECORD: the shape cannot express it, and pretending
+      // otherwise would refuse the write.
+      deepEqual(store.getDuplicateEvents(), [], 'a same-file repeat is not a cross-file collision');
+
+      // It is REPORTED, though — through the channel that can carry it.
+      const report = session.rebuild(files, { indexedAt: 1_700_000_700_000 }).data;
+      check(
+        report.problems.events.some(problem => problem.eventId === 'e-twice'),
+        'the repeat is reported as an event problem, not swallowed'
+      );
+    }
+  },
+  {
     name: 'gh#48 — a manuscript with no events reports the timeline EMPTY, never unavailable',
     async run(makeStore) {
       const eventless: IndexableFile[] = [

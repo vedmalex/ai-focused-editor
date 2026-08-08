@@ -54,6 +54,24 @@ import type { ExtractedRelation } from './extracted-relation';
 import { extractManifestChapters, type ManifestChapter, type ManifestProblem } from './manifest-extraction';
 import { normalizeWorkspacePath } from './yaml-values';
 
+/**
+ * One timeline file that LOST an event-id collision (gh#48 WP-4).
+ *
+ * DELIBERATELY NOT `DuplicateEventRecord` (the port's shape), and the
+ * difference is a LAYER, exactly as it is for {@link EntityDuplicate}: this one
+ * is emitted ONE PER LOSING CLAIM, because that is the unit extraction
+ * discovers as it walks files; the port's is aggregated PER ID, because that is
+ * the unit a reader asks about.
+ */
+export interface EventDuplicate {
+  /** The contested event id. */
+  eventId: string;
+  /** Workspace-relative path of the timeline file that was EXCLUDED. */
+  sourcePath: string;
+  /** Workspace-relative path of the timeline file whose event is in the index. */
+  keptSourcePath: string;
+}
+
 /** One file of the workspace, as the extraction sees it. */
 export interface WorkspaceFile {
   /** Workspace-relative path. */
@@ -95,6 +113,8 @@ export interface ExtractedNarrativeIndex {
    * chapter range as its own evidence.
    */
   events: { event: NarrativeEvent; relPath: string }[];
+  /** Every timeline file EXCLUDED by an event-id collision (gh#48 WP-4). */
+  eventDuplicates: EventDuplicate[];
   /** `entities/types.yaml` validation problems. */
   typeProblems: EntityTypeProblem[];
   /** Malformed entity cards. */
@@ -189,13 +209,40 @@ export function extractNarrativeIndex(files: readonly WorkspaceFile[]): Extracte
   // `NarrativeEntity.id` is unique per TYPE and this asks a type-free question.
   // Narrowing it means widening the predicate to carry the written kind, which
   // is WP-1's surface and a change of its own.
+  //
+  // FIRST FILE WINS AN ID COLLISION, LOSERS ARE REPORTED — the rule
+  // `buildEntityCatalog` already applies to cards, applied to events for the
+  // same reason. `putEvent` REPLACES on id, so without this fold the second
+  // file's claim would silently overwrite the first and the collision would be
+  // destroyed by the write that resolves it.
+  //
+  // FILE ORDER IS THE WORKSPACE ORDER, which the walk sorts by code point, so
+  // the winner is a property of the manuscript rather than of the filesystem.
+  //
+  // A COLLISION INSIDE ONE FILE IS A DIFFERENT DEFECT and is NOT recorded here:
+  // `extractEvents` already reports it as a `NarrativeEventProblem` and keeps
+  // both entries, and the storage shape cannot express it anyway — the excluded
+  // document would be the winner. Two defects, two mechanisms, neither silent.
   const events: { event: NarrativeEvent; relPath: string }[] = [];
   const eventProblems: NarrativeEventProblem[] = [];
+  const eventDuplicates: EventDuplicate[] = [];
+  const ownerByEventId = new Map<string, string>();
   for (const timeline of timelinesToRead) {
     const read = extractEvents(timeline, id => catalog.ids.has(id));
     eventProblems.push(...read.problems);
     for (const event of read.events) {
-      events.push({ event, relPath: timeline.path });
+      const owner = ownerByEventId.get(event.id);
+      if (owner === undefined) {
+        ownerByEventId.set(event.id, timeline.path);
+        events.push({ event, relPath: timeline.path });
+        continue;
+      }
+      if (owner === timeline.path) {
+        // The same-file case: already a problem, and unrepresentable as a
+        // duplicate record. Dropped from the write set because the id is taken.
+        continue;
+      }
+      eventDuplicates.push({ eventId: event.id, sourcePath: timeline.path, keptSourcePath: owner });
     }
   }
 
@@ -208,6 +255,7 @@ export function extractNarrativeIndex(files: readonly WorkspaceFile[]): Extracte
     mentions,
     relations,
     events,
+    eventDuplicates,
     typeProblems,
     cardProblems,
     manifestProblems: manifest.problems,

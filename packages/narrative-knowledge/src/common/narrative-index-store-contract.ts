@@ -1071,6 +1071,104 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
   },
   {
     /**
+     * TWO TIMELINE FILES CLAIMING ONE EVENT ID (gh#48 WP-4).
+     *
+     * WHY THIS HAS TO BE STORED AT ALL. `putEvent` REPLACES on id, so the losing
+     * claim is destroyed by the write that resolves it — every other event
+     * diagnostic gh#48 owes gh#50 can be read back off the event rows, and this
+     * one cannot. Architecture §3.4 makes gh#48 the supplier of the data.
+     */
+    name: 'an event id claimed by two timeline files is recorded, with both sides named',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      const OTHER = 'knowledge/timeline/side.yaml';
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putDocument(timelineDocument(OTHER));
+        writer.putEvent(event('e-contested', { sequence: 1 }), TIMELINE);
+        writer.putDuplicateEvent('e-contested', OTHER);
+        // A second event with NO collision, so "report everything as a
+        // duplicate" cannot pass.
+        writer.putEvent(event('e-alone', { sequence: 2 }), TIMELINE);
+      });
+
+      const records = store.getDuplicateEvents();
+      deepEqual(records.map(row => row.eventId), ['e-contested'], 'only the contested id is a duplicate');
+      equal(records[0].keptRelPath, TIMELINE, 'the record names the file whose event is IN the index');
+      deepEqual(records[0].excludedRelPaths, [OTHER], 'and the file that lost');
+      // The winner is still readable as an ordinary event — a collision is a
+      // finding ABOUT the index, not a hole in it.
+      equal(store.getEvent('e-contested')?.relPath, TIMELINE, 'the winner is still an ordinary event');
+    }
+  },
+  {
+    /**
+     * THE TWO REFUSALS THAT MAKE `keptRelPath` A REQUIRED FIELD, and the cascade
+     * that keeps it true over time. Without them a "collision with no winner"
+     * would be representable, and every consumer would have to defend against a
+     * shape the port promises cannot occur.
+     */
+    name: 'a duplicate event needs a winner, and cannot name the file that owns it',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      const OTHER = 'knowledge/timeline/side.yaml';
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putDocument(timelineDocument(OTHER));
+      });
+
+      // `rejectsSomehow` AND NOT `rejects`, exactly as the entity pair above:
+      // in SQLite these two refusals are a FOREIGN KEY and a TRIGGER, which
+      // raise raw SQLite errors outside this port's taxonomy, while the
+      // in-memory adapter raises a typed `constraint-violation`. The SHARED
+      // contract can therefore assert that the write was refused, not which
+      // kind of error said so; that the SCHEMA is what refuses is a node-only
+      // assertion, and it lives with the other schema teeth.
+      //
+      // NO EVENT ROW HOLDS THE ID: nothing to have lost to.
+      await rejectsSomehow(
+        () => store.transaction(writer => writer.putDuplicateEvent('e-nobody', OTHER)),
+        'a duplicate of an event id no file defines'
+      );
+
+      store.transaction(writer => {
+        writer.putEvent(event('e-contested', { sequence: 1 }), TIMELINE);
+      });
+      // THE OWNER CANNOT BE EXCLUDED FROM ITS OWN ID.
+      await rejectsSomehow(
+        () => store.transaction(writer => writer.putDuplicateEvent('e-contested', TIMELINE)),
+        'the timeline file that owns the event'
+      );
+      // PAIRED POSITIVE: a DIFFERENT file is accepted, so the two refusals
+      // above cannot be satisfied by refusing everything.
+      store.transaction(writer => {
+        writer.putDuplicateEvent('e-contested', OTHER);
+      });
+      deepEqual(
+        store.getDuplicateEvents().map(row => row.eventId),
+        ['e-contested'],
+        'a DIFFERENT file is accepted as an excluded claimant'
+      );
+
+      // AND THE MIRROR: an upsert must not move the winner ONTO the excluded
+      // file. This is the back door the entity pair needed a second trigger for.
+      await rejectsSomehow(
+        () => store.transaction(writer => writer.putEvent(event('e-contested', { sequence: 1 }), OTHER)),
+        'moving the event onto a file already recorded as excluded'
+      );
+
+      // THE COLLISION DIES WITH ITS WINNER: a losing file that is now the only
+      // claimant is not a duplicate, it is simply the definition.
+      store.transaction(writer => {
+        writer.deleteDocument(TIMELINE);
+      });
+      deepEqual(store.getDuplicateEvents(), [], 'losing the winner ends the collision');
+    }
+  },
+  {
+    /**
      * AN EVENT CANNOT OUTLIVE THE FILE IT WAS READ FROM (gh#48 WP-3 re-gate).
      *
      * TWO HALVES OF ONE OWNERSHIP RULE, and neither adapter had a case for

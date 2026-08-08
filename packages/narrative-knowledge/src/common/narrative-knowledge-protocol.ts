@@ -27,6 +27,7 @@
 
 import type {
   DuplicateEntityRecord,
+  DuplicateEventRecord,
   EntityQuery,
   EventQuery,
   IndexedDocument,
@@ -218,6 +219,20 @@ export interface NarrativeKnowledgeService {
   /** One event by id (gh#48). `undefined` data under a `ready` envelope means
    *  the manuscript defines no such event — not that the index is unsure. */
   getEvent(rootUri: string, eventId: string): Promise<Envelope<IndexedEvent | undefined>>;
+
+  /**
+   * Event ids claimed by more than one timeline file (gh#48 WP-4).
+   *
+   * ON THE SEAM BECAUSE IT IS THE ONE EVENT DIAGNOSTIC THAT CANNOT BE DERIVED.
+   * An unresolved reference, a `kind: exact` that is not a date, a chapter
+   * nobody wrote — all of those are readable back off the event rows. A
+   * collision is not: `putEvent` replaces on id, so the losing claim is
+   * destroyed by the write that resolves it, and only the index can remember it
+   * happened. Architecture §3.4 makes gh#48 the supplier of the DATA and gh#50
+   * the owner of the VERDICT, which is why this is a read method and not a
+   * `validateChronology`.
+   */
+  getDuplicateEvents(rootUri: string): Promise<Envelope<DuplicateEventRecord[]>>;
 
   /**
    * Where an entity appears, in manuscript order, optionally quoted (gh#47).

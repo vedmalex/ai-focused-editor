@@ -48,6 +48,7 @@ import {
   orderDocumentsByChapter,
   type DocumentMoveFreshness,
   type DuplicateEntityRecord,
+  type DuplicateEventRecord,
   type EntityQuery,
   type EventQuery,
   type IndexedEvent,
@@ -1213,6 +1214,35 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
     return [...byId.values()];
   }
 
+  /** Event ids claimed by more than one timeline file (gh#48 WP-4). Same shape
+   *  and same grouping as {@link getDuplicateEntities} above. */
+  getDuplicateEvents(): DuplicateEventRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT dup.event_id AS event_id, kept.rel_path AS kept_rel_path, excluded.rel_path AS excluded_rel_path
+         FROM event_duplicate dup
+         JOIN event e           ON e.event_id      = dup.event_id
+         JOIN document kept     ON kept.doc_id     = e.doc_id
+         JOIN document excluded ON excluded.doc_id = dup.doc_id
+         ORDER BY dup.event_id, excluded.rel_path`
+      )
+      .all() as { event_id: string; kept_rel_path: string; excluded_rel_path: string }[];
+    const byId = new Map<string, DuplicateEventRecord>();
+    for (const row of rows) {
+      const record = byId.get(row.event_id);
+      if (record === undefined) {
+        byId.set(row.event_id, {
+          eventId: row.event_id,
+          keptRelPath: row.kept_rel_path,
+          excludedRelPaths: [row.excluded_rel_path]
+        });
+        continue;
+      }
+      record.excludedRelPaths.push(row.excluded_rel_path);
+    }
+    return [...byId.values()];
+  }
+
   /** Shared relation reader: one query for the rows, one for their evidence. */
   private readRelations(
     where: string,
@@ -1446,6 +1476,12 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
         // gh#48. `event_ref` follows by `ON DELETE CASCADE`; the event rows
         // themselves are owned by the timeline file and are cleared with it.
         this.db.prepare('DELETE FROM event WHERE doc_id = ?').run(row.doc_id);
+        // AND ITS LOSING CLAIMS (WP-4). Re-indexing a file re-states what it
+        // claims; a collision it no longer takes part in must not outlive the
+        // pass that stopped claiming it, or the author fixes the duplicate and
+        // the diagnostic stays on screen forever. (The rows where this file was
+        // the WINNER are already gone with its events, by cascade.)
+        this.db.prepare('DELETE FROM event_duplicate WHERE doc_id = ?').run(row.doc_id);
       },
       clearDerivedRelations: (): void => {
         this.db.prepare("DELETE FROM relation WHERE origin = 'derived'").run();
@@ -1485,6 +1521,14 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
         this.db
           .prepare('INSERT OR REPLACE INTO entity_duplicate (entity_id, doc_id) VALUES (?, ?)')
           .run(entityId, this.docIdOf(excludedRelPath));
+      },
+      putDuplicateEvent: (eventId: string, excludedRelPath: string): void => {
+        // The two refusals live in the DDL — a FOREIGN KEY on `event_id` and
+        // `TRIGGER event_duplicate_excludes_the_owning_file` — so they hold
+        // against a repair script too, not only against this method.
+        this.db
+          .prepare('INSERT OR REPLACE INTO event_duplicate (event_id, doc_id) VALUES (?, ?)')
+          .run(eventId, this.docIdOf(excludedRelPath));
       },
       putMention: (mention: NarrativeMention): void => {
         const docId = this.docIdOf(mention.evidence.path);
@@ -1665,7 +1709,24 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
         }
       },
       clearAll: (): void => {
-        for (const table of ['relation_evidence', 'relation', 'mention', 'entity_alias', 'entity_duplicate', 'entity']) {
+        // EVENTS ARE IN THIS LIST (gh#48 WP-4), and their absence was a live
+        // defect in BOTH adapters — which is why no contract case saw it: they
+        // were wrong the same way. `clearAll` keeps DOCUMENTS, so a rebuild
+        // updates the timeline file's row in place and its `doc_id` survives;
+        // an event the author had deleted from the file therefore kept its
+        // foreign key and outlived the rebuild that was supposed to forget it.
+        // Children before parents: the FKs are enforced.
+        for (const table of [
+          'relation_evidence',
+          'relation',
+          'mention',
+          'entity_alias',
+          'entity_duplicate',
+          'entity',
+          'event_duplicate',
+          'event_ref',
+          'event'
+        ]) {
           this.db.exec(`DELETE FROM ${table}`);
         }
       }

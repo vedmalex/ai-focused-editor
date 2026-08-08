@@ -15,6 +15,7 @@ import {
   resolveEffectiveEntityTypes,
   type ConfigureResult,
   type DuplicateEntityRecord,
+  type DuplicateEventRecord,
   type EffectiveEntityType,
   type EntityAppearance,
   type EntityAppearanceQuery,
@@ -232,6 +233,10 @@ export class NodeNarrativeKnowledgeService implements NarrativeKnowledgeService 
 
   async getEvent(rootUri: string, eventId: string): Promise<Envelope<IndexedEvent | undefined>> {
     return this.session(rootUri).getEvent(eventId);
+  }
+
+  async getDuplicateEvents(rootUri: string): Promise<Envelope<DuplicateEventRecord[]>> {
+    return this.session(rootUri).getDuplicateEvents();
   }
 
   /**
