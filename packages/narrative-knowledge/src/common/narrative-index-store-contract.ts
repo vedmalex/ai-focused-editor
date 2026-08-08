@@ -1071,6 +1071,50 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
   },
   {
     /**
+     * A RELATION MAY NOT CITE A DOCUMENT THE INDEX DOES NOT HOLD (gh#48 re-gate).
+     *
+     * `ownerPath` AND EVERY EVIDENCE PATH ARE TWO DIFFERENT QUESTIONS, and only
+     * the first had a case. `ownerPath` is "which card wrote this down"; an
+     * evidence path is "where it can be SEEN". SQLite resolves each evidence row
+     * through `docIdOf` and throws for a file it does not have; the in-memory
+     * adapter checked the owner alone, so a relation citing an unindexed file
+     * was accepted here and refused there — the drift the shared suite exists to
+     * catch, unseen because no case asked.
+     *
+     * It is not bookkeeping: a relation whose evidence names a file the index
+     * does not hold is a relation nobody can navigate to, and "every finding is
+     * navigable" is the promise the whole evidence union was built for.
+     */
+    name: 'a relation citing an unindexed document is refused, in both adapters',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      const cited = (path: string): NarrativeRelation => ({
+        sourceId: 'krishna',
+        targetId: 'arjuna',
+        relType: 'ownership',
+        origin: 'explicit',
+        sourceResolved: true,
+        targetResolved: true,
+        ownerPath: CARD,
+        evidence: [wholeFileEvidence(path)]
+      });
+
+      await rejectsSomehow(
+        () => store.transaction(writer => writer.putRelation(cited('manuscript/never-indexed.md'))),
+        'a relation whose evidence names a document the index does not hold'
+      );
+
+      // PAIRED POSITIVE: the identical relation citing an INDEXED document
+      // lands. Without it, "refuse everything" passes the line above.
+      store.transaction(writer => {
+        writer.putRelation(cited(CHAPTER));
+      });
+      equal(store.getRelations({ relType: 'ownership' }).length, 1, 'the same relation citing a real document lands');
+    }
+  },
+  {
+    /**
      * TWO TIMELINE FILES CLAIMING ONE EVENT ID (gh#48 WP-4).
      *
      * WHY THIS HAS TO BE STORED AT ALL. `putEvent` REPLACES on id, so the losing

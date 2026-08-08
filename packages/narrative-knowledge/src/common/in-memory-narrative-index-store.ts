@@ -858,6 +858,21 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
         if (relation.ownerPath !== undefined) {
           requireDocument(relation.ownerPath, `relation '${relation.sourceId}->${relation.targetId}'`);
         }
+        // EVERY EVIDENCE PATH TOO, and not only the owner (gh#48 re-gate, F3).
+        // SQLite validates each one by resolving `relation_evidence.doc_id`
+        // through `docIdOf`, which throws for a document it does not hold; this
+        // adapter checked the owner alone, so a relation CITING an unindexed
+        // file was accepted here and refused there. `ownerPath` answers "which
+        // card wrote this down" and an evidence path answers "where it can be
+        // seen" — a relation whose evidence names a file the index does not have
+        // is a relation nobody can navigate to, which is the failure this index
+        // exists to prevent.
+        for (const evidence of relation.evidence) {
+          requireDocument(
+            evidence.path,
+            `evidence of relation '${relation.sourceId}->${relation.targetId}'`
+          );
+        }
         const identity = relationIdentity(relation);
         const existing = this.relations.find(row => relationIdentity(row.relation) === identity);
         if (existing) {
