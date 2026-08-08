@@ -687,6 +687,34 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
             evidence.path === from ? { ...evidence, path: to } : evidence
           );
         }
+        // EVENTS MOVE TOO (gh#48, fourth path). SQLite carries them by
+        // `event.doc_id`, so a renamed row takes its events with it for free;
+        // here they are keyed by a relPath STRING and had to be renamed by hand.
+        // Without this a moved timeline file left every event pointing at a path
+        // no document row holds — an event nobody can navigate to, which is the
+        // failure this index exists to prevent — and the next ordinary edit of
+        // the renamed file left them behind as ghosts.
+        //
+        // `evidence.path` is renamed with it: the event was read FROM that file,
+        // so the two are the same fact and must not disagree.
+        for (const [id, row] of [...this.events]) {
+          if (row.relPath === from) {
+            this.events.set(id, {
+              relPath: to,
+              event:
+                row.event.evidence.path === from
+                  ? { ...row.event, evidence: { ...row.event.evidence, path: to } }
+                  : row.event
+            });
+          }
+        }
+        // And the collision records, which name files by path on BOTH sides.
+        for (const [id, paths] of [...this.eventDuplicates]) {
+          if (paths.delete(from)) {
+            paths.add(to);
+            this.eventDuplicates.set(id, paths);
+          }
+        }
       },
       clearDocumentContent: (relPath: string): void => {
         this.mentions = this.mentions.filter(mention => mention.evidence.path !== relPath);

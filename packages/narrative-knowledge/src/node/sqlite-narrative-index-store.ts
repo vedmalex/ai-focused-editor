@@ -1459,6 +1459,24 @@ export class SqliteNarrativeIndexStore implements NarrativeIndexStore {
           entity.sourcePath = to;
           repair.run(JSON.stringify(entity), row.entity_id);
         }
+        // THE SAME REPAIR FOR EVENTS (gh#48, fourth path). The `event` ROW moves
+        // for free — it hangs off `doc_id` — but its PAYLOAD carries
+        // `evidence.path`, a denormalized copy of the old name, and a reader
+        // navigating by it would be sent to a file that no longer exists. The
+        // entity payload has been repaired here since v1 for exactly this
+        // reason; the event payload was simply forgotten.
+        const movedEvents = this.db
+          .prepare('SELECT event_id, payload FROM event WHERE doc_id = ?')
+          .all(source.doc_id) as unknown as { event_id: string; payload: string }[];
+        const repairEvent = this.db.prepare('UPDATE event SET payload = ? WHERE event_id = ?');
+        for (const row of movedEvents) {
+          const event = JSON.parse(row.payload) as NarrativeEvent;
+          if (event.evidence.path !== from) {
+            continue;
+          }
+          event.evidence = { ...event.evidence, path: to };
+          repairEvent.run(JSON.stringify(event), row.event_id);
+        }
       },
       clearDocumentContent: (relPath: string): void => {
         const row = this.db.prepare('SELECT doc_id FROM document WHERE rel_path = ?').get(relPath) as

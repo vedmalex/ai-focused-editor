@@ -1230,6 +1230,106 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
      *     did not name refused the first legitimate `putEvent` of the fresh
      *     rebuild, taking the whole pass down with it.
      */
+    /**
+     * THE FOURTH PATH: A RENAME (gh#48 re-gate 2).
+     *
+     * The re-gate that added the two cases below declared the cascade "counted
+     * by paths, not by cascades" and then miscounted: a document can also MOVE.
+     * SQLite carries events by `doc_id`, so a renamed row takes them along for
+     * free; the in-memory adapter keys them by a relPath STRING and left every
+     * event of a moved timeline file pointing at a path no document holds —
+     * after which the next ordinary edit of the renamed file left them behind as
+     * ghosts, where SQLite answers `[]`.
+     *
+     * A RENAME IS NOT EXOTIC HERE. Move pairing keys on the content hash and
+     * accepts any document kind, and a timeline edit does not escalate — so
+     * renaming `main.yaml` to `act-one.yaml` in the editor takes exactly this
+     * path.
+     */
+    name: 'a renamed timeline file takes its events and its collisions with it',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      const OTHER = 'knowledge/timeline/side.yaml';
+      const RENAMED = 'knowledge/timeline/act-one.yaml';
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putDocument(timelineDocument(OTHER));
+        writer.putEvent(event('e-contested', { sequence: 1 }), TIMELINE);
+        writer.putDuplicateEvent('e-contested', OTHER);
+      });
+
+      store.transaction(writer => {
+        writer.moveDocument(TIMELINE, RENAMED, {
+          sizeBytes: 128,
+          mtimeMs: 1_700_000_009_000,
+          contentHash: 'e'.repeat(64),
+          indexedAt: 1_700_000_010_000
+        });
+      });
+
+      // THE EVENT ANSWERS WITH THE NEW PATH, and so does its own evidence — the
+      // event was read FROM that file, so the two are one fact and must not
+      // disagree. A reader navigating by the stale one lands nowhere.
+      const moved = store.getEvent('e-contested');
+      check(moved !== undefined, 'the event survived the rename');
+      equal(moved.relPath, RENAMED, 'the owning path followed the rename');
+      equal(moved.event.evidence.path, RENAMED, 'and so did the evidence inside the payload');
+
+      // THE COLLISION FOLLOWS TOO, naming the new winner.
+      const records = store.getDuplicateEvents();
+      deepEqual(records.map(row => row.eventId), ['e-contested'], 'the collision survived');
+      equal(records[0].keptRelPath, RENAMED, 'and names the file by its new path');
+      deepEqual(records[0].excludedRelPaths, [OTHER], 'the loser is untouched by the winner’s rename');
+
+      // AND THE RENAMED FILE IS NOW THE ONE AN EDIT REACHES. This is the half
+      // that produced ghosts: `clearDocumentContent` on the NEW path must find
+      // and drop what the move carried over.
+      store.transaction(writer => {
+        writer.clearDocumentContent(RENAMED);
+      });
+      equal(store.getEvent('e-contested'), undefined, 'an edit of the renamed file reaches its events');
+      deepEqual(store.getDuplicateEvents(), [], 'and takes the collision with them');
+    }
+  },
+  {
+    /**
+     * THE MIRROR: THE LOSER IS RENAMED (gh#48 re-gate 2).
+     *
+     * PAIRED WITH THE CASE ABOVE, because the two sides of a collision are held
+     * differently — the winner by the event row, the loser by the duplicate
+     * record — and an implementation that renamed one and not the other would
+     * pass whichever case it happened to be written for.
+     */
+    name: 'a renamed LOSING timeline file is still named as the loser, by its new path',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      const OTHER = 'knowledge/timeline/side.yaml';
+      const RENAMED_LOSER = 'knowledge/timeline/zz-moved.yaml';
+      seedDocuments(store);
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putDocument(timelineDocument(OTHER));
+        writer.putEvent(event('e-contested', { sequence: 1 }), TIMELINE);
+        writer.putDuplicateEvent('e-contested', OTHER);
+      });
+
+      store.transaction(writer => {
+        writer.moveDocument(OTHER, RENAMED_LOSER, {
+          sizeBytes: 128,
+          mtimeMs: 1_700_000_009_000,
+          contentHash: 'e'.repeat(64),
+          indexedAt: 1_700_000_010_000
+        });
+      });
+
+      const records = store.getDuplicateEvents();
+      deepEqual(records.map(row => row.eventId), ['e-contested'], 'the collision survived the loser’s rename');
+      equal(records[0].keptRelPath, TIMELINE, 'the winner is untouched');
+      deepEqual(records[0].excludedRelPaths, [RENAMED_LOSER], 'and the loser is named by its NEW path');
+    }
+  },
+  {
     name: 'an event collision ends with an ordinary edit and with a reset, in both adapters',
     async run(makeStore) {
       const OTHER = 'knowledge/timeline/side.yaml';

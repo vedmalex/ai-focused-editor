@@ -897,13 +897,6 @@ export const NARRATIVE_INDEX_READ_CONTRACT: NarrativeIndexReadContractCase[] = [
   },
   {
     /**
-     * THE PAIRED NEGATIVE OF THE CASE ABOVE, and the one the architecture names
-     * explicitly: a chapter with no events must report `empty`, NOT
-     * `unavailable`. Those are the two answers the whole `SectionAvailability`
-     * mechanism exists to keep apart, and a capability that lands but keeps
-     * answering `unavailable` for its empty case has kept none of its promise.
-     */
-    /**
      * A FULL REBUILD FORGETS A DELETED EVENT (gh#48 WP-4).
      *
      * IT DID NOT, IN BOTH ADAPTERS, WHICH IS WHY NO CONTRACT CASE SAW IT: they
@@ -1030,6 +1023,79 @@ export const NARRATIVE_INDEX_READ_CONTRACT: NarrativeIndexReadContractCase[] = [
      * one typo in one timeline file taking the entire index down. That is what
      * the mutation showed.
      */
+    /**
+     * THE KIND RULE, THROUGH THE REAL CATALOG AND BOTH REAL CALLERS (gh#90).
+     *
+     * `event-extraction.test.ts` already asserts the rule — against a HAND-ROLLED
+     * predicate, one layer below where the defect lived. The defect was never in
+     * `extractEvents`: it was in what the two CALLERS passed it, and mutating
+     * both of them back to the weak question (`catalog.ids.has(id)`, ignoring the
+     * written kind) left every one of those unit teeth green, along with both
+     * bands. The critic's gate proved that by running the mutation.
+     *
+     * So this case runs the real `buildEntityCatalog` over a real manuscript and
+     * asks BOTH paths — the full rebuild and the increment — because they call
+     * `extractEvents` from two different places and either could be fixed alone.
+     *
+     * THE FIXTURE IS THE COLLISION ITSELF: a LOCATION called `ivan`, no
+     * character of that name. `NarrativeEntity.id` is unique only WITHIN a type,
+     * so this is the ordinary way two ids meet.
+     */
+    name: 'gh#90 — a kinded event reference is resolved against THAT kind, on both write paths',
+    async run(makeStore) {
+      const files: IndexableFile[] = [
+        file('manifest.yaml', ['content:', '  - path: content/ch-01.md\n    title: Chapter 1'].join('\n')),
+        file(CH(1), 'A chapter.'),
+        file('entities/locations/ivan.yaml', ['id: ivan', 'name: Иван-город'].join('\n')),
+        file(
+          'knowledge/timeline/main.yaml',
+          [
+            'events:',
+            '  - id: e-refs',
+            '    title: Ссылки трёх видов',
+            '    sequence: 10',
+            '    participants:',
+            '      - char:ivan',
+            '      - ivan',
+            '    location: location:ivan'
+          ].join('\n')
+        )
+      ];
+      const resolvedByRaw = (store: NarrativeIndexStore): Map<string, boolean> =>
+        new Map(
+          (store.getEvent('e-refs')?.event.refs ?? []).map(ref => [ref.raw, ref.resolved] as const)
+        );
+
+      // -- the REBUILD path (narrative-extraction) --------------------------
+      const { store, session } = await build(makeStore, files);
+      const afterRebuild = resolvedByRaw(store);
+      equal(afterRebuild.get('char:ivan'), false, 'a CHARACTER named ivan is not defined, so char:ivan is broken');
+      equal(afterRebuild.get('location:ivan'), true, 'the LOCATION is, so location:ivan resolves');
+      equal(afterRebuild.get('ivan'), true, 'and a bare id still matches across every type');
+
+      // -- the INCREMENT path (session.applyUpdate) -------------------------
+      // The same file, edited. This calls `extractEvents` from a DIFFERENT
+      // place, and fixing one caller alone would pass the block above.
+      const edited = files.map(item =>
+        item.path === 'knowledge/timeline/main.yaml'
+          ? file(item.path, `${item.text}\n    chapter: content/ch-01.md`)
+          : item
+      );
+      session.applyUpdate({
+        moves: [],
+        upsert: edited.filter(item => item.path === 'knowledge/timeline/main.yaml'),
+        remove: [],
+        types: [],
+        chapters: [],
+        unreadable: []
+      });
+      const afterIncrement = resolvedByRaw(store);
+      equal(afterIncrement.get('char:ivan'), false, 'the increment asks the same question');
+      equal(afterIncrement.get('location:ivan'), true, 'and gives the same answers');
+      equal(afterIncrement.get('ivan'), true, 'including for the bare form');
+    }
+  },
+  {
     name: 'gh#48 — one file repeating an event id is a problem, not a duplicate record',
     async run(makeStore) {
       const files: IndexableFile[] = [
@@ -1077,6 +1143,17 @@ export const NARRATIVE_INDEX_READ_CONTRACT: NarrativeIndexReadContractCase[] = [
     }
   },
   {
+    /**
+     * THE PAIRED NEGATIVE OF THE `present` CASE, and the one the architecture
+     * names explicitly: a chapter with no events must report `empty`, NOT
+     * `unavailable`. Those are the two answers the whole `SectionAvailability`
+     * mechanism exists to keep apart, and a capability that lands but keeps
+     * answering `unavailable` for its empty case has kept none of its promise.
+     *
+     * It is also, with its `present` twin, the ONLY thing that catches a
+     * half-land of this section — see the note on ОВ-2 tooth 3 for why that case
+     * cannot.
+     */
     name: 'gh#48 — a manuscript with no events reports the timeline EMPTY, never unavailable',
     async run(makeStore) {
       const eventless: IndexableFile[] = [
