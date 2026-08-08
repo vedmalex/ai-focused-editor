@@ -60,6 +60,7 @@ import { SemanticEntityHoverContribution } from './semantic-entity-hover-contrib
 import { EntityCardService } from './entity-card-service';
 import { EntityCardCursorContribution } from './entity-card-cursor-contribution';
 import { NarrativeSaveReindexContribution } from './narrative-save-reindex-contribution';
+import { TimelineAuthoringContribution } from './timeline-authoring-contribution';
 import { EntityCardViewContribution } from './entity-card-view-contribution';
 import { EntityCardWidget } from './entity-card-widget';
 import { EntityCardsViewContribution } from './entity-cards-view-contribution';
@@ -215,6 +216,9 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
   // entity at all, which is the workflow the issue is written about.
   bind(EntityCardCursorContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(EntityCardCursorContribution);
+  bind(TimelineAuthoringContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(TimelineAuthoringContribution);
+  bind(MenuContribution).toService(TimelineAuthoringContribution);
   bind(NarrativeSaveReindexContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(NarrativeSaveReindexContribution);
   // gh#47 WP-5. The widget factory plus BOTH bindings the panel needs to be
