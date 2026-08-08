@@ -10,6 +10,7 @@ export * from './chapter-bundle';
 export * from './context-sets';
 export * from './diagram-spec';
 export * from './timeline-event-authoring';
+export * from './timeline-view-model';
 export * from './entity-hover';
 export * from './generated-image';
 export * from './image-crop';
