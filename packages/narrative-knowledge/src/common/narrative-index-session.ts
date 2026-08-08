@@ -934,13 +934,17 @@ export class NarrativeIndexSession {
     const allFindings = want('findings') ? this.collectFindings(document, entityIds) : [];
     const findings = this.cap(allFindings, limit, 'findings', omitted, want('findings'));
 
+    // --- the story so far -------------------------------------------------
+    const timeline = this.collectTimeline(document, spoilerSafe, limit, omitted, want('timeline'));
+
     const sections = {} as Record<NarrativeContextSection, SectionAvailability>;
     const counts: Partial<Record<NarrativeContextSection, number>> = {
       entities: entities.length,
       mentions: mentions.length,
       relations: relations.length,
       priorAppearances: priorAppearances.length,
-      findings: findings.length
+      findings: findings.length,
+      timeline: timeline.length
     };
     for (const section of NARRATIVE_CONTEXT_SECTIONS) {
       const requires = UNAVAILABLE_CONTEXT_SECTIONS[section];
@@ -967,6 +971,7 @@ export class NarrativeIndexSession {
       relations,
       priorAppearances,
       findings,
+      timeline,
       sections,
       omitted,
       indexVersion: `${this.schemaVersion}.${state.generation}`
@@ -1034,6 +1039,76 @@ export class NarrativeIndexSession {
       omitted.push({ section: 'priorAppearances', count: unplaceable, reason: 'unknown-position' });
     }
     return this.cap(collected, limit, 'priorAppearances', omitted, true);
+  }
+
+  /**
+   * The story so far: events placed at or before this chapter (gh#48 WP-4).
+   *
+   * MEMBERSHIP IS MANUSCRIPT POSITION, ORDER IS `sequence`, and the two are
+   * asked separately because they answer different questions — see the field's
+   * own doc in `narrative-context.ts`. The store is asked in story order once;
+   * this method only decides who is in.
+   *
+   * UNPLACEABLE EVENTS ARE COUNTED, NOT DROPPED. An event whose chapter has no
+   * position — unlisted, not indexed, or named by nothing at all — cannot be
+   * PROVEN to precede this passage. Under `spoilerSafe` it is excluded and
+   * counted under `unknown-position`, which is the same treatment, the same
+   * reason and the same word `collectPriorAppearances` gives a mention it
+   * cannot place. Silently shortening an author's timeline is the failure the
+   * `omitted` mechanism exists to make impossible.
+   *
+   * WITHOUT `spoilerSafe` EVERY EVENT IS IN, including the unplaceable ones:
+   * the caller has said it does not care about position, and excluding them
+   * anyway would be answering a question nobody asked.
+   */
+  private collectTimeline(
+    document: IndexedDocument,
+    spoilerSafe: boolean,
+    limit: number,
+    omitted: OmittedInfo[],
+    wanted: boolean
+  ): IndexedEvent[] {
+    if (!wanted) {
+      return [];
+    }
+    const events = this.store.listEvents({ orderBy: 'story', direction: 'asc' });
+    if (!spoilerSafe) {
+      return this.cap(events, limit, 'timeline', omitted, true);
+    }
+    const orderByPath = new Map(
+      this.store.listDocuments().map(indexed => [indexed.relPath, indexed.chapterOrder])
+    );
+    const here = document.chapterOrder;
+    const collected: IndexedEvent[] = [];
+    let unplaceable = 0;
+    let later = 0;
+    for (const indexed of events) {
+      const chapterPath = indexed.event.chapterPath;
+      const order = chapterPath === undefined ? undefined : orderByPath.get(chapterPath);
+      if (order === undefined || here === undefined) {
+        // `here === undefined` puts EVERY event here, and that is correct: a
+        // document the manifest does not list has no position of its own, so
+        // nothing can be shown to precede it. The same rule, and the same
+        // reason, as the prior-appearances branch above.
+        unplaceable++;
+        continue;
+      }
+      if (order <= here) {
+        collected.push(indexed);
+        continue;
+      }
+      // COUNTED, NOT SILENTLY DROPPED. The index knows precisely where this one
+      // is; the caller's `spoilerSafe` is what removed it, and the two reasons
+      // must not be folded — see `OmissionReason`.
+      later++;
+    }
+    if (unplaceable > 0) {
+      omitted.push({ section: 'timeline', count: unplaceable, reason: 'unknown-position' });
+    }
+    if (later > 0) {
+      omitted.push({ section: 'timeline', count: later, reason: 'spoiler-safe' });
+    }
+    return this.cap(collected, limit, 'timeline', omitted, true);
   }
 
   /**

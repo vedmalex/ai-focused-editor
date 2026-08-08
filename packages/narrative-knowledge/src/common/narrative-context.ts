@@ -18,7 +18,14 @@
  * context object carrying prose would defeat it one layer above the store.
  */
 
-import type { EvidenceRange, EvidenceRef, NarrativeEntity, NarrativeMention, NarrativeRelation } from './graph';
+import type {
+  EvidenceRange,
+  EvidenceRef,
+  IndexedEvent,
+  NarrativeEntity,
+  NarrativeMention,
+  NarrativeRelation
+} from './graph';
 
 /**
  * The sections a context can carry.
@@ -86,7 +93,12 @@ export const UNAVAILABLE_CONTEXT_SECTIONS: Readonly<Record<string, string>> = Ob
   // the consumer that actually needs profiles inside a document's context; the
   // card's own data path does not go through here at all.
   characterProfiles: 'gh#51',
-  timeline: 'gh#48',
+  // `timeline` IS GONE FROM THIS RECORD, and its absence is the point: gh#48
+  // delivered the section, so the promise is kept rather than restated. The
+  // architecture allows exactly three outcomes for an entry here — fill it,
+  // amend it with a reason, or be in breach — and a landed capability that left
+  // its own `unavailable` in place would make this record lie in the one
+  // direction it exists to prevent.
   plotThreads: 'gh#49',
   openQuestions: 'gh#50',
   scenePlan: 'gh#51'
@@ -180,7 +192,23 @@ export type OmissionReason =
    * range. Both are "the index knows this exists and cannot place it", which is
    * a different statement from "it is not there".
    */
-  | 'unknown-position';
+  | 'unknown-position'
+  /**
+   * Placeable, and placed AFTER this passage — cut by `spoilerSafe` (gh#48).
+   *
+   * A DIFFERENT FACT FROM `unknown-position`, and worth its own word: the index
+   * knows exactly where this item is, and the CALLER's option is what removed
+   * it. Folding the two would tell an author "the index cannot place four
+   * events" when the truth is "four events happen later and you asked not to be
+   * told".
+   *
+   * WHY THE `timeline` SECTION COUNTS THESE AND `priorAppearances` DOES NOT.
+   * `priorAppearances` is NAMED prior: a later mention is out of the section's
+   * scope, not omitted from it. `timeline` is named for the whole thing and is
+   * TRUNCATED by an option, which is the same shape as `limit` — an option that
+   * silently changes what you get has to say how much it took.
+   */
+  | 'spoiler-safe';
 
 /** One section's omissions, with a count rather than a silence. */
 export interface OmittedInfo {
@@ -277,6 +305,34 @@ export interface NarrativeDocumentContext {
   /** The same entities in chapters positioned BEFORE this one. */
   priorAppearances: NarrativeMention[];
   findings: NarrativeFinding[];
+  /**
+   * The story so far — events the author has placed in THIS chapter and in the
+   * chapters before it, in story order (gh#48 WP-4).
+   *
+   * "AND THE CHAPTERS BEFORE IT" IS THE SECTION, not an embellishment of it.
+   * The events of this chapter alone are already reachable by `listEvents({
+   * chapterPath })`, and a context section that only restated one query would
+   * earn nothing. What the index can say about a PASSAGE that no per-chapter
+   * query can is what the reader knows by the time they arrive — which is the
+   * same question `priorAppearances` answers for entities, and it is answered
+   * the same way, by manuscript position.
+   *
+   * SPOILER-SAFE IS THE DEFAULT AND IT EXCLUDES THE UNPLACEABLE. An event in a
+   * chapter positioned AFTER this one is a spoiler; an event whose chapter has
+   * no position — unlisted, unindexed, or named by nothing — cannot be PROVEN
+   * to precede this passage, so it is excluded too rather than guessed at. Both
+   * land in {@link NarrativeDocumentContext.omitted} under `unknown-position`,
+   * because a timeline silently shorter than the author's is the failure this
+   * whole envelope discipline exists to prevent.
+   *
+   * STORY ORDER, NOT MANUSCRIPT ORDER. The section answers "what has happened",
+   * and `sequence` is the only thing that orders that (`narrative-event.ts`
+   * says why a story time cannot). Manuscript position decides MEMBERSHIP —
+   * whether the reader has got there — and `sequence` decides the ORDER within
+   * it; collapsing the two would make one of the two questions unanswerable, as
+   * `event-ordering.ts` records.
+   */
+  timeline: IndexedEvent[];
   /** Availability of EVERY section, including the ones #46 cannot build. */
   sections: Record<NarrativeContextSection, SectionAvailability>;
   /** What was cut, from where, and why. Never a silence. */

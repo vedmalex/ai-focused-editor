@@ -32,7 +32,11 @@ import type { MakeContractStore } from './narrative-index-store-contract';
 import { isRangeEvidence, type NarrativeIndexStore } from './graph';
 import { NarrativeIndexSession, type IndexableFile } from './narrative-index-session';
 import type { IndexState } from './index-state';
-import { NARRATIVE_CONTEXT_SECTIONS, type NarrativeContextSection } from './narrative-context';
+import {
+  NARRATIVE_CONTEXT_SECTIONS,
+  UNAVAILABLE_CONTEXT_SECTIONS,
+  type NarrativeContextSection
+} from './narrative-context';
 
 export interface NarrativeIndexReadContractCase {
   name: string;
@@ -674,28 +678,193 @@ export const NARRATIVE_INDEX_READ_CONTRACT: NarrativeIndexReadContractCase[] = [
     }
   },
   {
-    name: 'ОВ-2 tooth 3 — every unavailable section carries a non-empty requires, and none is empty',
+    /**
+     * DERIVED FROM THE RECORD, NOT FROM A COPY OF IT (amended at gh#48 WP-4).
+     *
+     * The first edition listed the five unavailable sections as literals. That
+     * made it a snapshot: a capability that LANDED and correctly stopped being
+     * `unavailable` reddened this case, and the obvious repair — delete the
+     * line — would have left nothing checking that the record and the answer
+     * still agree. Worse, the mirror mistake was invisible: an issue that
+     * removed its key from `UNAVAILABLE_CONTEXT_SECTIONS` and forgot to build
+     * the section would report `empty`, asserting "this passage has none of
+     * those" about a capability nobody wrote, and no literal list would notice.
+     *
+     * Both directions are asserted here now, against the record itself, so the
+     * case survives gh#49, gh#50 and gh#51 landing without being edited again —
+     * and reddens if any of them lands HALF of the change.
+     */
+    name: 'ОВ-2 tooth 3 — availability agrees with the unavailable-sections record, both ways',
     async run(makeStore) {
       const { session } = await build(makeStore);
       const context = contextOf(session).data!;
-      const unavailable: NarrativeContextSection[] = [
-        'characterProfiles',
-        'timeline',
-        'plotThreads',
-        'openQuestions',
-        'scenePlan'
-      ];
-      for (const section of unavailable) {
+      let promised = 0;
+      let delivered = 0;
+      for (const section of NARRATIVE_CONTEXT_SECTIONS) {
         const availability = context.sections[section];
-        equal(availability.status, 'unavailable', `${section} is a capability that does not exist yet`);
+        check(availability !== undefined, `${section} has an availability at all`);
+        const requires = UNAVAILABLE_CONTEXT_SECTIONS[section];
+        if (requires !== undefined) {
+          promised++;
+          equal(availability.status, 'unavailable', `${section} is promised to ${requires} and not built`);
+          check(
+            availability.status === 'unavailable' && availability.requires === requires,
+            `${section} must name the SAME issue the record names`
+          );
+          continue;
+        }
+        // THE HALF THE LITERAL LIST COULD NOT SEE: a section with no entry in
+        // the record has been DELIVERED, so it must answer `present` or `empty`
+        // — never `unavailable`, which would be a capability claiming not to
+        // exist after its own issue landed.
+        delivered++;
         check(
-          availability.status === 'unavailable' && availability.requires.length > 0,
-          `${section} must name the issue that will build it`
+          availability.status !== 'unavailable',
+          `${section} has no entry in the record, so it must not report itself unavailable`
         );
       }
-      for (const section of NARRATIVE_CONTEXT_SECTIONS) {
-        check(context.sections[section] !== undefined, `${section} has an availability at all`);
-      }
+      // Neither half is vacuous: the record is non-empty and so is its
+      // complement, or one of the two loops above would be asserting nothing.
+      check(promised > 0, 'some section is still promised');
+      check(delivered > 0, 'some section is delivered');
+    }
+  },
+  {
+    /**
+     * THE SECTION IS DELIVERED, AND IT IS NOT MERELY NON-`unavailable` (gh#48
+     * WP-4). Tooth 3 above proves the record and the availability agree; that
+     * would stay green against a `timeline` that is always `empty`, which is
+     * the cheapest possible way to satisfy it and a lie about every manuscript
+     * that has events.
+     *
+     * ITS OWN FIXTURE, NOT THE SHARED MANUSCRIPT, and deliberately: a fixture
+     * two work packages share lets either of them turn the other's tooth green
+     * by adding a file, which this task has already paid for.
+     */
+    name: 'gh#48 — the timeline section carries the story so far, and says what it cut',
+    async run(makeStore) {
+      const timelineManuscript: IndexableFile[] = [
+        file(
+          'manifest.yaml',
+          ['content:', ...[1, 2, 3].map(n => `  - path: content/ch-0${n}.md\n    title: Chapter ${n}`)].join('\n')
+        ),
+        file(CH(1), 'First.'),
+        file(CH(2), 'Second.'),
+        file(CH(3), 'Third.'),
+        file(
+          'knowledge/timeline/main.yaml',
+          [
+            'events:',
+            // A FLASHBACK, so that story order and manuscript order DISAGREE
+            // over the two included events. Without it both orders — and the
+            // file order too — would produce the same list, and this case would
+            // be green against a section ordered by any of the three. It was
+            // exactly that at first, and a mutation to manuscript order caught
+            // it.
+            //
+            // `e-opening` is read FIRST (ch-01) and happens SECOND (sequence
+            // 20); `e-flashback` is read SECOND (ch-02) and happens FIRST.
+            '  - id: e-opening',
+            '    title: Read first, happens second',
+            '    sequence: 20',
+            '    chapter: content/ch-01.md',
+            '  - id: e-flashback',
+            '    title: Read second, happens first',
+            '    sequence: 10',
+            '    chapter: content/ch-02.md',
+            // AFTER the subject chapter — the spoiler.
+            '  - id: e-later',
+            '    title: Later event',
+            '    sequence: 30',
+            '    chapter: content/ch-03.md',
+            // Placeable in story order, NOT placeable in the manuscript: no
+            // chapter at all.
+            '  - id: e-nowhere',
+            '    title: Unplaced event',
+            '    sequence: 40'
+          ].join('\n')
+        )
+      ];
+      // The SUBJECT here is chapter 2, so there is a chapter before it and a
+      // chapter after it — a fixture where the subject were first or last would
+      // make one of the two exclusions unreachable.
+      const { session } = await build(makeStore, timelineManuscript);
+      const context = session.getContextForDocument({
+        documentUri: `file:///workspace/${CH(2)}`,
+        relPath: CH(2)
+      }).data;
+      check(context !== undefined, 'the subject chapter is in the index');
+
+      // PRESENT, with a real count — not `empty`, not `unavailable`.
+      equal(context.sections.timeline.status, 'present', 'a chapter with events reports present');
+      equal(
+        context.sections.timeline.status === 'present' ? context.sections.timeline.count : -1,
+        2,
+        'and the count is the events at or before this chapter'
+      );
+      deepEqual(
+        context.timeline.map(row => row.event.id),
+        ['e-flashback', 'e-opening'],
+        'in STORY order — the reverse of both manuscript order and file order'
+      );
+
+      // BOTH exclusions are counted, and under DIFFERENT reasons: one is a
+      // spoiler the caller asked to be spared, the other cannot be placed at
+      // all. Folding them would tell the author the index is confused when it
+      // is not.
+      const spoiler = context.omitted.find(
+        item => item.section === 'timeline' && item.reason === 'spoiler-safe'
+      );
+      check(spoiler !== undefined, 'the later chapter’s event is COUNTED, not silently dropped');
+      equal(spoiler.count, 1, 'exactly the one later event');
+      const unplaceable = context.omitted.find(
+        item => item.section === 'timeline' && item.reason === 'unknown-position'
+      );
+      check(unplaceable !== undefined, 'and so is the event with no chapter');
+      equal(unplaceable.count, 1, 'exactly the one unplaceable event');
+
+      // WITHOUT spoilerSafe every event is in, including the unplaceable one —
+      // the paired positive that stops "exclude everything" from passing.
+      const all = session.getContextForDocument({
+        documentUri: `file:///workspace/${CH(2)}`,
+        relPath: CH(2),
+        options: { spoilerSafe: false }
+      }).data;
+      check(all !== undefined, 'the subject chapter is still in the index');
+      deepEqual(
+        all.timeline.map(row => row.event.id),
+        ['e-flashback', 'e-opening', 'e-later', 'e-nowhere'],
+        'spoilerSafe:false returns the whole timeline, unplaceable events last'
+      );
+    }
+  },
+  {
+    /**
+     * THE PAIRED NEGATIVE OF THE CASE ABOVE, and the one the architecture names
+     * explicitly: a chapter with no events must report `empty`, NOT
+     * `unavailable`. Those are the two answers the whole `SectionAvailability`
+     * mechanism exists to keep apart, and a capability that lands but keeps
+     * answering `unavailable` for its empty case has kept none of its promise.
+     */
+    name: 'gh#48 — a manuscript with no events reports the timeline EMPTY, never unavailable',
+    async run(makeStore) {
+      const eventless: IndexableFile[] = [
+        file('manifest.yaml', ['content:', '  - path: content/ch-01.md\n    title: Chapter 1'].join('\n')),
+        file(CH(1), 'Nothing has happened yet.')
+      ];
+      const { session } = await build(makeStore, eventless);
+      const context = session.getContextForDocument({
+        documentUri: `file:///workspace/${CH(1)}`,
+        relPath: CH(1)
+      }).data;
+      check(context !== undefined, 'the chapter is in the index');
+      equal(context.sections.timeline.status, 'empty', 'no events is EMPTY, which is a fact about the manuscript');
+      deepEqual(context.timeline, [], 'and the section itself is an empty list');
+      deepEqual(
+        context.omitted.filter(item => item.section === 'timeline'),
+        [],
+        'nothing was cut, so nothing is reported as cut'
+      );
     }
   },
   {
