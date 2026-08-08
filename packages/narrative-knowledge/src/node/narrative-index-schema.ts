@@ -46,9 +46,27 @@
  * taking "v4" independently, which this constant's own history says is exactly
  * how a version number quietly forks. The epic's rule is that the number goes to
  * whoever migrates FIRST and the others take the next one — that is gh#47 here,
- * so gh#48 takes v5. Plans state "the next bump", never a literal.
+ * so gh#48 took v5. Plans state "the next bump", never a literal.
+ *
+ * v5 (gh#48 WP-2) added the `event` and `event_ref` tables.
+ *
+ * v6 (gh#48 WP-3, re-gate) replaced `event.chapter_doc_id` with
+ * `event.chapter_rel_path`. IT COULD HAVE AMENDED v5 IN PLACE — v5 has not
+ * landed on `develop`, so no released database carries it — and that is exactly
+ * what the first edition of this fix did. The number was taken instead, because
+ * "no released database" is not "no database": anyone who ran the branch between
+ * the two commits holds a file stamped `user_version = 5` with the OLD column,
+ * and the guard compares the NUMBER, not the shape. It passes, and the next
+ * query dies on `no such column` — which is not classified as corruption, so
+ * nothing self-heals and the file has to be deleted by hand.
+ *
+ * A BUMP COSTS NOTHING (a mismatch rebuilds the file from the manuscript) and a
+ * silently unmigratable database costs a confused afternoon. The rule for the
+ * rest of the epic follows from that: amend a version in place only while
+ * NOBODY, including a branch checkout, can be holding it — in practice, never
+ * after the first commit that ships it.
  */
-export const NARRATIVE_INDEX_SCHEMA_VERSION = 5;
+export const NARRATIVE_INDEX_SCHEMA_VERSION = 6;
 
 /**
  * Pragmas applied to every connection, in this order.

@@ -138,7 +138,7 @@ test('the schema version really is 5 — the constant the pragma is written from
   // and this assertion reddened before any consumer noticed, exactly as
   // intended. Two open plans (gh#48, gh#49) had each written "v4" into their
   // own text; the number belongs to whoever migrates first, which is gh#47, so
-  assert.equal(NARRATIVE_INDEX_SCHEMA_VERSION, 5);
+  assert.equal(NARRATIVE_INDEX_SCHEMA_VERSION, 6);
 });
 
 test('B13: an artifact returning to a previous owner survives rebuild() as TWO relations', () => {

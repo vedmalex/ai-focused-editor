@@ -689,6 +689,16 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
         }
         this.mentions = this.mentions.filter(mention => mention.evidence.path !== relPath);
         this.relations = this.relations.filter(row => row.relation.ownerPath !== relPath);
+        // MIRRORS `event.doc_id ... ON DELETE CASCADE`. Deleting a timeline file
+        // took its events with it in SQLite and left them here forever, so
+        // `getEvent` kept answering about a file that no longer exists — an
+        // event nobody can navigate to is precisely what this index is for
+        // preventing (gh#48 WP-3 re-gate, F3).
+        for (const [id, row] of [...this.events]) {
+          if (row.relPath === relPath) {
+            this.events.delete(id);
+          }
+        }
       },
       putEntity: (entity: NarrativeEntity): void => {
         requireDocument(entity.sourcePath, `entity '${entity.id}'`);
@@ -728,6 +738,12 @@ export class InMemoryNarrativeIndexStore implements NarrativeIndexStore {
         this.duplicates.set(entityId, paths);
       },
       putEvent: (event: NarrativeEvent, relPath: string): void => {
+        // MIRRORS `event.doc_id NOT NULL REFERENCES document(doc_id)`. Without
+        // it this adapter silently accepted an event whose timeline file is not
+        // indexed while SQLite refused the identical call — the drift the
+        // contract set exists to catch, and it went unseen because no case
+        // asked (gh#48 WP-3 re-gate, F3).
+        requireDocument(relPath, `event '${event.id}'`);
         this.events.set(event.id, { event: clone(event), relPath });
       },
       putMention: (mention: NarrativeMention): void => {

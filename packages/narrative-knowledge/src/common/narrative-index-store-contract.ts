@@ -1071,6 +1071,62 @@ export const NARRATIVE_INDEX_STORE_CONTRACT: readonly NarrativeIndexStoreContrac
   },
   {
     /**
+     * AN EVENT CANNOT OUTLIVE THE FILE IT WAS READ FROM (gh#48 WP-3 re-gate).
+     *
+     * TWO HALVES OF ONE OWNERSHIP RULE, and neither adapter had a case for
+     * either: SQLite spells it `event.doc_id NOT NULL REFERENCES document(...)
+     * ON DELETE CASCADE`, the in-memory adapter has to spell it by hand, and
+     * they had drifted in BOTH directions at once — in-memory accepted an event
+     * with no source document where SQLite refused, and kept the events of a
+     * deleted document where SQLite dropped them.
+     *
+     * IT IS NOT AN ACADEMIC DIFFERENCE. An event whose timeline file is gone is
+     * an event nobody can navigate to, and "every event can navigate to at least
+     * one evidence range" is an acceptance criterion of gh#48. The rule was
+     * enforced in the adapter nothing writes to in production and absent from
+     * the one every author uses — the exact shape of a guard that looks present.
+     */
+    name: 'an event needs its timeline document, and dies with it, in both adapters',
+    async run(makeStore) {
+      const store = await open(makeStore);
+      seedDocuments(store);
+      // REFUSED, and refused as a NAMED constraint violation rather than as a
+      // raw adapter error — the taxonomy is what lets a caller tell "the author
+      // wrote something impossible" from "the database is broken".
+      await rejects(
+        () =>
+          store.transaction(writer => {
+            writer.putEvent(event('e-homeless'), 'knowledge/timeline/never-indexed.yaml');
+          }),
+        'constraint-violation',
+        'an event whose timeline file is not indexed'
+      );
+
+      // PAIRED POSITIVE: with the document present the identical write lands.
+      store.transaction(writer => {
+        writer.putDocument(timelineDocument());
+        writer.putEvent(event('e-kept', { sequence: 1 }), TIMELINE);
+      });
+      deepEqual(
+        store.listEvents({ orderBy: 'story', direction: 'asc' }).map(row => row.event.id),
+        ['e-kept'],
+        'the same write against an indexed document succeeds'
+      );
+
+      // AND THE OTHER HALF: dropping the file drops its events.
+      store.transaction(writer => {
+        writer.deleteDocument(TIMELINE);
+      });
+      deepEqual(
+        store.listEvents({ orderBy: 'story', direction: 'asc' }).map(row => row.event.id),
+        [],
+        'deleting the timeline file takes its events with it'
+      );
+      equal(store.getEvent('e-kept'), undefined, 'and the by-id read agrees with the list');
+    }
+  },
+  {
+    /**
      * `chapterPath` FILTERS ON WHAT THE AUTHOR WROTE, not on what resolved.
      *
      * The same liveness question from the other side: asking for one chapter's
