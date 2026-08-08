@@ -61,6 +61,8 @@ import { EntityCardService } from './entity-card-service';
 import { EntityCardCursorContribution } from './entity-card-cursor-contribution';
 import { NarrativeSaveReindexContribution } from './narrative-save-reindex-contribution';
 import { TimelineAuthoringContribution } from './timeline-authoring-contribution';
+import { TimelineWidget } from './timeline-widget';
+import { TimelineViewContribution } from './timeline-view-contribution';
 import { EntityCardViewContribution } from './entity-card-view-contribution';
 import { EntityCardWidget } from './entity-card-widget';
 import { EntityCardsViewContribution } from './entity-cards-view-contribution';
@@ -216,6 +218,13 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
   // entity at all, which is the workflow the issue is written about.
   bind(EntityCardCursorContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(EntityCardCursorContribution);
+  bind(TimelineWidget).toSelf();
+  bind(WidgetFactory).toDynamicValue(context => ({
+    id: TimelineWidget.ID,
+    createWidget: () => context.container.get<TimelineWidget>(TimelineWidget)
+  })).inSingletonScope();
+  bindViewContribution(bind, TimelineViewContribution);
+  bind(FrontendApplicationContribution).toService(TimelineViewContribution);
   bind(TimelineAuthoringContribution).toSelf().inSingletonScope();
   bind(CommandContribution).toService(TimelineAuthoringContribution);
   bind(MenuContribution).toService(TimelineAuthoringContribution);
